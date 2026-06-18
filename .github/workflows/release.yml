@@ -1,0 +1,176 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -1)
+          LATEST_TAG="${LATEST_TAG:-v0.0.0}"
+
+          MAJOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST_TAG" | cut -d. -f2)
+          PATCH=$(echo "$LATEST_TAG" | cut -d. -f3)
+
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if echo "$COMMIT_MSG" | grep -qE "BREAKING CHANGE|\[major\]"; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          elif echo "$COMMIT_MSG" | grep -qE "^feat(\([^)]+\))?:|\[minor\]"; then
+            MINOR=$((MINOR + 1)); PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+
+          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            bins: devenv,devenv-tunnel
+            archive_ext: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            bins: devenv,devenv-tunnel
+            cross: true
+            archive_ext: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            bins: devenv,devenv-tunnel
+            archive_ext: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            bins: devenv,devenv-tunnel
+            archive_ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            bins: devenv,devenv-tunnel
+            archive_ext: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set CLI package version
+        run: scripts/set-cli-version.sh "${{ needs.version.outputs.version }}"
+        shell: bash
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ matrix.os != 'windows-latest' }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked
+
+      - name: Build
+        env:
+          PKG_CONFIG_SYSROOT_DIR: ${{ matrix.cross && '/' || '' }}
+        run: |
+          build_cmd="cargo"
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            build_cmd="cross"
+          fi
+
+          IFS=',' read -ra BINS <<< "${{ matrix.bins }}"
+          bin_flags=""
+          for bin in "${BINS[@]}"; do
+            bin_flags="$bin_flags --bin $bin"
+          done
+
+          $build_cmd build --release --target ${{ matrix.target }} $bin_flags
+        shell: bash
+
+      - name: Package (Unix)
+        if: matrix.archive_ext == 'tar.gz'
+        run: |
+          staging="devenv-tunnel-${{ matrix.target }}"
+          mkdir -p "$staging"
+
+          IFS=',' read -ra BINS <<< "${{ matrix.bins }}"
+          for bin in "${BINS[@]}"; do
+            cp "target/${{ matrix.target }}/release/$bin" "$staging/"
+          done
+
+          tar czf "$staging.tar.gz" "$staging"
+
+      - name: Package (Windows)
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          $staging = "devenv-tunnel-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          foreach ($bin in "${{ matrix.bins }}".Split(",")) {
+            Copy-Item "target\${{ matrix.target }}\release\$bin.exe" "$staging\"
+          }
+          Compress-Archive -Path "$staging\*" -DestinationPath "$staging.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: devenv-tunnel-${{ matrix.target }}
+          path: devenv-tunnel-${{ matrix.target }}.${{ matrix.archive_ext }}
+
+  release:
+    name: Create Release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: devenv-tunnel-*
+          merge-multiple: true
+
+      - name: Generate version manifest
+        run: |
+          echo "{\"version\":\"${{ needs.version.outputs.version }}\",\"commit\":\"${GITHUB_SHA}\"}" > artifacts/version.json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/version.json
