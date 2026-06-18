@@ -1,0 +1,28 @@
+[package]
+name = "devenv-tunnel-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "devenv-tunnel"
+path = "src/main.rs"
+
+[[bin]]
+name = "devenv"
+path = "src/bin/devenv.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+devenv-tunnel-daemon = { path = "../daemon" }
+devenv-tunnel-domain = { path = "../domain" }
+devenv-tunnel-proto = { path = "../../../proto" }
+dirs = "6"
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+rand = "0.8"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
