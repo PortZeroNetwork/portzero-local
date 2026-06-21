@@ -6,6 +6,11 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
+# NOTE: bolard (Docker API) is intentionally omitted from default deps to keep
+# the base build light and portable. Docker container discovery currently uses
+# the `docker` CLI (see discovery.rs). A future "docker" feature can add:
+# bolard = { version = "0.15", optional = true, default-features = false, features = ["ssl"] }
+bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 devenv-tunnel-domain = { path = "../domain" }
 devenv-tunnel-proto = { path = "../../../proto" }
@@ -13,13 +18,21 @@ devenv-tunnel-client = { path = "../tunnel-client" }
 dirs = "6"
 futures-util = "0.3"
 hostname = "0.4"
+# hickory-dns for embedded authoritative DNS server (scoped *.devenv.local)
+hickory-proto = "0.24"
+hickory-server = "0.24"
+libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# smoltcp features vary by version. We activate a minimal set; see net/ for usage.
+smoltcp = { version = "0.11", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
+socket2 = "0.5"
 sysinfo = "0.35"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 tracing = "0.1"
+tun = { version = "0.6", features = ["async"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
