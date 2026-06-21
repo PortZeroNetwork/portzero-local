@@ -14,6 +14,10 @@ use sysinfo::System;
 /// The environment variable that tags a process for tunneling.
 const ENV_VAR_NAME: &str = "DEVENV_TUNNEL";
 
+/// Environment variable for the new Port-0 virtual overlay network.
+/// Example: DEVENV_NETWORK=my-db
+const ENV_NETWORK_NAME: &str = "DEVENV_NETWORK";
+
 /// Selects which HTTP port to forward. Defaults to CHOOSE_LOWEST if unset.
 const ENV_HTTP_PORT_VAR: &str = "DEVENV_TUNNEL_HTTP_PORT";
 
@@ -589,7 +593,7 @@ fn inspect_container(
             "inspect",
             container_id,
             "--format",
-            "{{json .Config.Env}}||{{.Name}}||{{json .NetworkSettings.Ports}}||{{.State.Pid}}",
+            "{{json .Config.Env}}||{{.Name}}||{{json .NetworkSettings.Ports}}||{{.State.Pid}}||{{json .Mounts}}||{{json .Config.Labels}}",
         ])
         .output()?;
 
@@ -600,7 +604,7 @@ fn inspect_container(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stdout = stdout.trim();
 
-    let parts: Vec<&str> = stdout.splitn(4, "||").collect();
+    let parts: Vec<&str> = stdout.splitn(6, "||").collect();
     if parts.len() < 4 {
         return Ok(None);
     }
@@ -609,6 +613,8 @@ fn inspect_container(
     let name = parts[1].trim_start_matches('/');
     let ports_json = parts[2];
     let container_pid: u32 = parts[3].parse().unwrap_or(0);
+    let mounts_json = if parts.len() > 4 { parts[4] } else { "[]" };
+    let labels_json = if parts.len() > 5 { parts[5] } else { "{}" };
 
     let env_vars: Vec<String> = serde_json::from_str(env_json).unwrap_or_default();
 
@@ -621,7 +627,12 @@ fn inspect_container(
         _ => return Ok(None),
     };
 
-    let domain = resolve_tunnel_template(&raw, None, account_id, username);
+    // Discover a host-side project directory for template resolution (branch, worktree, etc.)
+    // This makes DEVENV_TUNNEL=my-service-{branch} work for `docker run` (via bind mounts)
+    // and `docker compose` (via labels + mounts).
+    let project_dir = find_host_project_dir_for_container(mounts_json, labels_json);
+
+    let domain = resolve_tunnel_template(&raw, project_dir.as_deref(), account_id, username);
 
     let http_selection = env_vars
         .iter()
@@ -684,9 +695,288 @@ fn parse_docker_ports(ports_json: &str, selection: &HttpPortSelection) -> u16 {
     }
 }
 
+/// Try to recover a host-side git project directory from a container's mounts
+/// and labels. This enables correct `{branch}` / `{worktree}` resolution for
+/// `DEVENV_TUNNEL` when using plain `docker run -v ...` or `docker compose`.
+fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> Option<PathBuf> {
+    use devenv_tunnel_domain::find_git_project_dir;
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // 1. Docker Compose working dir label (very reliable when using compose)
+    if let Ok(labels) = serde_json::from_str::<serde_json::Value>(labels_json) {
+        if let Some(wd) = labels
+            .get("com.docker.compose.project.working_dir")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+        {
+            candidates.push(wd);
+        }
+        // Also check other common labels users might set
+        if let Some(custom) = labels.get("dev.devenv.project_dir").and_then(|v| v.as_str()) {
+            candidates.push(PathBuf::from(custom));
+        }
+    }
+
+    // 2. Bind mounts from the host (works for both compose and plain docker run -v)
+    if let Ok(mounts) = serde_json::from_str::<serde_json::Value>(mounts_json) {
+        if let Some(arr) = mounts.as_array() {
+            for mount in arr {
+                if mount.get("Type").and_then(|t| t.as_str()) == Some("bind") {
+                    if let Some(source) = mount.get("Source").and_then(|s| s.as_str()) {
+                        candidates.push(PathBuf::from(source));
+                    }
+                }
+            }
+        }
+    }
+
+    // Convert to slices for the domain helper
+    let refs: Vec<&Path> = candidates.iter().map(|p| p.as_path()).collect();
+    find_git_project_dir(&refs)
+}
+
 // ---------------------------------------------------------------------------
-// Tests
+// Overlay network discovery (DEVENV_NETWORK + port 0 support)
 // ---------------------------------------------------------------------------
+
+/// A service discovered for the local virtual overlay network.
+#[derive(Debug, Clone)]
+pub struct DiscoveredNetworkService {
+    /// The value of DEVENV_NETWORK (e.g. "my-db").
+    pub name: String,
+    /// The actual host address we must proxy to (usually 127.0.0.1:random).
+    pub real_addr: std::net::SocketAddr,
+    /// The port that should be presented on the virtual side (e.g. 5432).
+    /// For Docker this is the container port from the -p mapping.
+    /// For plain processes we use the discovered listening port.
+    pub service_port: u16,
+    /// Owning PID.
+    pub pid: u32,
+    pub source: ServiceSource,
+}
+
+/// Scan for services that should participate in the virtual overlay (DEVENV_NETWORK).
+///
+/// DEVENV_NETWORK supports the same templating as DEVENV_TUNNEL, e.g.:
+///   DEVENV_NETWORK=my-db-{branch}
+///   DEVENV_NETWORK={service}-{worktree}
+/// This is the primary mechanism to guarantee DNS uniqueness across git worktrees.
+/// The daemon will resolve the template using the process cwd (or container context)
+/// and register the resulting name (e.g. my-db-feat-foo.devenv.local).
+///
+/// The daemon should surface loud errors (tray, logs, future UI) if the same
+/// resolved name ends up being claimed by multiple distinct worktrees.
+pub async fn scan_network_services() -> Vec<DiscoveredNetworkService> {
+    let mut out = Vec::new();
+    out.extend(scan_network_processes());
+    out.extend(scan_network_containers().await);
+    out
+}
+
+fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
+    use std::net::{IpAddr, SocketAddr};
+
+    let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+    let mut results = Vec::new();
+
+    for (pid, process) in sys.processes() {
+        let pid_u32 = pid.as_u32();
+        if pid_u32 <= 1 {
+            continue;
+        }
+
+        let raw = match scan_process_env(pid_u32, ENV_NETWORK_NAME) {
+            Some(v) if !v.is_empty() => v,
+            _ => continue,
+        };
+
+        let process_cwd = process.cwd().map(|p| p.to_path_buf());
+
+        // Support templating for uniqueness across worktrees, same as DEVENV_TUNNEL.
+        // e.g. DEVENV_NETWORK=my-db-{branch} or my-db-{worktree}
+        let resolved = resolve_tunnel_template(&raw, process_cwd.as_deref(), None, None);
+        let name = sanitize_network_name(&resolved);
+        if name.is_empty() {
+            continue;
+        }
+
+        let listening = discover_process_ports(pid_u32);
+        if listening.is_empty() {
+            continue;
+        }
+
+        // Pick a reasonable real port. Prefer a public one.
+        let chosen = listening
+            .iter()
+            .find(|lp| lp.bind == BindAddr::Public)
+            .or_else(|| listening.first());
+
+        let port = match chosen {
+            Some(lp) => lp.port,
+            None => continue,
+        };
+
+        let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
+
+        results.push(DiscoveredNetworkService {
+            name,
+            real_addr,
+            service_port: port,
+            pid: pid_u32,
+            source: ServiceSource::Process {
+                cwd: process_cwd,
+            },
+        });
+    }
+
+    results
+}
+
+async fn scan_network_containers() -> Vec<DiscoveredNetworkService> {
+    match scan_network_containers_impl().await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::debug!("Docker network scan failed: {}", e);
+            Vec::new()
+        }
+    }
+}
+
+async fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService>> {
+    use std::net::{IpAddr, SocketAddr};
+    use std::process::Command;
+
+    let output = Command::new("docker")
+        .args(["ps", "--format", "{{.ID}}"])
+        .output()?;
+
+    if !output.status.success() {
+        anyhow::bail!("docker ps failed");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let ids: Vec<&str> = stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    let mut out = Vec::new();
+
+    for id in ids {
+        let inspect = Command::new("docker")
+            .args([
+                "inspect",
+                id,
+                "--format",
+                "{{json .Config.Env}}||{{.Name}}||{{json .NetworkSettings.Ports}}||{{.State.Pid}}||{{json .Mounts}}||{{json .Config.Labels}}",
+            ])
+            .output();
+
+        let output = match inspect {
+            Ok(o) if o.status.success() => o,
+            _ => continue,
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = stdout.trim().splitn(6, "||").collect();
+        if parts.len() < 4 {
+            continue;
+        }
+
+        let env_json = parts[0];
+        let _name = parts[1].trim_start_matches('/');
+        let ports_json = parts[2];
+        let pid: u32 = parts[3].parse().unwrap_or(0);
+        let mounts_json = if parts.len() > 4 { parts[4] } else { "[]" };
+        let labels_json = if parts.len() > 5 { parts[5] } else { "{}" };
+
+        let envs: Vec<String> = match serde_json::from_str(env_json) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let raw_name = match envs.iter().find_map(|e| e.strip_prefix("DEVENV_NETWORK=")) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => continue,
+        };
+
+        // Use host-side git context (mounts/labels) for templating so that
+        // DEVENV_NETWORK also supports {branch} / {worktree} in docker.
+        let project_dir = find_host_project_dir_for_container(mounts_json, labels_json);
+        let resolved_name = resolve_tunnel_template(&raw_name, project_dir.as_deref(), None, None);
+        let name = sanitize_network_name(&resolved_name);
+        if name.is_empty() {
+            continue;
+        }
+
+        // Parse docker ports to find a (container_port -> host_port) pair.
+        // We want the container port as service_port.
+        let (service_port, host_port) = parse_docker_port_mapping(ports_json).unwrap_or((0, 0));
+        if host_port == 0 {
+            // No published ports or still port 0 not yet assigned.
+            continue;
+        }
+
+        let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), host_port);
+        let svc_port = if service_port > 0 { service_port } else { host_port };
+
+        let container_name = name.clone();
+        out.push(DiscoveredNetworkService {
+            name,
+            real_addr,
+            service_port: svc_port,
+            pid,
+            source: ServiceSource::Container {
+                id: id.to_string(),
+                name: container_name,
+            },
+        });
+    }
+
+    Ok(out)
+}
+
+/// Very small parser for the docker ports JSON.
+/// Returns (container_port, host_port) for the first mapped entry.
+fn parse_docker_port_mapping(ports_json: &str) -> Option<(u16, u16)> {
+    let val: serde_json::Value = serde_json::from_str(ports_json).ok()?;
+    let obj = val.as_object()?;
+    for (container_port_key, bindings) in obj {
+        // container_port_key looks like "5432/tcp"
+        let container_port: u16 = container_port_key
+            .split('/')
+            .next()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
+        if let Some(arr) = bindings.as_array() {
+            for b in arr {
+                if let Some(hp) = b.get("HostPort").and_then(|v| v.as_str()).and_then(|s| s.parse::<u16>().ok()) {
+                    if hp > 0 {
+                        return Some((container_port, hp));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn sanitize_network_name(raw: &str) -> String {
+    // Allow only dns-safe simple labels for the network name.
+    raw.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect::<String>()
+        .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_string()
+        .to_lowercase()
+        .chars()
+        .take(63)
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {

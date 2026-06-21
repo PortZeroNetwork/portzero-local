@@ -9,7 +9,7 @@
 //! a valid DNS label (ASCII alphanumeric + hyphens, no leading/trailing hyphens,
 //! ≤ 63 chars).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Tunnel subdomain namespace — all tunnels live under this.
 pub const TUNNEL_SUBDOMAIN: &str = "tunnel";
@@ -236,7 +236,7 @@ pub fn sanitize_for_dns(s: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Walk up from `start` to find the nearest directory containing `.git`.
-fn find_git_root(start: &Path) -> Option<(&Path, std::path::PathBuf)> {
+pub fn find_git_root(start: &Path) -> Option<(&Path, std::path::PathBuf)> {
     let mut dir = start;
     loop {
         let candidate = dir.join(".git");
@@ -245,6 +245,19 @@ fn find_git_root(start: &Path) -> Option<(&Path, std::path::PathBuf)> {
         }
         dir = dir.parent()?;
     }
+}
+
+/// Given a list of host filesystem paths (e.g. from Docker bind mounts or compose
+/// working directories), return the first one that is (or is inside) a git repository.
+/// This is useful for resolving templates like `{branch}` or `{worktree}` when
+/// discovering Docker containers from the host.
+pub fn find_git_project_dir(candidates: &[&Path]) -> Option<PathBuf> {
+    for c in candidates {
+        if let Some((root, _)) = find_git_root(c) {
+            return Some(root.to_path_buf());
+        }
+    }
+    None
 }
 
 /// Detect the project name from the project directory.
