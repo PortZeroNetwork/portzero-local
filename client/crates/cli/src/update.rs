@@ -1,7 +1,7 @@
 //! Background update checker.
 //!
-//! After each CLI invocation we spawn a non-blocking check against a version
-//! manifest hosted on the releases CDN.  If a newer version exists we print a
+//! After each CLI invocation we spawn a non-blocking check against the
+//! `version.json` published as a GitHub Release asset.  If a newer version exists we print a
 //! one-line notice to stderr.  The check is skipped if the `DEVENV_TOOLS_NO_UPDATE_CHECK`
 //! env var is set, or if the last check was less than 24 hours ago.
 
@@ -13,7 +13,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use tokio::time::timeout;
 
-const RELEASES_BASE_URL: &str = "https://releases.devenv.tools/releases";
+const RELEASES_BASE_URL: &str = "https://github.com/LoumTechnologies/devenv-tunnel/releases";
 
 /// Minimum interval between remote checks.
 const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -77,12 +77,6 @@ struct Version {
     minor: u64,
     patch: u64,
     prerelease: Option<String>,
-}
-
-impl Version {
-    fn is_prerelease(&self) -> bool {
-        self.prerelease.is_some()
-    }
 }
 
 impl Ord for Version {
@@ -157,12 +151,13 @@ fn parse_semver(s: &str) -> Option<Version> {
     })
 }
 
-fn version_url(current: &Version) -> String {
-    if current.is_prerelease() {
-        format!("{RELEASES_BASE_URL}/staging/latest/version.json")
-    } else {
-        format!("{RELEASES_BASE_URL}/latest/version.json")
-    }
+fn version_url() -> String {
+    // `version.json` is uploaded as a GitHub Release asset by
+    // .github/workflows/release.yml; GitHub's /releases/latest/download/<asset>
+    // always resolves to the newest stable release. GitHub exposes no static
+    // "latest prerelease" URL and this repo publishes no separate staging
+    // channel, so all builds track the latest stable release.
+    format!("{RELEASES_BASE_URL}/latest/download/version.json")
 }
 
 /// Run the update check.  Intended to be called with `tokio::spawn` so it
@@ -178,7 +173,7 @@ pub async fn check_for_update() {
     };
 
     if let Ok(Ok(Some(latest))) =
-        timeout(REQUEST_TIMEOUT, fetch_latest_version(&current_version)).await
+        timeout(REQUEST_TIMEOUT, fetch_latest_version()).await
     {
         record_check();
 
@@ -193,11 +188,11 @@ pub async fn check_for_update() {
     }
 }
 
-async fn fetch_latest_version(current: &Version) -> Result<Option<String>> {
+async fn fetch_latest_version() -> Result<Option<String>> {
     let client = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .build()?;
-    let resp = client.get(version_url(current)).send().await?;
+    let resp = client.get(version_url()).send().await?;
     if !resp.status().is_success() {
         return Ok(None);
     }

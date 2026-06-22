@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::{env, process};
 
-const RELEASES_BASE_URL: &str = "https://releases.devenv.tools/releases";
+const RELEASES_BASE_URL: &str = "https://github.com/LoumTechnologies/devenv-tunnel/releases";
 const INSTALL_SCRIPT: &str = "curl -fsSL https://devenv.tools/install.sh | sh";
 
 #[tokio::main]
@@ -61,7 +61,7 @@ async fn do_update() {
     let current_version = parse_semver(current);
     let channel = update_channel(current_version.as_ref());
 
-    match fetch_latest_version(channel).await {
+    match fetch_latest_version().await {
         Ok(latest) => match (current_version, parse_semver(&latest)) {
             (Some(cur), Some(lat)) if lat <= cur => {
                 println!("Already up to date ({current}).");
@@ -95,11 +95,11 @@ async fn do_update() {
     }
 }
 
-async fn fetch_latest_version(channel: &str) -> anyhow::Result<String> {
+async fn fetch_latest_version() -> anyhow::Result<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
-    let resp = client.get(version_url(channel)).send().await?;
+    let resp = client.get(version_url()).send().await?;
     anyhow::ensure!(resp.status().is_success(), "version check failed");
     let manifest: serde_json::Value = resp.json().await?;
     manifest["version"]
@@ -201,12 +201,11 @@ fn update_channel(current: Option<&Version>) -> &'static str {
     }
 }
 
-fn version_url(channel: &str) -> String {
-    if channel == "staging" {
-        format!("{RELEASES_BASE_URL}/staging/latest/version.json")
-    } else {
-        format!("{RELEASES_BASE_URL}/latest/version.json")
-    }
+fn version_url() -> String {
+    // Served from this repo's GitHub Releases (see note in src/update.rs):
+    // `version.json` is a release asset and /releases/latest/download/ resolves
+    // to the newest stable release.
+    format!("{RELEASES_BASE_URL}/latest/download/version.json")
 }
 
 #[cfg(unix)]
