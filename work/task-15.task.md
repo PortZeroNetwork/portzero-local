@@ -1,7 +1,7 @@
 ---
 id: ee0488f7-2163-465d-805a-0f9b1d17959e
 slug: task-15
-status: done
+status: in-progress
 title: Make Linux scoped DNS robust (systemd-resolved without networkd, plus fallbacks)
 milestones:
 - milestone-1
@@ -93,6 +93,37 @@ or which resolver owns `/etc/resolv.conf`.
 - [ ] Clear, actionable warning + guidance when no mechanism can be configured.
 - [ ] Pure helpers (mechanism detection over injected inputs, config-snippet/hosts-line
       generation) unit-tested; no real system mutation in tests.
+
+## Update (2026-06-22): reopened — networkd error fixed, but DNS server unreachable via the link
+
+The `busctl`/resolve1 approach works: a clean `sudo verify.sh` run logged
+`configured systemd-resolved for devenv.local on link deven0 (ifindex 9) via
+resolve1 D-Bus` with **NO `network1` error**. The original bug is solved.
+
+But resolution still fails:
+
+```
+resolvectl query hello.devenv.local: resolve call failed: ... Connection refused
+```
+
+Root cause: systemd-resolved sends per-link DNS queries **bound to the link
+(`deven0`)**, but the embedded DNS server is advertised/bound at **`127.0.0.1:5300`**
+(`OverlayConfig.dns_listen` default). Loopback isn't reachable out of `deven0`, so
+the query is refused. The TUN's own address is the gateway **`10.254.0.1`**
+(`net::virtual_ip::gateway_ip()`), which *is* reachable via `deven0`.
+
+**Fix (remaining work to close this ticket):**
+- Serve / advertise the overlay DNS on the TUN gateway, not loopback: bind the
+  `OverlayDnsServer` to `10.254.0.1:5300` (or `0.0.0.0:5300`) and pass the gateway
+  address (`10.254.0.1:5300`) to `resolver_config::install` so resolved's per-link
+  DNS for `deven0` points at an address reachable via `deven0`. This likely means
+  splitting the DNS *bind* address from the *advertised* address in `overlay.rs`.
+- Secondary: `verify.sh` also logged `route add failed (ip route add 10.254.0.0/16
+  dev deven0): File exists` — a leftover route from a SIGKILL'd run. Make the
+  route-add idempotent (treat `EEXIST` as success) in `net/tun_device.rs` so reruns
+  are clean.
+- Re-validate with `sudo ./examples/local-overlay/verify.sh` (CHECK 1 must return a
+  `10.254.x.x` VIP; CHECK 2 curl must succeed).
 
 ## Notes
 
