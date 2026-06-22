@@ -12,6 +12,14 @@ This repository contains the local tunnel workspace:
 
 Repository: https://github.com/LoumTechnologies/devenv-tunnel
 
+## Documentation & examples
+
+- [`docs/`](docs/) — architecture overview, `DEVENV_TUNNEL` semantics, privilege
+  requirements, and troubleshooting.
+- [`examples/local-overlay/`](examples/local-overlay/) — a runnable end-to-end
+  `.devenv.local` virtual overlay example.
+- [`sdks/`](sdks/) — thin language helpers (direnv, Node, Python, Go).
+
 ## License
 
 PolyForm Shield. See [LICENSE](LICENSE).
