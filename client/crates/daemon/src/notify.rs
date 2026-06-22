@@ -33,6 +33,27 @@ pub enum Issue {
         /// Human-readable descriptions of each claimant (cwd / container).
         claimants: Vec<String>,
     },
+    /// A process is listening on a "common" dev port (or on a port a known
+    /// overlay service uses) but is *not* going through devenv-tunnel (no
+    /// `DEVENV_TUNNEL` set). This is the classic "I'm still hitting localhost
+    /// directly" footgun; we surface migration guidance.
+    LegacyListener {
+        /// The TCP port the legacy process is listening on.
+        port: u16,
+        /// Owning process id, if known (0 if unknown).
+        pid: u32,
+        /// Best-effort description of the owning context (cwd / git context).
+        context: String,
+    },
+    /// A Docker container failed to start because a published host port is
+    /// already bound by something else (a port-bind conflict). Often the
+    /// "other" binder is a stale process or a non-tunnel service.
+    DockerPortConflict {
+        /// The host port that could not be bound.
+        port: u16,
+        /// The container (name or id) that failed to start.
+        container: String,
+    },
 }
 
 impl Issue {
@@ -46,6 +67,14 @@ impl Issue {
                 claimants.len(),
                 claimants.join(", ")
             ),
+            Issue::LegacyListener { port, pid, context } => format!(
+                "Port {} is served directly (not via devenv-tunnel) by pid {} {}",
+                port, pid, context
+            ),
+            Issue::DockerPortConflict { port, container } => format!(
+                "Docker container \"{}\" failed to start: host port {} is already in use",
+                container, port
+            ),
         }
     }
 
@@ -56,6 +85,17 @@ impl Issue {
                 "Give each worktree a unique DEVENV_TUNNEL name — e.g. use a template \
                  like \"{name}-{{branch}}.devenv.local\" or \"{name}-{{worktree}}.devenv.local\" \
                  so the resolved name differs per checkout."
+            ),
+            Issue::LegacyListener { port, .. } => format!(
+                "Set DEVENV_TUNNEL on this process (e.g. \
+                 DEVENV_TUNNEL=my-svc.devenv.local for the local overlay, or \
+                 my-svc.<user>.tunnel.devenv.tools for a cloud tunnel) and reach it by name \
+                 instead of localhost:{port}. Until then this service bypasses the tunnel."
+            ),
+            Issue::DockerPortConflict { port, .. } => format!(
+                "Free host port {port} (stop whatever is bound to it) or remap the container's \
+                 published port. To route the container through the tunnel, set DEVENV_TUNNEL in \
+                 its environment instead of publishing a fixed host port."
             ),
         }
     }
@@ -350,6 +390,7 @@ mod tests {
                 assert_eq!(name, "db");
                 assert_eq!(claimants.len(), 2);
             }
+            other => panic!("unexpected issue: {:?}", other),
         }
     }
 
@@ -394,6 +435,36 @@ mod tests {
     }
 
     #[test]
+    fn test_legacy_and_docker_issue_roundtrip() {
+        let state = IssuesState {
+            issues: vec![
+                Issue::LegacyListener {
+                    port: 5432,
+                    pid: 4321,
+                    context: "(~/work/api)".to_string(),
+                },
+                Issue::DockerPortConflict {
+                    port: 8080,
+                    container: "web-1".to_string(),
+                },
+            ],
+        };
+        let parsed = IssuesState::from_json(&state.to_json());
+        assert_eq!(state, parsed);
+
+        // summary / fix_hint mention the salient details.
+        let legacy = &state.issues[0];
+        assert!(legacy.summary().contains("5432"));
+        assert!(legacy.summary().contains("4321"));
+        assert!(legacy.fix_hint().contains("DEVENV_TUNNEL"));
+
+        let docker = &state.issues[1];
+        assert!(docker.summary().contains("web-1"));
+        assert!(docker.summary().contains("8080"));
+        assert!(docker.fix_hint().contains("8080"));
+    }
+
+    #[test]
     fn test_issues_state_empty_roundtrip() {
         let state = IssuesState::default();
         assert!(state.is_empty());
@@ -427,6 +498,7 @@ mod tests {
                 assert_eq!(n0, "alpha");
                 assert_eq!(n1, "zebra");
             }
+            other => panic!("unexpected issues: {:?}", other),
         }
     }
 

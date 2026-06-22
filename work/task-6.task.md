@@ -1,7 +1,7 @@
 ---
 id: 4f2d3fd3-96bb-45de-8b14-30f867aab123
 slug: task-6
-status: todo
+status: done
 title: Implement legacy port monitoring, process attribution (cwd, remote port), and migration helpers
 relations:
   contains:
@@ -9,6 +9,7 @@ relations:
 created_at: 2026-06-21T11:12:11.235958Z
 updated_at: 2026-06-21T11:12:11.235958Z
 ---
+
 ## Description
 Fuzzy UX to help migrate and catch errors:
 

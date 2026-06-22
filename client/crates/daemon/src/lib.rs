@@ -4,6 +4,7 @@ pub mod cloud;
 pub mod discovery;
 pub mod discovery_loop;
 pub mod forwarder;
+pub mod legacy_monitor;
 pub mod net;
 pub mod notify;
 pub mod route_table;

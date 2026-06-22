@@ -525,6 +525,71 @@ fn discover_ports_lsof(pid: u32) -> Vec<ListeningPort> {
 }
 
 // ---------------------------------------------------------------------------
+// System-wide listener enumeration (for legacy-port monitoring)
+// ---------------------------------------------------------------------------
+
+/// A TCP listener observed system-wide, attributed to its owning process.
+///
+/// Used by the legacy-port monitor to find processes that serve a port directly
+/// (bypassing devenv-tunnel). Carries enough context (pid, cwd, whether
+/// `DEVENV_TUNNEL` is set) for the monitor's *pure* comparison logic to decide
+/// whether the listener is "legacy".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemListener {
+    /// The TCP port being listened on.
+    pub port: u16,
+    /// Owning process id.
+    pub pid: u32,
+    /// Working directory of the owning process, if discoverable.
+    pub cwd: Option<PathBuf>,
+    /// Whether the owning process has `DEVENV_TUNNEL` set (i.e. it is already
+    /// managed by us and must NOT be flagged as legacy).
+    pub has_devenv_tunnel: bool,
+}
+
+/// Enumerate every process's listening TCP ports system-wide, attributed to the
+/// owning process (pid, cwd, whether `DEVENV_TUNNEL` is set).
+///
+/// This is the single public entry point the legacy-port monitor uses; it
+/// reuses the existing per-OS [`discover_process_ports`] enumeration rather than
+/// duplicating any netstat/lsof/proc parsing. Best-effort and cross-platform:
+/// on platforms where per-process port discovery is unavailable it simply
+/// returns an empty list.
+pub fn enumerate_system_listeners() -> Vec<SystemListener> {
+    let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+    let mut out = Vec::new();
+    for (pid, process) in sys.processes() {
+        let pid_u32 = pid.as_u32();
+        if pid_u32 <= 1 {
+            continue;
+        }
+
+        let listening = discover_process_ports(pid_u32);
+        if listening.is_empty() {
+            continue;
+        }
+
+        let cwd = process.cwd().map(|p| p.to_path_buf());
+        let has_devenv_tunnel = scan_process_env(pid_u32, ENV_VAR_NAME)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+
+        for lp in listening {
+            out.push(SystemListener {
+                port: lp.port,
+                pid: pid_u32,
+                cwd: cwd.clone(),
+                has_devenv_tunnel,
+            });
+        }
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Platform-specific environment variable reading
 // ---------------------------------------------------------------------------
 

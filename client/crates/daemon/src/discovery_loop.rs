@@ -272,7 +272,14 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             tracing::info!("Virtual overlay network started (.devenv.local)");
             // Seed the overlay immediately so existing services are reachable
             // without waiting for the first scan cycle.
-            refresh_overlay_services(&ov, config, &mut notified_issues).await;
+            let (overlay_issues, overlay_services) = refresh_overlay_services(&ov).await;
+            gather_and_publish_issues(
+                config,
+                &route_table,
+                overlay_issues,
+                &overlay_services,
+                &mut notified_issues,
+            );
             Some(ov)
         }
         Err(e) => {
@@ -358,9 +365,23 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         // separate discovery pass from the cloud/route discovery above and does
         // not touch cloud route registration. No-op when the overlay failed to
         // start (unprivileged environment).
-        if let Some(ref ov) = overlay {
-            refresh_overlay_services(ov, config, &mut notified_issues).await;
-        }
+        //
+        // Also run the visibility checks (duplicate-name detection + legacy
+        // listener monitoring) and publish the combined issue set once per scan.
+        // Legacy monitoring runs regardless of whether the overlay started, so
+        // when the overlay is unavailable we still scan with empty overlay data.
+        let (overlay_issues, overlay_services) = if let Some(ref ov) = overlay {
+            refresh_overlay_services(ov).await
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        gather_and_publish_issues(
+            config,
+            &route_table,
+            overlay_issues,
+            &overlay_services,
+            &mut notified_issues,
+        );
 
         // Prune grace tracker
         let active_domains: Vec<&String> = route_table.routes.keys().collect();
@@ -533,32 +554,81 @@ fn build_overlay_table(services: &[DiscoveredNetworkService]) -> ServiceTable {
 /// running overlay network. Logs and ignores errors so a transient stack issue
 /// never disrupts the (independent) cloud/local route flow.
 ///
-/// While we have the freshly scanned service list in hand, also run the
-/// visibility checks (duplicate-name detection) so problems are surfaced via the
-/// persisted issues file, logs, and native notifications.
+/// Returns the duplicate-name visibility issues detected over the freshly
+/// scanned services *and* the scanned overlay service list itself (so the caller
+/// can build a managed-context for legacy-listener monitoring without scanning
+/// twice). The caller merges these issues with other sources and publishes them
+/// once per scan.
 async fn refresh_overlay_services(
     overlay: &OverlayNetwork,
-    config: &DaemonConfig,
-    notified_issues: &mut IssuesState,
-) {
+) -> (Vec<notify::Issue>, Vec<DiscoveredNetworkService>) {
     let services = discovery::scan_network_services().await;
-    check_overlay_issues(&services, config, notified_issues);
+    let issues = notify::detect_duplicate_names(&services);
     let table = build_overlay_table(&services);
     if let Err(e) = overlay.update_services(table).await {
         tracing::warn!("Failed to update overlay services: {:#}", e);
     }
+    (issues, services)
 }
 
-/// Run visibility checks over the freshly scanned overlay services:
-/// detect duplicate `.devenv.local` names claimed by distinct worktrees, persist
-/// the current issue set, log actionable guidance, and fire a native
-/// notification only when the issue set changes (to avoid spamming every scan).
-fn check_overlay_issues(
-    services: &[crate::discovery::DiscoveredNetworkService],
+/// Gather all current issues from every source and publish them once.
+///
+/// Sources:
+///  - duplicate `.devenv.local` names (from the overlay scan, when the overlay
+///    is running),
+///  - legacy listeners: processes serving common/managed ports directly,
+///    bypassing devenv-tunnel.
+///
+/// `overlay_issues` / `overlay_services` come from a prior overlay refresh (or
+/// are empty when the overlay isn't running). Best-effort and non-fatal.
+fn gather_and_publish_issues(
+    config: &DaemonConfig,
+    route_table: &RouteTable,
+    overlay_issues: Vec<notify::Issue>,
+    overlay_services: &[DiscoveredNetworkService],
+    notified_issues: &mut IssuesState,
+) {
+    let managed = build_managed_context(route_table, overlay_services);
+    let mut all = overlay_issues;
+    all.extend(crate::legacy_monitor::scan_legacy_listeners(&managed));
+    publish_issues(all, config, notified_issues);
+}
+
+/// Build the set of ports/cwds the daemon already manages (route table routes
+/// plus overlay services), so the legacy-listener monitor never flags a service
+/// we are already tunneling. Pure given its inputs.
+fn build_managed_context(
+    route_table: &RouteTable,
+    overlay_services: &[DiscoveredNetworkService],
+) -> crate::legacy_monitor::ManagedContext {
+    use crate::discovery::ServiceSource;
+    let mut managed = crate::legacy_monitor::ManagedContext::new();
+    for route in route_table.routes.values() {
+        if route.port != 0 {
+            managed.ports.insert(route.port);
+        }
+        if let ServiceSource::Process { cwd: Some(cwd) } = &route.source {
+            managed.cwds.insert(cwd.clone());
+        }
+    }
+    for svc in overlay_services {
+        managed.ports.insert(svc.real_addr.port());
+        if let ServiceSource::Process { cwd: Some(cwd) } = &svc.source {
+            managed.cwds.insert(cwd.clone());
+        }
+    }
+    managed
+}
+
+/// Persist the full set of current issues (from all sources) so
+/// `devenv tunnel status` can surface them, and — only when the set changes
+/// since the last scan — log actionable guidance and fire a single native
+/// notification. The change-gating prevents flooding the log/desktop every scan.
+fn publish_issues(
+    issues: Vec<notify::Issue>,
     config: &DaemonConfig,
     notified_issues: &mut IssuesState,
 ) {
-    let issues = notify::detect_duplicate_names(services);
     let current = IssuesState {
         issues: issues.clone(),
     };
@@ -566,9 +636,6 @@ fn check_overlay_issues(
     // Persist the current state so `devenv tunnel status` can surface it.
     notify::write_issues(&config.issues_path(), &current);
 
-    // Only act (log loudly + notify) when the set of problems changed since the
-    // last scan. This makes the warning visible without flooding the log or the
-    // desktop every couple of seconds.
     if current == *notified_issues {
         return;
     }
@@ -582,7 +649,7 @@ fn check_overlay_issues(
         // One consolidated notification covering all current issues.
         let first = &issues[0];
         let title = if issues.len() == 1 {
-            "devenv tunnel: duplicate name".to_string()
+            "devenv tunnel: issue detected".to_string()
         } else {
             format!("devenv tunnel: {} issues", issues.len())
         };
