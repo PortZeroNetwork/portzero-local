@@ -174,3 +174,4 @@ jobs:
             artifacts/*.tar.gz
             artifacts/*.zip
             artifacts/version.json
+            scripts/install.sh
