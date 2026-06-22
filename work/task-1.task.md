@@ -1,7 +1,7 @@
 ---
 id: 1af9361a-ce73-4568-b0df-36453fe7a02e
 slug: task-1
-status: todo
+status: done
 title: Implement full smoltcp user-space TCP stack and proxy loop
 relations:
   contains:
@@ -9,6 +9,7 @@ relations:
 created_at: 2026-06-21T11:12:11.235958Z
 updated_at: 2026-06-21T11:12:11.235958Z
 ---
+
 ## Description
 The current `stack.rs` is a stub. Implement the real async packet-routing loop:
 

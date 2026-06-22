@@ -26,7 +26,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # smoltcp features vary by version. We activate a minimal set; see net/ for usage.
-smoltcp = { version = "0.11", default-features = false, features = ["std", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
+# TUN is an L3 (IP) device, so we need `medium-ip`. `medium-ethernet` is kept
+# for any future L2 use but the virtual stack runs in IP mode.
+smoltcp = { version = "0.11", default-features = false, features = ["std", "medium-ip", "medium-ethernet", "proto-ipv4", "socket-tcp"] }
 socket2 = "0.5"
 sysinfo = "0.35"
 tokio = { version = "1", features = ["full"] }
