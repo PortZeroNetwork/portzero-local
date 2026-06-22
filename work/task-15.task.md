@@ -1,7 +1,7 @@
 ---
 id: ee0488f7-2163-465d-805a-0f9b1d17959e
 slug: task-15
-status: in-progress
+status: done
 title: Make Linux scoped DNS robust (systemd-resolved without networkd, plus fallbacks)
 milestones:
 - milestone-1
@@ -124,6 +124,29 @@ the query is refused. The TUN's own address is the gateway **`10.254.0.1`**
   are clean.
 - Re-validate with `sudo ./examples/local-overlay/verify.sh` (CHECK 1 must return a
   `10.254.x.x` VIP; CHECK 2 curl must succeed).
+
+## Resolution (2026-06-22)
+
+Two coupled causes, fixed together:
+- **Port:** resolve1 `SetLinkDNS` carries no port, so systemd-resolved always
+  queries the configured server on **port 53**, but the embedded DNS server was on
+  **5300** → `Connection refused`. (This was even documented in
+  `busctl_set_link_dns_args` but not reconciled with `OverlayConfig`.)
+- **Address:** loopback isn't reachable via the `deven0` link resolved scopes to.
+
+Fix (single change in `net/overlay.rs`): `OverlayConfig.dns_listen` now defaults to
+the TUN **gateway on port 53** — `SocketAddr::new(gateway_ip(), 53)` = `10.254.0.1:53`.
+The embedded DNS server binds there and the scoped resolver is pointed there, so:
+resolve1's port-less `SetLinkDNS(10.254.0.1)` hits `:53` ✔; the gateway is reachable
+via `deven0` ✔; macOS/dnsmasq paths (which carry the port) reach `10.254.0.1:53` too.
+`resolver_config.rs` needed no change — it already uses whatever address it's given.
+
+Plus the secondary idempotent-route fix in `net/tun_device.rs` (treat `ip route add`
+`EEXIST`/"File exists" as success).
+
+⚠️ Unit tests + build pass unprivileged, but the end-to-end resolve path can only be
+confirmed by a human root run: `sudo ./examples/local-overlay/verify.sh` (CHECK 1
+must now return a `10.254.x.x` VIP and CHECK 2 curl must succeed).
 
 ## Notes
 

@@ -4,7 +4,7 @@
 //! It receives service updates (from discovery) and keeps the virtual network
 //! in sync with services that set a full `*.devenv.local` name via DEVENV_TUNNEL.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -15,12 +15,21 @@ use crate::net::resolver_config;
 use crate::net::service_table::ServiceTable;
 use crate::net::stack::VirtualStack;
 use crate::net::tun_device::{TunConfig, TunDevice};
+use crate::net::virtual_ip::gateway_ip;
 
 /// Configuration for the overlay network.
 #[derive(Debug, Clone)]
 pub struct OverlayConfig {
-    /// Address the embedded DNS server should listen on.
-    /// Usually 127.0.0.53 or 127.0.0.1:53 (the latter requires privileges).
+    /// Address the embedded DNS server listens on AND that the scoped OS resolver
+    /// is pointed at. This must be the TUN **gateway** address on port **53**
+    /// (e.g. `10.254.0.1:53`), for two reasons:
+    ///   1. systemd-resolved sends per-link DNS queries via the TUN link
+    ///      (`deven0`); loopback (`127.0.0.1`) is not reachable that way, but the
+    ///      gateway — the TUN's own address — is.
+    ///   2. resolve1's `SetLinkDNS` carries no port, so resolved always queries
+    ///      port 53. The server must therefore listen on 53, not 5300.
+    /// The macOS (`/etc/resolver`) and dnsmasq fallback paths carry the port too,
+    /// and reach the gateway:53 just the same.
     pub dns_listen: SocketAddr,
     /// TUN device configuration.
     pub tun: TunConfig,
@@ -29,9 +38,12 @@ pub struct OverlayConfig {
 impl Default for OverlayConfig {
     fn default() -> Self {
         Self {
-            // Common safe local address for a scoped resolver.
-            // On macOS/Linux we will point /etc/resolver or systemd-resolved at this.
-            dns_listen: "127.0.0.1:5300".parse().unwrap(),
+            // The embedded DNS server lives on the overlay gateway at :53 so that
+            // systemd-resolved (per-link, port-less SetLinkDNS) can reach it via
+            // the TUN link. The daemon already runs as root to create the TUN, so
+            // binding :53 on this dedicated address is fine (it does not collide
+            // with systemd-resolved's own 127.0.0.53:53 stub).
+            dns_listen: SocketAddr::new(IpAddr::V4(gateway_ip()), 53),
             tun: TunConfig::default(),
         }
     }

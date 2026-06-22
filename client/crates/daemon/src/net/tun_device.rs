@@ -173,12 +173,34 @@ fn route_del_command(cidr: &str, iface: &str) -> Option<(&'static str, Vec<Strin
     }
 }
 
+/// True if a failed `route add` stderr indicates the route is already present
+/// (Linux `ip route add` -> "File exists" / `EEXIST`; macOS `route add` ->
+/// "File exists" on the routing socket). In that case the route we wanted is
+/// already installed, so the add should be treated as success — this keeps
+/// reruns clean after a previous run was SIGKILL'd before teardown.
+///
+/// Pure and side-effect free so it can be unit-tested unprivileged.
+fn route_add_already_exists(stderr: &str) -> bool {
+    let s = stderr.to_ascii_lowercase();
+    s.contains("file exists")
+}
+
 /// Best-effort: run a route command, logging the outcome. Never returns an
 /// error — route management is non-fatal.
 fn run_route_command(action: &str, program: &str, args: &[String]) -> bool {
     match std::process::Command::new(program).args(args).output() {
         Ok(out) if out.status.success() => {
             tracing::info!("route {action} succeeded: {program} {}", args.join(" "));
+            true
+        }
+        // An "already exists" result on add means the route is present (e.g. a
+        // leftover from a previous run killed before teardown). Treat as success
+        // so the route is still recorded/usable and reruns are idempotent.
+        Ok(out) if action == "add" && route_add_already_exists(&String::from_utf8_lossy(&out.stderr)) => {
+            tracing::info!(
+                "route add already present (treated as success): {program} {}",
+                args.join(" ")
+            );
             true
         }
         Ok(out) => {
@@ -480,6 +502,24 @@ mod tests {
                 "utun7"
             ]
         );
+    }
+
+    #[test]
+    fn route_add_already_exists_classifier() {
+        // Linux `ip route add` and macOS `route add` both report "File exists"
+        // when the route is already present; that must be treated as success.
+        assert!(route_add_already_exists(
+            "RTNETLINK answers: File exists"
+        ));
+        assert!(route_add_already_exists(
+            "route: writing to routing socket: File exists\nadd net 10.254.0.0: gateway deven0: File exists"
+        ));
+        // Case-insensitive for safety.
+        assert!(route_add_already_exists("file exists"));
+        // Unrelated failures must NOT be swallowed.
+        assert!(!route_add_already_exists("Operation not permitted"));
+        assert!(!route_add_already_exists("Network is unreachable"));
+        assert!(!route_add_already_exists(""));
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
