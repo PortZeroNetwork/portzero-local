@@ -2,7 +2,7 @@
 //!
 //! After each CLI invocation we spawn a non-blocking check against the
 //! `version.json` published as a GitHub Release asset.  If a newer version exists we print a
-//! one-line notice to stderr.  The check is skipped if the `DEVENV_TOOLS_NO_UPDATE_CHECK`
+//! one-line notice to stderr.  The check is skipped if the `DEVENV_NO_UPDATE_CHECK`
 //! env var is set, or if the last check was less than 24 hours ago.
 
 use std::cmp::Ordering;
@@ -36,7 +36,7 @@ fn last_check_path() -> Result<PathBuf> {
 
 /// Return true if enough time has elapsed since the last check.
 fn should_check() -> bool {
-    if std::env::var("DEVENV_TOOLS_NO_UPDATE_CHECK").is_ok() {
+    if std::env::var("DEVENV_NO_UPDATE_CHECK").is_ok() {
         return false;
     }
 

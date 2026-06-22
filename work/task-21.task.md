@@ -1,7 +1,7 @@
 ---
 id: 4a80490e-e167-4e7b-b0cd-94d4c0536164
 slug: task-21
-status: todo
+status: done
 title: 'Single canonical install.sh: publish as GitHub Release asset; devenv.tools redirects to it'
 milestones:
 - milestone-1
@@ -18,9 +18,14 @@ implementation.
 ## Model
 
 - Single source: `scripts/install.sh` (this repo). Installs `devenv` +
-  `devenv-tunnel` from this repo's GitHub Releases; full UX (colors, platform
-  detection, `DEVENV_TOOLS_VERSION` pinning, `DEVENV_TOOLS_INSTALL_DIR`, channel
-  compat, PATH check, helpful errors).
+  `devenv-tunnel` from this repo's GitHub Releases — **latest only**. Pre-release,
+  so no backwards-compat baggage: no channels/staging, no version pinning. Only
+  env var is `DEVENV_INSTALL_DIR`. Channel plumbing was also removed from
+  `bin/devenv.rs` (`devenv update` just re-runs the installer) and
+  `DEVENV_TOOLS_NO_UPDATE_CHECK` → `DEVENV_NO_UPDATE_CHECK` in `update.rs`.
+  (Shared product/infra vars — `DEVENV_TOOLS_API_URL`, `EDGE_URL`, `WEB_URL`,
+  `DASHBOARD_URL`, `BASE_DOMAIN` — left as-is; renaming those is a coordinated
+  client/server change.)
 - Published as a GitHub Release asset every release (added to `release.yml`
   `files:`), giving a stable URL:
   `https://github.com/LoumTechnologies/devenv-tunnel/releases/latest/download/install.sh`

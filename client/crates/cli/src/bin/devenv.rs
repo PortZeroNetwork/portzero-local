@@ -59,7 +59,6 @@ async fn main() {
 async fn do_update() {
     let current = env!("CARGO_PKG_VERSION");
     let current_version = parse_semver(current);
-    let channel = update_channel(current_version.as_ref());
 
     match fetch_latest_version().await {
         Ok(latest) => match (current_version, parse_semver(&latest)) {
@@ -82,7 +81,6 @@ async fn do_update() {
     let status = Command::new("sh")
         .arg("-c")
         .arg(INSTALL_SCRIPT)
-        .env("DEVENV_TOOLS_CHANNEL", channel)
         .status();
 
     match status {
@@ -114,12 +112,6 @@ struct Version {
     minor: u64,
     patch: u64,
     prerelease: Option<String>,
-}
-
-impl Version {
-    fn is_prerelease(&self) -> bool {
-        self.prerelease.is_some()
-    }
 }
 
 impl Ord for Version {
@@ -191,14 +183,6 @@ fn parse_semver(s: &str) -> Option<Version> {
         patch,
         prerelease,
     })
-}
-
-fn update_channel(current: Option<&Version>) -> &'static str {
-    match env::var("DEVENV_TOOLS_CHANNEL") {
-        Ok(value) if value == "staging" => "staging",
-        _ if current.is_some_and(Version::is_prerelease) => "staging",
-        _ => "latest",
-    }
 }
 
 fn version_url() -> String {
