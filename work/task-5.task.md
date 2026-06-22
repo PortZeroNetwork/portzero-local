@@ -2,7 +2,7 @@
 id: 0ecc0c87-9b8b-49e5-a6d7-e995f18c8e07
 slug: task-5
 status: todo
-title: Add visibility layer: system tray, notifications, errors for non-unique names and misuse
+title: "Add visibility layer: system tray, notifications, errors for non-unique names and misuse"
 relations:
   contains:
   - milestone-1
