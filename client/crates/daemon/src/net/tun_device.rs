@@ -185,6 +185,67 @@ fn route_add_already_exists(stderr: &str) -> bool {
     s.contains("file exists")
 }
 
+/// True if a failed `TunDevice::create` error indicates the same-named device
+/// already exists / is busy. On Linux a leftover `deven0` from an unclean exit
+/// (SIGKILL, panic, OOM, power loss) makes `create_as_async` fail with `EBUSY`
+/// ("Device or resource busy" / "os error 16"); some paths surface `EEXIST`
+/// ("File exists"). In those cases we may delete OUR stale device and retry.
+///
+/// Pure and side-effect free so it can be unit-tested unprivileged.
+fn device_busy_or_exists(err: &str) -> bool {
+    let s = err.to_ascii_lowercase();
+    s.contains("device or resource busy") || s.contains("os error 16") || s.contains("file exists")
+}
+
+/// Generate the OS command + arguments to delete a stale interface by name so a
+/// fresh device can be created in its place. Returns `None` on platforms where
+/// we must NOT delete the device (macOS `utun` unit numbers are kernel-assigned;
+/// Windows wintun is handled by the adapter lifecycle).
+///
+/// Pure and side-effect free so it can be unit-tested unprivileged.
+fn delete_device_command(name: &str) -> Option<(&'static str, Vec<String>)> {
+    #[cfg(target_os = "linux")]
+    {
+        Some(("ip", vec!["link".into(), "delete".into(), name.into()]))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = name;
+        None
+    }
+}
+
+/// Best-effort deletion of a stale interface that matches OUR overlay device
+/// name. Logged, never fatal. Only ever called with the name we ourselves
+/// requested from the kernel, so we never touch an unrelated interface.
+fn delete_device(name: &str) -> bool {
+    let Some((program, args)) = delete_device_command(name) else {
+        return false;
+    };
+    match std::process::Command::new(program).args(&args).output() {
+        Ok(out) if out.status.success() => {
+            tracing::info!("deleted stale device {name}: {program} {}", args.join(" "));
+            true
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            tracing::warn!(
+                "could not delete stale device {name} ({program} {}): {}",
+                args.join(" "),
+                stderr.trim()
+            );
+            false
+        }
+        Err(e) => {
+            tracing::warn!(
+                "could not run delete for stale device {name} ({program} {}): {e}",
+                args.join(" ")
+            );
+            false
+        }
+    }
+}
+
 /// Best-effort: run a route command, logging the outcome. Never returns an
 /// error — route management is non-fatal.
 fn run_route_command(action: &str, program: &str, args: &[String]) -> bool {
@@ -257,8 +318,41 @@ impl TunDevice {
         // Layer 3 (we want raw IP packets, not ethernet frames).
         tuncfg.layer(tun::Layer::L3);
 
-        let dev =
-            create_as_async(&tuncfg).context("failed to create TUN device (are you root?)")?;
+        let dev = match create_as_async(&tuncfg) {
+            Ok(dev) => dev,
+            Err(first_err) => {
+                // A leftover same-named device from an unclean exit makes create
+                // fail with EBUSY/EEXIST. Best-effort: delete OUR stale device
+                // (only the exact name we requested — never an unrelated iface)
+                // and retry create exactly ONCE. macOS `utun` units are
+                // kernel-assigned so `delete_device_command` returns `None`
+                // there and we skip straight to surfacing the error.
+                let msg = first_err.to_string();
+                if device_busy_or_exists(&msg) && delete_device_command(&requested_name).is_some() {
+                    tracing::warn!(
+                        "TUN device {requested_name} appears stale/busy ({}); deleting and retrying once",
+                        msg.trim()
+                    );
+                    delete_device(&requested_name);
+                    match create_as_async(&tuncfg) {
+                        Ok(dev) => {
+                            tracing::info!(
+                                "recreated TUN device {requested_name} after removing a stale instance"
+                            );
+                            dev
+                        }
+                        // Retry also failed: degrade exactly as before by
+                        // returning the ORIGINAL error.
+                        Err(_) => {
+                            return Err(first_err)
+                                .context("failed to create TUN device (are you root?)");
+                        }
+                    }
+                } else {
+                    return Err(first_err).context("failed to create TUN device (are you root?)");
+                }
+            }
+        };
 
         // Ask the device what its actual name is (the kernel may have chosen a
         // different unit number, e.g. utun7 instead of the requested utun).
@@ -527,5 +621,40 @@ mod tests {
     fn route_commands_none_on_other_platforms() {
         assert!(route_add_command("10.254.0.0/16", "deven0").is_none());
         assert!(route_del_command("10.254.0.0/16", "deven0").is_none());
+    }
+
+    #[test]
+    fn device_busy_or_exists_classifier() {
+        // EBUSY: a leftover device from an unclean exit ("Device or resource
+        // busy" / raw "os error 16").
+        assert!(device_busy_or_exists(
+            "failed to create TUN device (are you root?): Device or resource busy (os error 16)"
+        ));
+        assert!(device_busy_or_exists("Device or resource busy"));
+        assert!(device_busy_or_exists("os error 16"));
+        // EEXIST surfaced on some paths.
+        assert!(device_busy_or_exists("File exists"));
+        // Case-insensitive for safety.
+        assert!(device_busy_or_exists("DEVICE OR RESOURCE BUSY"));
+        // Unrelated errors must NOT trigger a destructive delete+retry.
+        assert!(!device_busy_or_exists("Operation not permitted"));
+        assert!(!device_busy_or_exists("No such device"));
+        assert!(!device_busy_or_exists("Permission denied"));
+        assert!(!device_busy_or_exists(""));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn delete_device_command_linux() {
+        let (prog, args) = delete_device_command("deven0").unwrap();
+        assert_eq!(prog, "ip");
+        assert_eq!(args, vec!["link", "delete", "deven0"]);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn delete_device_command_none_off_linux() {
+        // macOS utun units are kernel-assigned; we never delete by name there.
+        assert!(delete_device_command("deven0").is_none());
     }
 }

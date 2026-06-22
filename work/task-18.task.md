@@ -1,7 +1,7 @@
 ---
 id: 4152130d-5ee2-485e-b11d-e15da5d36a8b
 slug: task-18
-status: todo
+status: done
 title: 'Robust TUN lifecycle: clean teardown + recover from leftover deven0 on startup'
 milestones:
 - milestone-1

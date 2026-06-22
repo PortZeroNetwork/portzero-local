@@ -41,6 +41,7 @@ use smoltcp::socket::tcp;
 use smoltcp::time::Instant;
 use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 use crate::net::service_table::ServiceTable;
 
@@ -62,6 +63,17 @@ pub enum StackCommand {
 /// the dedicated stack task.
 pub struct VirtualStack {
     cmd_tx: mpsc::Sender<StackCommand>,
+    /// Handles to the TUN reader/writer tasks (only present for the real
+    /// [`VirtualStack::spawn`] path; the test [`spawn_with_device`] path creates
+    /// no TUN tasks and leaves these `None`).
+    ///
+    /// These must be aborted on [`shutdown`] so the reader task — which would
+    /// otherwise stay parked forever in `tun_reader.read().await` — drops its
+    /// half of the device. Once both halves drop, the TUN fd closes, the
+    /// [`RouteGuard`] on the writer half runs, and the OS interface (`deven0`)
+    /// disappears on a normal stop.
+    reader_task: Option<JoinHandle<()>>,
+    writer_task: Option<JoinHandle<()>>,
 }
 
 impl VirtualStack {
@@ -82,7 +94,7 @@ impl VirtualStack {
 
         // TUN reader task: read raw L3 packets and push them to the stack.
         let inbound_tx_reader = inbound_tx.clone();
-        tokio::spawn(async move {
+        let reader_task = tokio::spawn(async move {
             let mut buf = vec![0u8; STACK_MTU + 4];
             loop {
                 match tun_reader.read(&mut buf).await {
@@ -102,7 +114,7 @@ impl VirtualStack {
         });
 
         // TUN writer task: drain outbound packets and write them to TUN.
-        tokio::spawn(async move {
+        let writer_task = tokio::spawn(async move {
             while let Some(pkt) = outbound_rx.recv().await {
                 if let Err(e) = tun_writer.write(&pkt).await {
                     tracing::warn!("TUN write error: {e}");
@@ -115,7 +127,11 @@ impl VirtualStack {
         let device = ChannelDevice::new(inbound_rx, outbound_tx);
         StackEngine::spawn(device, initial, cmd_rx);
 
-        Ok(Self { cmd_tx })
+        Ok(Self {
+            cmd_tx,
+            reader_task: Some(reader_task),
+            writer_task: Some(writer_task),
+        })
     }
 
     /// Spawn a stack over an arbitrary smoltcp device (used by tests with a mock
@@ -128,7 +144,13 @@ impl VirtualStack {
     {
         let (cmd_tx, cmd_rx) = mpsc::channel::<StackCommand>(16);
         StackEngine::spawn(device, initial, cmd_rx);
-        Self { cmd_tx }
+        // The mock-device test path drives no real TUN, so there are no
+        // reader/writer tasks to track or abort.
+        Self {
+            cmd_tx,
+            reader_task: None,
+            writer_task: None,
+        }
     }
 
     pub async fn update_services(&self, table: ServiceTable) -> Result<()> {
@@ -138,6 +160,19 @@ impl VirtualStack {
 
     pub async fn shutdown(&self) -> Result<()> {
         let _ = self.cmd_tx.send(StackCommand::Shutdown).await;
+        // Abort the TUN reader/writer tasks so their halves of the device drop.
+        // The reader task is otherwise parked forever in `read().await`, holding
+        // the reader half (and, via the writer half's `RouteGuard`, the route and
+        // fd). Aborting both lets the device fd close and the OS interface
+        // (`deven0`) go away on a normal stop. `JoinHandle::abort` takes `&self`,
+        // so aborting from `&self` here is fine. No-op on the test path where the
+        // handles are `None`.
+        if let Some(task) = self.reader_task.as_ref() {
+            task.abort();
+        }
+        if let Some(task) = self.writer_task.as_ref() {
+            task.abort();
+        }
         Ok(())
     }
 }
