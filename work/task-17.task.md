@@ -1,7 +1,7 @@
 ---
 id: b214aaf5-00c5-4682-aa52-a65424340a80
 slug: task-17
-status: todo
+status: done
 title: Protocol detection (HTTP/TLS) to expose overlay services on canonical ports
 milestones:
 - milestone-1

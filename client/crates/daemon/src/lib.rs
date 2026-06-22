@@ -8,4 +8,5 @@ pub mod forwarder;
 pub mod legacy_monitor;
 pub mod net;
 pub mod notify;
+pub mod protocol_detect;
 pub mod route_table;

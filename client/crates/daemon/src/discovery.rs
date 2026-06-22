@@ -23,6 +23,8 @@ use anyhow::Result;
 use devenv_tunnel_domain::{split_tunnel_port, validate_tunnel_domain, DomainContext};
 use sysinfo::System;
 
+use crate::protocol_detect;
+
 /// The single environment variable used to tag services.
 ///
 /// The value (after substitution) must be a full domain name:
@@ -37,6 +39,10 @@ const ENV_HTTP_PORT_VAR: &str = "DEVENV_TUNNEL_HTTP_PORT";
 
 /// Additional raw port mappings: `local:tunnel[;local:tunnel...]`
 const ENV_PORTS_VAR: &str = "DEVENV_TUNNEL_PORTS";
+
+/// Opt-out for active protocol probing (task-17). When set on the target
+/// process (or on the daemon's own env) probing is skipped entirely.
+const ENV_NO_PROBE_VAR: &str = "DEVENV_TUNNEL_NO_PROBE";
 
 /// Returns true if the (full) resolved name indicates the local virtual overlay
 /// (must end with .devenv.local or .local).
@@ -947,12 +953,12 @@ pub struct DiscoveredNetworkService {
 /// multiple distinct worktrees.
 pub async fn scan_network_services() -> Vec<DiscoveredNetworkService> {
     let mut out = Vec::new();
-    out.extend(scan_network_processes());
+    out.extend(scan_network_processes().await);
     out.extend(scan_network_containers().await);
     out
 }
 
-fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
+async fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
     use std::net::{IpAddr, SocketAddr};
 
     let mut sys = System::new();
@@ -1007,11 +1013,29 @@ fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
 
         let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
 
-        // When an explicit canonical port was given, expose the service on
-        // VIP:<canonical_port> and proxy to the real ephemeral backend.
-        // Otherwise fall back to today's behavior (ephemeral port as the VIP
-        // listen port).
-        let service_port = canonical_port.unwrap_or(port);
+        // Precedence (task-16 + task-17):
+        //   explicit `:port`  >  detected canonical (HTTP→80 / TLS→443)  >  ephemeral.
+        //
+        // An explicit canonical port ALWAYS wins and skips probing entirely.
+        // Otherwise, when probing is enabled, actively probe the real backend
+        // to detect its protocol and expose it on the standard port. Detection
+        // is best-effort: any failure yields `None` and we fall back to the
+        // ephemeral port (today's behavior). Results are cached per
+        // (pid, real_port) so we do not re-probe every scan.
+        let service_port = match canonical_port {
+            Some(explicit) => explicit,
+            None => {
+                let per_process = scan_process_env(pid_u32, ENV_NO_PROBE_VAR);
+                let daemon_env = std::env::var(ENV_NO_PROBE_VAR).ok();
+                if protocol_detect::probing_disabled(per_process.as_deref(), daemon_env.as_deref()) {
+                    port
+                } else {
+                    protocol_detect::detect_cached(real_addr, (pid_u32, port))
+                        .await
+                        .unwrap_or(port)
+                }
+            }
+        };
 
         results.push(DiscoveredNetworkService {
             name: label,
