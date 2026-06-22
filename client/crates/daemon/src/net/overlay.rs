@@ -22,14 +22,12 @@ use crate::net::virtual_ip::gateway_ip;
 pub struct OverlayConfig {
     /// Address the embedded DNS server listens on AND that the scoped OS resolver
     /// is pointed at. This must be the TUN **gateway** address on port **53**
-    /// (e.g. `10.254.0.1:53`), for two reasons:
-    ///   1. systemd-resolved sends per-link DNS queries via the TUN link
-    ///      (`deven0`); loopback (`127.0.0.1`) is not reachable that way, but the
-    ///      gateway — the TUN's own address — is.
-    ///   2. resolve1's `SetLinkDNS` carries no port, so resolved always queries
-    ///      port 53. The server must therefore listen on 53, not 5300.
-    /// The macOS (`/etc/resolver`) and dnsmasq fallback paths carry the port too,
-    /// and reach the gateway:53 just the same.
+    /// (e.g. `10.254.0.1:53`). systemd-resolved sends per-link DNS queries via the
+    /// TUN link (`deven0`), where loopback (`127.0.0.1`) is unreachable but the
+    /// gateway — the TUN's own address — is reachable; and resolve1's `SetLinkDNS`
+    /// carries no port, so resolved always queries port 53 (hence the server must
+    /// listen on 53, not 5300). The macOS (`/etc/resolver`) and dnsmasq fallback
+    /// paths carry the port too and reach the gateway:53 just the same.
     pub dns_listen: SocketAddr,
     /// TUN device configuration.
     pub tun: TunConfig,

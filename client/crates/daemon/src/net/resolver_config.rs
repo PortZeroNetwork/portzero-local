@@ -95,7 +95,7 @@ fn uninstall_impl(_link_name: &str) -> Result<()> {
 /// The `port` line is needed when the server listens on a non-standard port.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn macos_resolver_file_content(dns_addr: SocketAddr) -> String {
-    let mut out = format!("# Managed by devenv-tunnel — do not edit by hand.\n");
+    let mut out = String::from("# Managed by devenv-tunnel — do not edit by hand.\n");
     out.push_str(&format!("nameserver {}\n", dns_addr.ip()));
     if dns_addr.port() != 53 {
         out.push_str(&format!("port {}\n", dns_addr.port()));

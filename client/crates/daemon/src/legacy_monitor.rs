@@ -159,7 +159,7 @@ pub fn detect_legacy_listeners(
 
     // Stable ordering (by port then pid) for byte-identical persisted JSON
     // across scans, matching the de-dup contract in `notify`.
-    issues.sort_by(|a, b| issue_sort_key(a).cmp(&issue_sort_key(b)));
+    issues.sort_by_key(issue_sort_key);
     issues
 }
 
