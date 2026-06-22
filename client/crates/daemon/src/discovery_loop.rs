@@ -9,7 +9,10 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use tokio::sync::Notify;
 
 const RECONNECT_BASE_DELAY_SECS: u64 = 1;
 const RECONNECT_MAX_DELAY_SECS: u64 = 300;
@@ -59,6 +62,7 @@ use devenv_tunnel_client::domain_router::DomainRouter;
 use crate::auth::AuthConfig;
 use crate::cloud::CloudConnector;
 use crate::discovery::{self, DiscoveredNetworkService};
+use crate::docker_events::{self, ConflictRegistry};
 use crate::net::overlay::{OverlayConfig, OverlayNetwork};
 use crate::net::service_table::ServiceTable;
 use crate::notify::{self, IssuesState};
@@ -266,6 +270,22 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     // an unchanged, still-present issue.
     let mut notified_issues = notify::read_issues(&config.issues_path());
 
+    // Robust Docker event monitor (task-8): watches `docker events` in real time
+    // for container start/die so we can (a) surface host-port-bind conflicts that
+    // the periodic poll would miss (a failed start dies before the next scan) and
+    // (b) rescan immediately instead of waiting the full poll interval. The
+    // `ConflictRegistry` collects conflict issues the monitor finds so they can be
+    // merged into the per-scan issue set below. `docker_rescan` lets the monitor
+    // wake the loop early; `docker_shutdown` tears the monitor down cleanly.
+    let conflicts = ConflictRegistry::new();
+    let docker_rescan = Arc::new(Notify::new());
+    let docker_shutdown = Arc::new(Notify::new());
+    let docker_monitor = tokio::spawn(docker_events::run_event_monitor(
+        conflicts.clone(),
+        docker_rescan.clone(),
+        docker_shutdown.clone(),
+    ));
+
     let overlay: Option<OverlayNetwork> = match OverlayNetwork::start(OverlayConfig::default()).await
     {
         Ok(ov) => {
@@ -273,11 +293,13 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             // Seed the overlay immediately so existing services are reachable
             // without waiting for the first scan cycle.
             let (overlay_issues, overlay_services) = refresh_overlay_services(&ov).await;
+            let docker_conflicts = conflicts.snapshot().await;
             gather_and_publish_issues(
                 config,
                 &route_table,
                 overlay_issues,
                 &overlay_services,
+                docker_conflicts,
                 &mut notified_issues,
             );
             Some(ov)
@@ -375,11 +397,13 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         } else {
             (Vec::new(), Vec::new())
         };
+        let docker_conflicts = conflicts.snapshot().await;
         gather_and_publish_issues(
             config,
             &route_table,
             overlay_issues,
             &overlay_services,
+            docker_conflicts,
             &mut notified_issues,
         );
 
@@ -512,12 +536,22 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         // can tear the overlay (and its TUN/resolver config) down cleanly.
         tokio::select! {
             _ = tokio::time::sleep(interval) => {}
+            // Wake early when the Docker event monitor sees a relevant container
+            // start/die, so a new (or vanished) container is reflected promptly
+            // instead of waiting the full poll interval.
+            _ = docker_rescan.notified() => {
+                tracing::trace!("Docker event triggered an immediate rescan");
+            }
             _ = wait_for_shutdown_signal() => {
                 tracing::info!("Shutdown signal received, stopping discovery daemon");
                 break;
             }
         }
     }
+
+    // Stop the Docker event monitor cleanly alongside the overlay teardown.
+    docker_shutdown.notify_one();
+    docker_monitor.abort();
 
     // Graceful shutdown: tear down the overlay (removes the scoped resolver
     // config and the TUN device) before exiting so we don't leave the system's
@@ -586,11 +620,14 @@ fn gather_and_publish_issues(
     route_table: &RouteTable,
     overlay_issues: Vec<notify::Issue>,
     overlay_services: &[DiscoveredNetworkService],
+    docker_conflicts: Vec<notify::Issue>,
     notified_issues: &mut IssuesState,
 ) {
     let managed = build_managed_context(route_table, overlay_services);
     let mut all = overlay_issues;
     all.extend(crate::legacy_monitor::scan_legacy_listeners(&managed));
+    // Real-time Docker port-bind conflicts caught by the event monitor (task-8).
+    all.extend(docker_conflicts);
     publish_issues(all, config, notified_issues);
 }
 

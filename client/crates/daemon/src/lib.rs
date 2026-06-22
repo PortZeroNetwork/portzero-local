@@ -3,6 +3,7 @@ pub mod autostart;
 pub mod cloud;
 pub mod discovery;
 pub mod discovery_loop;
+pub mod docker_events;
 pub mod forwarder;
 pub mod legacy_monitor;
 pub mod net;
