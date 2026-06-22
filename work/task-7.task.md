@@ -1,7 +1,7 @@
 ---
 id: 0d7162b2-93fe-463f-89e6-56d9ff0eb9df
 slug: task-7
-status: todo
+status: done
 title: Create SDKs for major languages and frameworks + IDE/direnv integrations
 relations:
   contains:

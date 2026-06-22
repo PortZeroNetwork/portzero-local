@@ -1,0 +1,39 @@
+#!/bin/sh
+# devenv-tunnel-exec — set DEVENV_TUNNEL then exec a command
+#
+# This is the ONLY programmatic way to set DEVENV_TUNNEL for daemon discovery
+# without direnv. It works because it sets the variable in the shell and then
+# uses exec to replace the shell with your process — so the variable is present
+# in the execve() call and visible in /proc/<pid>/environ.
+#
+# Usage:
+#   devenv-tunnel-exec myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local node server.js
+#   devenv-tunnel-exec myapp-main.devenv.local python3 app.py
+#   devenv-tunnel-exec myapp-feat.tunnel.devenv.tools ./my-server
+#
+# The first argument is the full DEVENV_TUNNEL domain; remaining arguments are
+# the command and its arguments.
+#
+# Why this works when runtime env-setting does not:
+#   The daemon reads /proc/<pid>/environ (Linux) or sysctl KERN_PROCARGS2 (macOS).
+#   Both sources are snapshots frozen at execve() time. Setting an env var inside
+#   a running process (os.environ, process.env, os.Setenv) updates only the
+#   in-process libc copy — the daemon never sees it.
+#   This launcher sets the var BEFORE exec, so it appears in the frozen snapshot.
+#
+# Recommended: use direnv (.envrc) instead — it handles this automatically.
+# See README.md in this directory.
+
+set -e
+
+if [ "$#" -lt 2 ]; then
+    echo "Usage: devenv-tunnel-exec <DEVENV_TUNNEL_DOMAIN> <command> [args...]" >&2
+    echo "Example: devenv-tunnel-exec myapp-main.devenv.local node server.js" >&2
+    exit 1
+fi
+
+DEVENV_TUNNEL="$1"
+export DEVENV_TUNNEL
+shift
+
+exec "$@"
