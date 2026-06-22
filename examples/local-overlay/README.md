@@ -116,6 +116,37 @@ devenv-tunnel status    # shows the discovered .devenv.local service + VIP
 # Ctrl-C the python server
 ```
 
+## Automated verification (`verify.sh`)
+
+[`verify.sh`](verify.sh) runs the whole walkthrough above as a single scripted
+check — the "fuller check" for the overlay. It starts the service, starts the
+daemon, asserts resolution + an end-to-end request, and tears everything down,
+printing PASS/FAIL per step.
+
+```bash
+# 1. build the CLI once, as your normal user (root usually has no cargo on PATH):
+cargo build -p devenv-tunnel-cli
+# 2. run the check as root (it creates a TUN + configures scoped DNS):
+sudo ./examples/local-overlay/verify.sh
+# optional custom name:  sudo ./examples/local-overlay/verify.sh my-db.devenv.local
+```
+
+What it asserts:
+
+1. **`resolvectl query <name>` returns a `10.254.x.x` VIP** — the scoped resolver
+   actually routes `*.devenv.local` to the embedded DNS server. On Linux this is
+   the exact behavior fixed by **task-15** (it works on systemd-resolved hosts
+   even when `systemd-networkd` is absent / NetworkManager-managed); the script
+   explicitly **fails** if it sees the old
+   `Unit dbus-org.freedesktop.network1.service not found` error.
+2. **`curl http://<name>:<port>/` succeeds through the overlay** — DNS → VIP →
+   TUN → smoltcp → real ephemeral backend.
+3. **Teardown is clean** — after the daemon stops, the name no longer resolves to
+   a VIP (no leftover scoped DNS config).
+
+Exit status is `0` only if every check passes. This is the manual counterpart to
+the root-gated `real_tun_overlay` test (`just e2e`); use whichever is convenient.
+
 ## Using the SDK helpers instead of raw `server.py`
 
 The [`sdks/`](../../sdks/) directory has thin, stdlib-only helpers that bind
