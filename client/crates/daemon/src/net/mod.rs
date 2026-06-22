@@ -14,6 +14,7 @@
 
 pub mod dns;
 pub mod overlay;
+pub mod resolver_config;
 pub mod service_table;
 pub mod stack;
 pub mod tun_device;

@@ -11,6 +11,7 @@ use anyhow::Result;
 use tokio::sync::RwLock;
 
 use crate::net::dns::OverlayDnsServer;
+use crate::net::resolver_config;
 use crate::net::service_table::ServiceTable;
 use crate::net::stack::VirtualStack;
 use crate::net::tun_device::{TunConfig, TunDevice};
@@ -66,6 +67,13 @@ impl OverlayNetwork {
             }
         });
 
+        // Install scoped OS resolver — routes *.devenv.local to our DNS server.
+        // Log errors but do not abort startup; the overlay still works for
+        // services that manually configure their DNS.
+        if let Err(e) = resolver_config::install(config.dns_listen).await {
+            tracing::warn!("scoped resolver setup failed (may need elevated privileges): {:#}", e);
+        }
+
         Ok(Self {
             services,
             stack,
@@ -88,6 +96,11 @@ impl OverlayNetwork {
 
     /// Shutdown the overlay components.
     pub async fn shutdown(self) {
+        // Remove the scoped OS resolver before tearing down DNS.
+        if let Err(e) = resolver_config::uninstall().await {
+            tracing::warn!("scoped resolver teardown failed: {:#}", e);
+        }
+
         let _ = self.stack.shutdown().await;
         self.dns_task.abort();
     }

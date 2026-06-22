@@ -1,7 +1,7 @@
 ---
 id: af741f08-3311-48c3-a459-8cde3f518a90
 slug: task-2
-status: todo
+status: done
 title: Implement scoped local DNS resolver configuration (macOS, Linux, Windows)
 relations:
   contains:
@@ -9,6 +9,7 @@ relations:
 created_at: 2026-06-21T11:12:11.235958Z
 updated_at: 2026-06-21T11:12:11.235958Z
 ---
+
 ## Description
 Do not hijack entire DNS. Implement scoped configuration so only *.devenv.local queries hit our embedded DNS server:
 
