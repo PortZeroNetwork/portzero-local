@@ -22,7 +22,7 @@ updated_at: 2026-06-21T11:12:11.235958Z
 ---
 # Virtual Overlay Network v0.2
 
-Complete the implementation of the Port 0 + Virtual Overlay Network so that `DEVENV_NETWORK=foo` + port 0 bindings allow seamless access via `foo.devenv.local` without any port conflicts, even across multiple worktrees.
+Complete the implementation of the Port 0 + Virtual Overlay Network so that `DEVENV_TUNNEL=foo` + port 0 bindings allow seamless access via `foo.devenv.local` without any port conflicts, even across multiple worktrees.
 
 ## Goals
 - Full end-to-end packet flow through TUN + smoltcp

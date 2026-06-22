@@ -13,13 +13,13 @@ updated_at: 2026-06-21T11:12:11.235958Z
 The overlay manager exists but is not started.
 
 - In discovery_loop or a new dedicated loop, create TUN, start OverlayNetwork (which starts stack + DNS)
-- Feed updates from network service discovery (DEVENV_NETWORK) to the overlay
+- Feed updates from network service discovery (DEVENV_TUNNEL) to the overlay
 - Handle start/stop, graceful shutdown
 - Support foreground mode and daemon mode
 - Coordinate with existing cloud tunnel if both active
 
 ## Acceptance Criteria
 - [ ] Daemon starts the virtual stack when enabled
-- [ ] Services with DEVENV_NETWORK are registered in overlay
+- [ ] Services with DEVENV_TUNNEL are registered in overlay
 - [ ] Stack shuts down cleanly
 - [ ] No breakage to existing DEVENV_TUNNEL flow

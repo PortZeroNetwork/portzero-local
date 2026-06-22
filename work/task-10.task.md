@@ -2,7 +2,7 @@
 id: fb4c556c-2c3a-4ed8-bae6-5c44f65e82ab
 slug: task-10
 status: todo
-title: Add end-to-end tests, full DEVENV_NETWORK examples, and documentation
+title: Add end-to-end tests, full DEVENV_TUNNEL examples, and documentation
 relations:
   contains:
   - milestone-1
