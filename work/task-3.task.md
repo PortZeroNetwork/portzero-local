@@ -1,7 +1,7 @@
 ---
 id: e883dacd-9896-4a21-98ff-f0bf35f62418
 slug: task-3
-status: todo
+status: done
 title: Wire OverlayNetwork into daemon lifecycle and start the virtual stack
 relations:
   contains:
@@ -9,6 +9,7 @@ relations:
 created_at: 2026-06-21T11:12:11.235958Z
 updated_at: 2026-06-21T11:12:11.235958Z
 ---
+
 ## Description
 The overlay manager exists but is not started.
 

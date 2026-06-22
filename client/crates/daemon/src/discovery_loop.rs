@@ -58,7 +58,9 @@ use devenv_tunnel_client::domain_router::DomainRouter;
 
 use crate::auth::AuthConfig;
 use crate::cloud::CloudConnector;
-use crate::discovery;
+use crate::discovery::{self, DiscoveredNetworkService};
+use crate::net::overlay::{OverlayConfig, OverlayNetwork};
+use crate::net::service_table::ServiceTable;
 use crate::route_table::{RouteChanges, RouteTable};
 
 /// Grace period before removing a route after its process exits.
@@ -244,6 +246,33 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         }
     }
 
+    // Start the virtual overlay network (TUN + smoltcp stack + scoped DNS) for
+    // services that use a full `*.devenv.local` name. This is independent of the
+    // cloud tunnel: the overlay handles `.devenv.local`, cloud handles everything
+    // else, so the two never conflict.
+    //
+    // Starting is best-effort: creating the TUN device requires root/CAP_NET_ADMIN
+    // and will fail in unprivileged or CI environments. On failure we log a warning
+    // and continue in cloud/local-only mode rather than aborting the daemon.
+    let overlay: Option<OverlayNetwork> = match OverlayNetwork::start(OverlayConfig::default()).await
+    {
+        Ok(ov) => {
+            tracing::info!("Virtual overlay network started (.devenv.local)");
+            // Seed the overlay immediately so existing services are reachable
+            // without waiting for the first scan cycle.
+            refresh_overlay_services(&ov).await;
+            Some(ov)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Virtual overlay network not started (continuing in cloud/local-only mode): {:#}. \
+                 The overlay needs elevated privileges (root / CAP_NET_ADMIN) to create a TUN device.",
+                e
+            );
+            None
+        }
+    };
+
     loop {
         // Check process liveness for existing routes
         let routes_snapshot: Vec<(String, u32)> = route_table
@@ -311,6 +340,14 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             if let Some(ref connector) = cloud {
                 sync_cloud_routes(connector, &changes).await;
             }
+        }
+
+        // Feed `.devenv.local` services into the virtual overlay. This is a
+        // separate discovery pass from the cloud/route discovery above and does
+        // not touch cloud route registration. No-op when the overlay failed to
+        // start (unprivileged environment).
+        if let Some(ref ov) = overlay {
+            refresh_overlay_services(ov).await;
         }
 
         // Prune grace tracker
@@ -438,7 +475,83 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             }
         }
 
-        tokio::time::sleep(interval).await;
+        // Sleep until the next scan, but wake early on a shutdown signal so we
+        // can tear the overlay (and its TUN/resolver config) down cleanly.
+        tokio::select! {
+            _ = tokio::time::sleep(interval) => {}
+            _ = wait_for_shutdown_signal() => {
+                tracing::info!("Shutdown signal received, stopping discovery daemon");
+                break;
+            }
+        }
+    }
+
+    // Graceful shutdown: tear down the overlay (removes the scoped resolver
+    // config and the TUN device) before exiting so we don't leave the system's
+    // DNS pointed at a dead server. Best-effort — never blocks process exit.
+    if let Some(ov) = overlay {
+        ov.shutdown().await;
+        tracing::info!("Virtual overlay network shut down");
+    }
+
+    remove_pid_file(config);
+    tracing::info!("Discovery daemon stopped");
+
+    Ok(())
+}
+
+/// Build an overlay `ServiceTable` from the services discovered for the local
+/// virtual network (those whose `DEVENV_TUNNEL` value ends in `.devenv.local`).
+///
+/// This is pure (no TUN / no privileges required) so it can be unit-tested.
+fn build_overlay_table(services: &[DiscoveredNetworkService]) -> ServiceTable {
+    let mut table = ServiceTable::new();
+    for svc in services {
+        table.register(
+            svc.name.clone(),
+            svc.real_addr,
+            svc.service_port,
+            svc.pid,
+        );
+    }
+    table
+}
+
+/// Best-effort: push the latest set of `.devenv.local` overlay services into the
+/// running overlay network. Logs and ignores errors so a transient stack issue
+/// never disrupts the (independent) cloud/local route flow.
+async fn refresh_overlay_services(overlay: &OverlayNetwork) {
+    let services = discovery::scan_network_services().await;
+    let table = build_overlay_table(&services);
+    if let Err(e) = overlay.update_services(table).await {
+        tracing::warn!("Failed to update overlay services: {:#}", e);
+    }
+}
+
+/// Wait for a termination signal (SIGTERM or Ctrl-C) so the loop can shut down
+/// gracefully and tear down the overlay/TUN. Resolves when either fires.
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("Failed to install SIGTERM handler: {}", e);
+                // Fall back to ctrl_c only.
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = sigterm.recv() => {}
+            _ = tokio::signal::ctrl_c() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
     }
 }
 
@@ -770,6 +883,48 @@ mod tests {
 
         update_domain_router(&router, &changes);
         assert_eq!(router.resolve("api.test.devenv.tools"), Some(8080));
+    }
+
+    #[test]
+    fn test_build_overlay_table_registers_services() {
+        use crate::discovery::{DiscoveredNetworkService, ServiceSource};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+        let services = vec![
+            DiscoveredNetworkService {
+                name: "my-db".to_string(),
+                real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 32768),
+                service_port: 5432,
+                pid: 100,
+                source: ServiceSource::Process { cwd: None },
+            },
+            DiscoveredNetworkService {
+                name: "my-api".to_string(),
+                real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000),
+                service_port: 8080,
+                pid: 101,
+                source: ServiceSource::Process { cwd: None },
+            },
+        ];
+
+        let table = build_overlay_table(&services);
+        assert_eq!(table.len(), 2);
+
+        let db = table.get("my-db").expect("my-db registered");
+        assert_eq!(db.service_port, 5432);
+        assert_eq!(db.real_addr.port(), 32768);
+        assert_eq!(db.pid, 100);
+
+        let api = table.get("my-api").expect("my-api registered");
+        assert_eq!(api.service_port, 8080);
+        // Distinct names receive distinct virtual IPs.
+        assert_ne!(db.vip, api.vip);
+    }
+
+    #[test]
+    fn test_build_overlay_table_empty() {
+        let table = build_overlay_table(&[]);
+        assert!(table.is_empty());
     }
 
     #[test]
