@@ -20,10 +20,10 @@ echo
 echo "Building image..."
 docker build -t devenv-templated-demo . >/dev/null
 
-echo "Starting container with templated DEVENV_TUNNEL=web-{branch} ..."
+echo "Starting container with templated DEVENV_TUNNEL=web-{branch}.tunnel.devenv.tools ..."
 CONTAINER_ID=$(docker run -d \
   --name "devenv-demo-$$" \
-  -e DEVENV_TUNNEL="web-{branch}" \
+  -e DEVENV_TUNNEL="web-{branch}.tunnel.devenv.tools" \
   -p 0:8080 \
   devenv-templated-demo)
 
@@ -38,9 +38,11 @@ docker exec "$CONTAINER_ID" env | grep DEVENV_TUNNEL || true
 echo
 
 echo "To see it discovered by the daemon, run in another terminal:"
-echo "    cargo run -p devenv-tunnel-cli --bin devenv-tunnel -- status"
+echo "    devenv-tunnel status"
+echo "    # or: cargo run -p devenv-tunnel-cli --bin devenv-tunnel -- status"
 echo
 echo "Expected to see a domain containing: web-$SANITIZED_BRANCH.tunnel.devenv.tools"
+echo "(The env var must contain the full domain with suffix.)"
 echo
 
 echo "Press ENTER to stop and remove the container, or Ctrl-C to leave it running."

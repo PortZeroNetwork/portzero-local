@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Simple HTTP server that reports the DEVENV_TUNNEL value it received.
 
-This makes it easy to visually confirm that templated configuration
-reached the container and was discovered correctly by the daemon.
+The value is expected to be a full domain name (with suffix).
+This makes it easy to visually confirm that templated full-domain
+configuration reached the container and was discovered by the daemon.
 """
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -16,10 +17,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         body = (
             "DEVENV_TUNNEL=" + tunnel_var + "\n"
-            "This container was started with a templated DEVENV_TUNNEL.\n"
+            "This container was started with a full templated domain in DEVENV_TUNNEL.\n"
             "If the daemon is running and discovered us, you should see\n"
-            "the resolved name (containing your branch) in:\n"
+            "the resolved full domain in:\n"
             "    devenv-tunnel status\n"
+            "\n"
+            "The value must include the suffix (.tunnel.devenv.tools or .devenv.local).\n"
         )
         self.wfile.write(body.encode("utf-8"))
 

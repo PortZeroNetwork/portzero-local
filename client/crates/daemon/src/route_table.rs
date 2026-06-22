@@ -15,7 +15,7 @@ use crate::discovery::{DiscoveredService, PortMapping, ServiceSource};
 /// A single route entry: domain -> local endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Route {
-    /// The DEVENV_TUNNEL value (e.g. "api-myapp-main-alice.tunnel.devenv.tools").
+    /// The full DEVENV_TUNNEL value (e.g. "api-myapp-main-alice.tunnel.devenv.tools").
     pub domain: String,
     /// Host to forward to (usually "127.0.0.1").
     pub host: String,

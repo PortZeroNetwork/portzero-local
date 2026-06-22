@@ -6,20 +6,23 @@
 #   docker compose up -d
 #
 # Then (with the tunnel daemon running):
-#   cargo run -p devenv-tunnel-cli --bin devenv-tunnel -- status
+#   devenv-tunnel status
 #
 # You should see something like:
 #   web-my-demo-branch.tunnel.devenv.tools   <port>   container web
 #
 # This works because the host-side discovery (using bind mounts + compose labels)
 # finds the git context and resolves {branch} before registering the route.
+#
+# Note: the value must be a full domain (suffix included). Use a .devenv.local
+# suffix if you want the local virtual overlay path instead.
 version: "3.8"
 
 services:
   web:
     build: .
     environment:
-      - DEVENV_TUNNEL=web-{branch}
+      - DEVENV_TUNNEL=web-{branch}.tunnel.devenv.tools
     ports:
       # Use port 0 so the host assigns a random ephemeral port.
       # The daemon will discover the real host port.

@@ -2,7 +2,7 @@
 //!
 //! Starts the TUN device, the smoltcp TCP stack, and the embedded DNS server.
 //! It receives service updates (from discovery) and keeps the virtual network
-//! in sync with discovered DEVENV_NETWORK services.
+//! in sync with services that set a full `*.devenv.local` name via DEVENV_TUNNEL.
 
 use std::net::SocketAddr;
 use std::sync::Arc;

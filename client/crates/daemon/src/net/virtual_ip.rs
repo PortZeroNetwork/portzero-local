@@ -3,9 +3,8 @@
 //! We use a non-routable documentation/example block:
 //!   10.254.0.0/16
 //!
-//! Each discovered DEVENV_NETWORK name gets a stable IP for the lifetime of
-//! the daemon (or until explicitly released). We avoid 10.254.0.1 (gateway)
-//! and reserve 10.254.0.0 and 10.254.255.255.
+//! Each full `*.devenv.local` name from DEVENV_TUNNEL gets a stable IP
+//! for the lifetime of the daemon.
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;

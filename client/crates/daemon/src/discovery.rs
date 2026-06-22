@@ -1,5 +1,17 @@
 //! Service discovery: scan processes and Docker containers for DEVENV_TUNNEL.
 //!
+//! The value of DEVENV_TUNNEL must be a full domain name (after template
+//! substitution). No implicit suffixes are added.
+//!
+//! - If it ends with `.devenv.local` (or `.local`) → local virtual overlay.
+//! - Otherwise it must be a valid tunnel domain ending in `.tunnel.devenv.tools`
+//!   (or the configured base, supporting namespacing like `api.alice.tunnel...`).
+//!
+//! Examples (full names required):
+//!   DEVENV_TUNNEL=my-api.alice.tunnel.devenv.tools
+//!   DEVENV_TUNNEL=my-db-{branch}.devenv.local
+//!   DEVENV_TUNNEL=web-{branch}.tunnel.devenv.tools
+//!
 //! Cross-platform support:
 //! - Linux: full (reads /proc/<pid>/environ and /proc/<pid>/fd for inode-based port scoping)
 //! - macOS: full (uses `ps -p <pid> -wwwE` and `lsof`)
@@ -8,21 +20,44 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use devenv_tunnel_domain::DomainContext;
+use devenv_tunnel_domain::{validate_tunnel_domain, DomainContext};
 use sysinfo::System;
 
-/// The environment variable that tags a process for tunneling.
+/// The single environment variable used to tag services.
+///
+/// The value (after substitution) must be a full domain name:
+/// - `*.devenv.local` → local overlay
+/// - `*.(username.)tunnel.devenv.tools` (or configured base) → cloud tunnel
+///
+/// No implicit suffix is ever appended.
 const ENV_VAR_NAME: &str = "DEVENV_TUNNEL";
-
-/// Environment variable for the new Port-0 virtual overlay network.
-/// Example: DEVENV_NETWORK=my-db
-const ENV_NETWORK_NAME: &str = "DEVENV_NETWORK";
 
 /// Selects which HTTP port to forward. Defaults to CHOOSE_LOWEST if unset.
 const ENV_HTTP_PORT_VAR: &str = "DEVENV_TUNNEL_HTTP_PORT";
 
 /// Additional raw port mappings: `local:tunnel[;local:tunnel...]`
 const ENV_PORTS_VAR: &str = "DEVENV_TUNNEL_PORTS";
+
+/// Returns true if the (full) resolved name indicates the local virtual overlay
+/// (must end with .devenv.local or .local).
+///
+/// The value in DEVENV_TUNNEL must be the complete name; no suffix is added.
+pub fn is_local_overlay_domain(name: &str) -> bool {
+    let n = name.trim().to_ascii_lowercase();
+    n.ends_with(".devenv.local") || n == "devenv.local" || n.ends_with(".local")
+}
+
+/// Extract the label for the overlay from a full name like "my-db.devenv.local".
+/// The input must already be a full domain (no implicit suffix added by us).
+pub fn extract_local_label(name: &str) -> String {
+    let n = name.trim().to_ascii_lowercase();
+    let core = n
+        .strip_suffix(".devenv.local")
+        .or_else(|| n.strip_suffix(".local"))
+        .unwrap_or(&n);
+    let label = core.split('.').next().unwrap_or(core);
+    sanitize_network_name(label)
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -31,7 +66,7 @@ const ENV_PORTS_VAR: &str = "DEVENV_TUNNEL_PORTS";
 /// A discovered service with its domain, port, and origin.
 #[derive(Debug, Clone)]
 pub struct DiscoveredService {
-    /// Resolved DEVENV_TUNNEL value (the domain name).
+    /// Resolved full DEVENV_TUNNEL value (must be a complete domain name).
     pub domain: String,
     /// Selected HTTP port (0 if not determinable).
     pub port: u16,
@@ -170,6 +205,27 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
 
         let cwd = process.cwd().map(|p| p.to_path_buf());
         let domain = resolve_tunnel_template(&raw, cwd.as_deref(), account_id, username);
+
+        if is_local_overlay_domain(&domain) {
+            tracing::debug!(
+                pid = pid_u32,
+                domain,
+                "DEVENV_TUNNEL value ends in .local — routing to overlay path"
+            );
+            continue;
+        }
+
+        // For cloud tunnels we require a full domain name (no implicit suffix).
+        if let Err(e) = validate_tunnel_domain(&domain) {
+            tracing::warn!(
+                pid = pid_u32,
+                domain,
+                error = %e,
+                "DEVENV_TUNNEL value is not a valid full tunnel domain (and not .local). \
+                 Provide the full name including suffix, e.g. my-api.alice.tunnel.devenv.tools"
+            );
+            continue;
+        }
 
         let http_selection = scan_process_env(pid_u32, ENV_HTTP_PORT_VAR)
             .map(|v| parse_http_port_selection(&v))
@@ -622,6 +678,7 @@ fn inspect_container(
         .iter()
         .find_map(|e| e.strip_prefix("DEVENV_TUNNEL="))
         .map(|v| v.to_string());
+
     let raw = match raw {
         Some(d) if !d.is_empty() => d,
         _ => return Ok(None),
@@ -633,6 +690,26 @@ fn inspect_container(
     let project_dir = find_host_project_dir_for_container(mounts_json, labels_json);
 
     let domain = resolve_tunnel_template(&raw, project_dir.as_deref(), account_id, username);
+
+    if is_local_overlay_domain(&domain) {
+        tracing::debug!(
+            container = name,
+            domain,
+            "value ends in .local — routing to overlay path"
+        );
+        return Ok(None);
+    }
+
+    if let Err(e) = validate_tunnel_domain(&domain) {
+        tracing::warn!(
+            container = name,
+            domain,
+            error = %e,
+            "DEVENV_TUNNEL value on container is not a valid full tunnel domain (and not .local). \
+             Use a full name like web-mybranch.tunnel.devenv.tools"
+        );
+        return Ok(None);
+    }
 
     let http_selection = env_vars
         .iter()
@@ -737,13 +814,14 @@ fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> 
 }
 
 // ---------------------------------------------------------------------------
-// Overlay network discovery (DEVENV_NETWORK + port 0 support)
+// Overlay network discovery (DEVENV_TUNNEL=*.devenv.local + port 0 support)
 // ---------------------------------------------------------------------------
 
 /// A service discovered for the local virtual overlay network.
 #[derive(Debug, Clone)]
 pub struct DiscoveredNetworkService {
-    /// The value of DEVENV_NETWORK (e.g. "my-db").
+    /// The label extracted from the DEVENV_TUNNEL value (e.g. "my-db"
+    /// from "my-db.devenv.local").
     pub name: String,
     /// The actual host address we must proxy to (usually 127.0.0.1:random).
     pub real_addr: std::net::SocketAddr,
@@ -756,17 +834,19 @@ pub struct DiscoveredNetworkService {
     pub source: ServiceSource,
 }
 
-/// Scan for services that should participate in the virtual overlay (DEVENV_NETWORK).
+/// Scan for services that should participate in the virtual overlay.
 ///
-/// DEVENV_NETWORK supports the same templating as DEVENV_TUNNEL, e.g.:
-///   DEVENV_NETWORK=my-db-{branch}
-///   DEVENV_NETWORK={service}-{worktree}
-/// This is the primary mechanism to guarantee DNS uniqueness across git worktrees.
-/// The daemon will resolve the template using the process cwd (or container context)
-/// and register the resulting name (e.g. my-db-feat-foo.devenv.local).
+/// Only `DEVENV_TUNNEL` values whose resolved name ends with `.devenv.local`
+/// (or `.local`) are accepted. The full name must be provided (no implicit
+/// suffix).
 ///
-/// The daemon should surface loud errors (tray, logs, future UI) if the same
-/// resolved name ends up being claimed by multiple distinct worktrees.
+/// Supports templating, e.g.:
+///   DEVENV_TUNNEL=my-db-{branch}.devenv.local
+///   DEVENV_TUNNEL={service}-{worktree}.devenv.local
+///
+/// The label (left part) gets a stable virtual IP under .devenv.local.
+/// The daemon should surface loud errors if the same name is claimed by
+/// multiple distinct worktrees.
 pub async fn scan_network_services() -> Vec<DiscoveredNetworkService> {
     let mut out = Vec::new();
     out.extend(scan_network_processes());
@@ -788,18 +868,22 @@ fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
             continue;
         }
 
-        let raw = match scan_process_env(pid_u32, ENV_NETWORK_NAME) {
+        let raw = match scan_process_env(pid_u32, ENV_VAR_NAME) {
             Some(v) if !v.is_empty() => v,
             _ => continue,
         };
 
         let process_cwd = process.cwd().map(|p| p.to_path_buf());
-
-        // Support templating for uniqueness across worktrees, same as DEVENV_TUNNEL.
-        // e.g. DEVENV_NETWORK=my-db-{branch} or my-db-{worktree}
         let resolved = resolve_tunnel_template(&raw, process_cwd.as_deref(), None, None);
-        let name = sanitize_network_name(&resolved);
-        if name.is_empty() {
+
+        // For the overlay we require an explicit .local suffix.
+        // Bare names under DEVENV_TUNNEL go to the tunnel path.
+        if !is_local_overlay_domain(&resolved) {
+            continue;
+        }
+
+        let label = extract_local_label(&resolved);
+        if label.is_empty() {
             continue;
         }
 
@@ -822,7 +906,7 @@ fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
         let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
 
         results.push(DiscoveredNetworkService {
-            name,
+            name: label,
             real_addr,
             service_port: port,
             pid: pid_u32,
@@ -898,17 +982,29 @@ async fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkS
             Err(_) => continue,
         };
 
-        let raw_name = match envs.iter().find_map(|e| e.strip_prefix("DEVENV_NETWORK=")) {
-            Some(s) if !s.is_empty() => s.to_string(),
-            _ => continue,
+        // Only DEVENV_TUNNEL is used. Overlay participation requires the value
+        // to end with .devenv.local (pure suffix-based detection).
+        let raw_name = envs
+            .iter()
+            .find_map(|e| e.strip_prefix("DEVENV_TUNNEL="))
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty());
+
+        let raw_name = match raw_name {
+            Some(s) => s,
+            None => continue,
         };
 
-        // Use host-side git context (mounts/labels) for templating so that
-        // DEVENV_NETWORK also supports {branch} / {worktree} in docker.
+        // Use host-side git context (mounts/labels) for templating.
         let project_dir = find_host_project_dir_for_container(mounts_json, labels_json);
         let resolved_name = resolve_tunnel_template(&raw_name, project_dir.as_deref(), None, None);
-        let name = sanitize_network_name(&resolved_name);
-        if name.is_empty() {
+
+        if !is_local_overlay_domain(&resolved_name) {
+            continue;
+        }
+
+        let label = extract_local_label(&resolved_name);
+        if label.is_empty() {
             continue;
         }
 
@@ -923,9 +1019,9 @@ async fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkS
         let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), host_port);
         let svc_port = if service_port > 0 { service_port } else { host_port };
 
-        let container_name = name.clone();
+        let container_name = label.clone();
         out.push(DiscoveredNetworkService {
-            name,
+            name: label,
             real_addr,
             service_port: svc_port,
             pid,
