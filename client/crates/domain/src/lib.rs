@@ -123,6 +123,36 @@ impl DomainContext {
     }
 }
 
+/// Split an optional trailing `:<port>` off a raw `DEVENV_TUNNEL` value.
+///
+/// The canonical-port feature lets a developer declare the port the overlay
+/// should expose a service on by appending `:<port>` to the value, e.g.
+/// `db.devenv.local:5432` or `web-{branch}.devenv.local:8080`.
+///
+/// This helper is PURE: it only splits the value; it does NOT resolve
+/// templates or validate the domain. The returned domain part is what the
+/// caller should template-resolve and suffix-classify.
+///
+/// Rules:
+/// - The port is the segment after the LAST `:`. It must parse as an integer
+///   in `1..=65535`.
+/// - If there is no `:`, or the trailing segment is not a valid port (empty,
+///   non-numeric, zero, or out of range), the WHOLE value is treated as the
+///   domain and `None` is returned. This is a graceful fallback — discovery
+///   must never break on a malformed port.
+/// - Templates are preserved in the domain part (the helper does not touch
+///   `{...}`); `web-{branch}.devenv.local:8080` → (`web-{branch}.devenv.local`,
+///   `Some(8080)`).
+pub fn split_tunnel_port(value: &str) -> (&str, Option<u16>) {
+    match value.rsplit_once(':') {
+        Some((domain, port_str)) => match port_str.parse::<u16>() {
+            Ok(port) if port >= 1 => (domain, Some(port)),
+            _ => (value, None),
+        },
+        None => (value, None),
+    }
+}
+
 /// Validate that `domain` is a legal tunnel subdomain.
 ///
 /// Rules:
@@ -597,5 +627,96 @@ mod tests {
     fn test_validate_tunnel_domain_label_too_long() {
         let long = format!("{}.tunnel.devenv.tools", "a".repeat(64));
         assert!(validate_tunnel_domain(&long).is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // split_tunnel_port tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_split_tunnel_port_no_port() {
+        assert_eq!(
+            split_tunnel_port("db.devenv.local"),
+            ("db.devenv.local", None)
+        );
+    }
+
+    #[test]
+    fn test_split_tunnel_port_valid() {
+        assert_eq!(
+            split_tunnel_port("db.devenv.local:5432"),
+            ("db.devenv.local", Some(5432))
+        );
+        // Lowest and highest valid ports.
+        assert_eq!(split_tunnel_port("x.devenv.local:1"), ("x.devenv.local", Some(1)));
+        assert_eq!(
+            split_tunnel_port("x.devenv.local:65535"),
+            ("x.devenv.local", Some(65535))
+        );
+    }
+
+    #[test]
+    fn test_split_tunnel_port_templated_name() {
+        // The template is preserved in the domain part; only the port is split.
+        assert_eq!(
+            split_tunnel_port("web-{branch}.devenv.local:8080"),
+            ("web-{branch}.devenv.local", Some(8080))
+        );
+    }
+
+    #[test]
+    fn test_split_tunnel_port_cloud_domain() {
+        assert_eq!(
+            split_tunnel_port("api.alice.tunnel.devenv.tools:8080"),
+            ("api.alice.tunnel.devenv.tools", Some(8080))
+        );
+    }
+
+    #[test]
+    fn test_split_tunnel_port_out_of_range() {
+        // 70000 > u16::MAX -> not a valid port; whole value is the domain.
+        assert_eq!(
+            split_tunnel_port("db.devenv.local:70000"),
+            ("db.devenv.local:70000", None)
+        );
+    }
+
+    #[test]
+    fn test_split_tunnel_port_zero_rejected() {
+        // Port 0 is not addressable for a canonical VIP listen port.
+        assert_eq!(
+            split_tunnel_port("db.devenv.local:0"),
+            ("db.devenv.local:0", None)
+        );
+    }
+
+    #[test]
+    fn test_split_tunnel_port_non_numeric() {
+        assert_eq!(
+            split_tunnel_port("db.devenv.local:abc"),
+            ("db.devenv.local:abc", None)
+        );
+    }
+
+    #[test]
+    fn test_split_tunnel_port_empty_after_colon() {
+        assert_eq!(
+            split_tunnel_port("db.devenv.local:"),
+            ("db.devenv.local:", None)
+        );
+    }
+
+    #[test]
+    fn test_split_tunnel_port_empty_value() {
+        assert_eq!(split_tunnel_port(""), ("", None));
+    }
+
+    #[test]
+    fn test_split_tunnel_port_uses_last_colon() {
+        // Only the final segment is considered the port.
+        assert_eq!(
+            split_tunnel_port("a:b.devenv.local:5432"),
+            ("a:b.devenv.local", Some(5432))
+        );
     }
 }

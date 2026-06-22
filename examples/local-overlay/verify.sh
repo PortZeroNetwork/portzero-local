@@ -13,8 +13,10 @@
 #   1. starts the example service (server.py) bound to port 0 with DEVENV_TUNNEL set,
 #   2. starts the devenv-tunnel daemon in the foreground (needs root for the TUN),
 #   3. asserts `resolvectl query <name>` returns a 10.254.x.x overlay VIP,
-#   4. asserts `curl http://<name>:<port>/` reaches the service THROUGH the overlay
-#      (DNS -> VIP -> TUN -> smoltcp -> real ephemeral backend),
+#   4. asserts `curl http://<name>:<canonical-port>/` reaches the service THROUGH
+#      the overlay (DNS -> VIP -> TUN -> smoltcp -> real ephemeral backend). The
+#      canonical port comes from the `:<port>` declared in DEVENV_TUNNEL, NOT the
+#      random ephemeral port the service actually bound,
 #   5. tears everything down and asserts the scoped DNS config is gone.
 #
 # It must run as root because creating the TUN device + configuring scoped DNS
@@ -25,14 +27,28 @@
 #   cargo build -p devenv-tunnel-cli         # as your normal user, once
 #   sudo ./examples/local-overlay/verify.sh  # the check itself
 #
-# Optionally pass a custom name:  sudo ./verify.sh my-db.devenv.local
+# Optionally pass a custom name (with an optional canonical :port):
+#   sudo ./verify.sh db.devenv.local:5432
 #
 # Exit status is 0 only if every check passes.
 
 set -uo pipefail
 
-NAME="${1:-db.devenv.local}"
+# DEVENV_TUNNEL value: a full `.devenv.local` domain plus a CANONICAL `:port`.
+# The overlay exposes the service on VIP:<canonical-port> (here 8080) and proxies
+# to the real ephemeral backend, so clients use a clean, stable port.
+NAME="${1:-hello.devenv.local:8080}"
 SCAN_WAIT_SECS="${SCAN_WAIT_SECS:-6}"
+
+# Split the optional trailing `:<port>` off the value. DOMAIN is what gets
+# resolved via DNS; CANONICAL_PORT is what we curl. If no `:port` is given we
+# fall back to the discovered ephemeral port for CHECK 2 (see below).
+DOMAIN="${NAME%:*}"
+if [[ "$NAME" == *:* ]]; then
+  CANONICAL_PORT="${NAME##*:}"
+else
+  CANONICAL_PORT=""
+fi
 
 # --- locate repo + binary --------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,8 +72,8 @@ if [[ ! -x "$BIN" ]]; then
   exit 2
 fi
 
-if [[ "$NAME" != *.devenv.local ]]; then
-  red "Name must end in .devenv.local (the overlay path). Got: $NAME"
+if [[ "$DOMAIN" != *.devenv.local ]]; then
+  red "Name must end in .devenv.local (the overlay path). Got: $DOMAIN"
   exit 2
 fi
 
@@ -80,9 +96,9 @@ cleanup() {
   # After a clean shutdown the scoped entry should be gone.
   sleep 0.5
   local after
-  after="$(resolvectl query "$NAME" 2>&1 || true)"
+  after="$(resolvectl query "$DOMAIN" 2>&1 || true)"
   if echo "$after" | grep -q '10\.254\.'; then
-    red "CHECK (teardown): $NAME STILL resolves to a VIP after shutdown — scoped config leaked:"
+    red "CHECK (teardown): $DOMAIN STILL resolves to a VIP after shutdown — scoped config leaked:"
     echo "$after" | sed 's/^/    /'
     FAILURES=$((FAILURES + 1))
   else
@@ -134,26 +150,30 @@ if grep -qi 'network1.service not found' "$DAEMON_LOG"; then
 fi
 
 # --- 3. DNS resolution check (the core task-15 assertion) ------------------
-info "--- check 1: resolvectl query $NAME -> overlay VIP ---"
-QUERY="$(resolvectl query "$NAME" 2>&1 || true)"
+info "--- check 1: resolvectl query $DOMAIN -> overlay VIP ---"
+QUERY="$(resolvectl query "$DOMAIN" 2>&1 || true)"
 echo "$QUERY" | sed 's/^/    /'
 VIP="$(echo "$QUERY" | grep -oE '10\.254\.[0-9]+\.[0-9]+' | head -1)"
 if [[ -n "$VIP" ]]; then
-  green "CHECK 1 PASSED: $NAME resolves to overlay VIP $VIP"
+  green "CHECK 1 PASSED: $DOMAIN resolves to overlay VIP $VIP"
 else
-  red "CHECK 1 FAILED: $NAME did not resolve to a 10.254.x.x VIP."
+  red "CHECK 1 FAILED: $DOMAIN did not resolve to a 10.254.x.x VIP."
   echo "    (daemon log tail:)"; tail -8 "$DAEMON_LOG" | sed 's/^/    /'
   FAILURES=$((FAILURES + 1))
 fi
 
 # --- 4. end-to-end curl THROUGH the overlay --------------------------------
-info "--- check 2: curl http://$NAME:$PORT/ through the overlay ---"
-BODY="$(curl -fsS --max-time 8 "http://$NAME:$PORT/" 2>&1 || true)"
+# Use the CANONICAL port from DEVENV_TUNNEL's `:<port>` (a clean, stable number),
+# NOT the random ephemeral port the service actually bound. If no canonical port
+# was declared, fall back to the discovered ephemeral port.
+CURL_PORT="${CANONICAL_PORT:-$PORT}"
+info "--- check 2: curl http://$DOMAIN:$CURL_PORT/ through the overlay ---"
+BODY="$(curl -fsS --max-time 8 "http://$DOMAIN:$CURL_PORT/" 2>&1 || true)"
 echo "$BODY" | sed 's/^/    /'
 if echo "$BODY" | grep -q 'devenv-tunnel local overlay'; then
   green "CHECK 2 PASSED: reached the service through the overlay (DNS -> VIP -> TUN -> smoltcp -> backend)."
 else
-  red "CHECK 2 FAILED: did not get the expected response via http://$NAME:$PORT/"
+  red "CHECK 2 FAILED: did not get the expected response via http://$DOMAIN:$CURL_PORT/"
   FAILURES=$((FAILURES + 1))
 fi
 

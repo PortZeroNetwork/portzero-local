@@ -6,10 +6,17 @@
 > A tiny service binds to **port 0**, the daemon discovers it, assigns a
 > virtual IP from `10.254.0.0/16`, serves scoped DNS for
 > `<name>.devenv.local`, and proxies traffic to the real ephemeral port
-> through a TUN device + user-space TCP stack. The end result:
+> through a TUN device + user-space TCP stack.
+>
+> By appending a **canonical port** to the value
+> (`DEVENV_TUNNEL=hello.devenv.local:8080`), the overlay exposes the service on
+> a clean, stable `VIP:8080` instead of the random ephemeral port. Because each
+> service gets its own VIP, identical ports never collide
+> (`db.devenv.local:5432` and `cache.devenv.local:6379` coexist fine). The end
+> result:
 >
 > ```bash
-> curl http://hello.devenv.local/
+> curl http://hello.devenv.local:8080/
 > ```
 >
 > works even though the service is on a random localhost port.
@@ -20,13 +27,15 @@ language helpers referenced below, see [`../../sdks/`](../../sdks/).
 
 ## How the overlay path works (one paragraph)
 
-You set `DEVENV_TUNNEL=hello.devenv.local` **before** launching your service and
-bind it to port 0. The long-running daemon scans process environments
+You set `DEVENV_TUNNEL=hello.devenv.local:8080` **before** launching your service
+and bind it to port 0. The long-running daemon scans process environments
 (`/proc/<pid>/environ` on Linux, `sysctl KERN_PROCARGS2` on macOS — the env is
-frozen at `execve()` time, so it must be set before launch), sees the
-`.devenv.local` suffix, finds the real ephemeral port, assigns a stable virtual
-IP, answers DNS for `hello.devenv.local`, and proxies `VIP:port` → real backend.
-See [`../../docs/architecture.md`](../../docs/architecture.md) for the full data
+frozen at `execve()` time, so it must be set before launch), splits off the
+canonical `:8080`, sees the `.devenv.local` suffix, finds the real ephemeral
+port, assigns a stable virtual IP, answers DNS for `hello.devenv.local`, and
+proxies `VIP:8080` → real ephemeral backend. (Omit the `:8080` and the overlay
+falls back to exposing the discovered ephemeral port.) See
+[`../../docs/architecture.md`](../../docs/architecture.md) for the full data
 path.
 
 ## Privilege requirement (important)
@@ -62,22 +71,24 @@ cd examples/local-overlay
 direnv allow
 
 # Option B: plain shell export
-export DEVENV_TUNNEL=hello.devenv.local
+export DEVENV_TUNNEL=hello.devenv.local:8080
 
 # Option C: the devenv-tunnel-exec launcher from the SDKs
-#   ../../sdks/direnv/devenv-tunnel-exec hello.devenv.local python3 server.py
+#   ../../sdks/direnv/devenv-tunnel-exec hello.devenv.local:8080 python3 server.py
 ```
 
 The `.devenv.local` suffix is what selects the local overlay. Nothing is
-appended implicitly — the value must be a full domain.
+appended implicitly — the value must be a full domain. The trailing `:8080` is
+the canonical port the overlay exposes the service on; it is optional (without
+it the overlay uses the discovered ephemeral port).
 
 ### 2. Start the example service (binds port 0)
 
 ```bash
 python3 server.py
 # [server] bound to 127.0.0.1:54321 (ephemeral)
-# [server] DEVENV_TUNNEL=hello.devenv.local
-# [server]   curl http://hello.devenv.local/
+# [server] DEVENV_TUNNEL=hello.devenv.local:8080
+# [server]   curl http://hello.devenv.local:8080/
 ```
 
 Leave it running. It binds an ephemeral port — you do not pick the number; the
@@ -99,14 +110,15 @@ daemon logs the TUN device it created and the VIP it assigned to
 ### 4. Reach the service by name
 
 ```bash
-curl http://hello.devenv.local/
+curl http://hello.devenv.local:8080/
 # Hello from the devenv-tunnel local overlay!
-# DEVENV_TUNNEL=hello.devenv.local
+# DEVENV_TUNNEL=hello.devenv.local:8080
 # served on real port 54321
 ```
 
-The name resolved to a `10.254.x.y` VIP, and the user-space stack proxied your
-request to the real ephemeral port.
+The name resolved to a `10.254.x.y` VIP, and the user-space stack accepted the
+connection on the canonical `VIP:8080` and proxied your request to the real
+ephemeral port (54321 here).
 
 ### 5. Inspect and clean up
 
@@ -128,7 +140,8 @@ printing PASS/FAIL per step.
 cargo build -p devenv-tunnel-cli
 # 2. run the check as root (it creates a TUN + configures scoped DNS):
 sudo ./examples/local-overlay/verify.sh
-# optional custom name:  sudo ./examples/local-overlay/verify.sh my-db.devenv.local
+# optional custom name + canonical port:
+#   sudo ./examples/local-overlay/verify.sh db.devenv.local:5432
 ```
 
 What it asserts:
@@ -139,8 +152,10 @@ What it asserts:
    even when `systemd-networkd` is absent / NetworkManager-managed); the script
    explicitly **fails** if it sees the old
    `Unit dbus-org.freedesktop.network1.service not found` error.
-2. **`curl http://<name>:<port>/` succeeds through the overlay** — DNS → VIP →
-   TUN → smoltcp → real ephemeral backend.
+2. **`curl http://<name>:<canonical-port>/` succeeds through the overlay** — DNS
+   → VIP → TUN → smoltcp → real ephemeral backend. The canonical port is the
+   `:<port>` declared in `DEVENV_TUNNEL` (a clean, stable number), not the random
+   ephemeral port the service actually bound.
 3. **Teardown is clean** — after the daemon stops, the name no longer resolves to
    a VIP (no leftover scoped DNS config).
 

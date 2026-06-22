@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use devenv_tunnel_domain::{validate_tunnel_domain, DomainContext};
+use devenv_tunnel_domain::{split_tunnel_port, validate_tunnel_domain, DomainContext};
 use sysinfo::System;
 
 /// The single environment variable used to tag services.
@@ -204,7 +204,11 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
         };
 
         let cwd = process.cwd().map(|p| p.to_path_buf());
-        let domain = resolve_tunnel_template(&raw, cwd.as_deref(), account_id, username);
+        // Strip an optional canonical `:port` before classification/validation.
+        // On the cloud path the edge assigns the URL, so the port is ignored.
+        let (raw_domain, _canonical_port) = split_tunnel_port(&raw);
+        warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
+        let domain = resolve_tunnel_template(raw_domain, cwd.as_deref(), account_id, username);
 
         if is_local_overlay_domain(&domain) {
             tracing::debug!(
@@ -288,6 +292,31 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
     }
 
     services
+}
+
+/// Emit a warning when a `DEVENV_TUNNEL` value had a trailing `:something` that
+/// LOOKED like a canonical port but was rejected by [`split_tunnel_port`]
+/// (out of range or zero — i.e. an all-digit segment that is not `1..=65535`).
+///
+/// We deliberately only warn on the all-numeric case: a non-numeric trailing
+/// segment after `:` is almost certainly part of the value itself (or a typo we
+/// can't distinguish), and warning on it would be noisy. When the port parsed
+/// fine (`canonical` is `Some`) we say nothing.
+fn warn_if_port_like_rejected(raw: &str, canonical: Option<u16>, pid: u32) {
+    if canonical.is_some() {
+        return;
+    }
+    if let Some((_, tail)) = raw.rsplit_once(':') {
+        if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) {
+            tracing::warn!(
+                pid,
+                value = raw,
+                rejected_port = tail,
+                "DEVENV_TUNNEL has a trailing ':<port>' that is not a valid port \
+                 (must be 1..=65535); ignoring the port and using the whole value as the domain"
+            );
+        }
+    }
 }
 
 /// Resolve template variables in a DEVENV_TUNNEL value.
@@ -754,7 +783,11 @@ fn inspect_container(
     // and `docker compose` (via labels + mounts).
     let project_dir = find_host_project_dir_for_container(mounts_json, labels_json);
 
-    let domain = resolve_tunnel_template(&raw, project_dir.as_deref(), account_id, username);
+    // Strip an optional canonical `:port` before classification/validation.
+    // On the cloud path the edge assigns the URL, so the port is ignored.
+    let (raw_domain, canonical_port) = split_tunnel_port(&raw);
+    warn_if_port_like_rejected(&raw, canonical_port, container_pid);
+    let domain = resolve_tunnel_template(raw_domain, project_dir.as_deref(), account_id, username);
 
     if is_local_overlay_domain(&domain) {
         tracing::debug!(
@@ -939,7 +972,11 @@ fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
         };
 
         let process_cwd = process.cwd().map(|p| p.to_path_buf());
-        let resolved = resolve_tunnel_template(&raw, process_cwd.as_deref(), None, None);
+        // Strip an optional canonical `:port` (the VIP listen port) before
+        // template resolution + suffix classification.
+        let (raw_domain, canonical_port) = split_tunnel_port(&raw);
+        warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
+        let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
 
         // For the overlay we require an explicit .local suffix.
         // Bare names under DEVENV_TUNNEL go to the tunnel path.
@@ -970,10 +1007,16 @@ fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
 
         let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
 
+        // When an explicit canonical port was given, expose the service on
+        // VIP:<canonical_port> and proxy to the real ephemeral backend.
+        // Otherwise fall back to today's behavior (ephemeral port as the VIP
+        // listen port).
+        let service_port = canonical_port.unwrap_or(port);
+
         results.push(DiscoveredNetworkService {
             name: label,
             real_addr,
-            service_port: port,
+            service_port,
             pid: pid_u32,
             source: ServiceSource::Process {
                 cwd: process_cwd,
@@ -1061,8 +1104,11 @@ async fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkS
         };
 
         // Use host-side git context (mounts/labels) for templating.
+        // Strip an optional canonical `:port` (the VIP listen port) first.
+        let (raw_domain, canonical_port) = split_tunnel_port(&raw_name);
+        warn_if_port_like_rejected(&raw_name, canonical_port, pid);
         let project_dir = find_host_project_dir_for_container(mounts_json, labels_json);
-        let resolved_name = resolve_tunnel_template(&raw_name, project_dir.as_deref(), None, None);
+        let resolved_name = resolve_tunnel_template(raw_domain, project_dir.as_deref(), None, None);
 
         if !is_local_overlay_domain(&resolved_name) {
             continue;
@@ -1082,7 +1128,10 @@ async fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkS
         }
 
         let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), host_port);
-        let svc_port = if service_port > 0 { service_port } else { host_port };
+        // An explicit canonical port wins; otherwise prefer the container port,
+        // falling back to the host port.
+        let svc_port = canonical_port
+            .unwrap_or(if service_port > 0 { service_port } else { host_port });
 
         let container_name = label.clone();
         out.push(DiscoveredNetworkService {
