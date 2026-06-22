@@ -93,16 +93,20 @@ cleanup() {
   fi
   [[ -n "$SVC_PID" ]] && kill "$SVC_PID" 2>/dev/null || true
 
-  # After a clean shutdown the scoped entry should be gone.
+  # After a clean shutdown the scoped entry should be gone. Flush the resolver
+  # cache first: systemd-resolved caches the A record for its TTL, so a query
+  # right after shutdown can return the old VIP "from cache" even though the
+  # scoped config was reverted. A real leak resolves "from network" after a flush.
   sleep 0.5
+  resolvectl flush-caches 2>/dev/null || true
   local after
   after="$(resolvectl query "$DOMAIN" 2>&1 || true)"
   if echo "$after" | grep -q '10\.254\.'; then
-    red "CHECK (teardown): $DOMAIN STILL resolves to a VIP after shutdown — scoped config leaked:"
+    red "CHECK (teardown): $DOMAIN STILL resolves to a VIP after cache flush — scoped config leaked:"
     echo "$after" | sed 's/^/    /'
     FAILURES=$((FAILURES + 1))
   else
-    green "CHECK (teardown): scoped DNS for $NAME removed cleanly."
+    green "CHECK (teardown): scoped DNS for $NAME removed cleanly (no resolution after cache flush)."
   fi
 
   rm -f "$SVC_LOG" "$DAEMON_LOG"
