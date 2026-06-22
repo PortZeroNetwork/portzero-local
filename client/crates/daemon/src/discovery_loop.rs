@@ -66,7 +66,7 @@ use crate::docker_events::{self, ConflictRegistry};
 use crate::net::overlay::{OverlayConfig, OverlayNetwork};
 use crate::net::service_table::ServiceTable;
 use crate::notify::{self, IssuesState};
-use crate::route_table::{RouteChanges, RouteTable};
+use crate::route_table::{OverlayRoute, OverlayState, RouteChanges, RouteTable};
 
 /// Grace period before removing a route after its process exits.
 /// Allows for quick process restarts without flapping.
@@ -117,6 +117,11 @@ impl DaemonConfig {
     /// Path to the visibility "issues" state file (duplicate names, etc.).
     pub fn issues_path(&self) -> PathBuf {
         self.state_dir.join("issues.json")
+    }
+
+    /// Path to the overlay services state file (read by `devenv tunnel status`).
+    pub fn overlay_path(&self) -> PathBuf {
+        self.state_dir.join("overlay.json")
     }
 }
 
@@ -293,6 +298,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             // Seed the overlay immediately so existing services are reachable
             // without waiting for the first scan cycle.
             let (overlay_issues, overlay_services) = refresh_overlay_services(&ov).await;
+            write_overlay_state(config, &overlay_services, true);
             let docker_conflicts = conflicts.snapshot().await;
             gather_and_publish_issues(
                 config,
@@ -310,6 +316,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                  The overlay needs elevated privileges (root / CAP_NET_ADMIN) to create a TUN device.",
                 e
             );
+            write_overlay_state(config, &[], false);
             None
         }
     };
@@ -393,9 +400,16 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         // Legacy monitoring runs regardless of whether the overlay started, so
         // when the overlay is unavailable we still scan with empty overlay data.
         let (overlay_issues, overlay_services) = if let Some(ref ov) = overlay {
-            refresh_overlay_services(ov).await
+            let result = refresh_overlay_services(ov).await;
+            write_overlay_state(config, &result.1, true);
+            result
         } else {
-            (Vec::new(), Vec::new())
+            // Overlay TUN is not running (insufficient privileges), but still scan
+            // so that `devenv tunnel status` can surface discovered .local services.
+            let services = discovery::scan_network_services().await;
+            let issues = notify::detect_duplicate_names(&services);
+            write_overlay_state(config, &services, false);
+            (issues, services)
         };
         let docker_conflicts = conflicts.snapshot().await;
         gather_and_publish_issues(
@@ -565,6 +579,31 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     tracing::info!("Discovery daemon stopped");
 
     Ok(())
+}
+
+/// Persist discovered overlay services to `overlay.json` so `devenv tunnel status` can read them.
+fn write_overlay_state(
+    config: &DaemonConfig,
+    services: &[DiscoveredNetworkService],
+    overlay_active: bool,
+) {
+    let routes = services
+        .iter()
+        .map(|s| OverlayRoute {
+            domain: format!("{}.devenv.local", s.name),
+            service_port: s.service_port,
+            real_addr: s.real_addr.to_string(),
+            pid: s.pid,
+            source: s.source.clone(),
+        })
+        .collect();
+    let state = OverlayState {
+        overlay_active,
+        routes,
+    };
+    if let Err(e) = state.save(&config.overlay_path()) {
+        tracing::warn!("Failed to save overlay state: {}", e);
+    }
 }
 
 /// Build an overlay `ServiceTable` from the services discovered for the local

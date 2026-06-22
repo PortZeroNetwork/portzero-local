@@ -8,7 +8,7 @@ use devenv_tunnel_daemon::discovery_loop::{
     read_cloud_connected, read_cloud_error, read_daemon_pid, DaemonConfig,
 };
 use devenv_tunnel_daemon::notify::read_issues;
-use devenv_tunnel_daemon::route_table::RouteTable;
+use devenv_tunnel_daemon::route_table::{OverlayState, RouteTable};
 
 use crate::auth::AuthConfig;
 
@@ -216,25 +216,44 @@ fn print_issues(config: &DaemonConfig) {
 }
 
 fn print_routes(config: &DaemonConfig) {
-    let routes_path = config.routes_path();
-    let table = RouteTable::load(&routes_path).unwrap_or_default();
+    let table = RouteTable::load(&config.routes_path()).unwrap_or_default();
+    let overlay = OverlayState::load(&config.overlay_path()).unwrap_or_default();
 
-    if table.is_empty() {
+    if table.is_empty() && overlay.is_empty() {
         println!("\nNo routes discovered yet.");
         println!("Set DEVENV_TUNNEL on a process or Docker container to expose it.");
         return;
     }
 
-    println!();
-
-    let mut max_domain = "DOMAIN".len();
-    let mut max_port = "PORT".len();
+    // Collect all rows: (domain, port_str, source_str) sorted by domain.
+    let mut rows: Vec<(String, String, String)> = Vec::new();
 
     for route in table.routes.values() {
-        max_domain = max_domain.max(route.domain.len());
-        max_port = max_port.max(route.port.to_string().len());
+        let source_str = format_source(&route.source, route.pid);
+        rows.push((route.domain.clone(), route.port.to_string(), source_str));
     }
 
+    for ov in &overlay.routes {
+        let source_str = format_source(&ov.source, ov.pid);
+        rows.push((ov.domain.clone(), ov.service_port.to_string(), source_str));
+    }
+
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let max_domain = rows
+        .iter()
+        .map(|(d, _, _)| d.len())
+        .max()
+        .unwrap_or(0)
+        .max("DOMAIN".len());
+    let max_port = rows
+        .iter()
+        .map(|(_, p, _)| p.len())
+        .max()
+        .unwrap_or(0)
+        .max("PORT".len());
+
+    println!();
     println!(
         "{:<domain_w$}  {:<port_w$}  SOURCE",
         "DOMAIN",
@@ -243,27 +262,35 @@ fn print_routes(config: &DaemonConfig) {
         port_w = max_port,
     );
 
-    let mut routes: Vec<_> = table.routes.values().collect();
-    routes.sort_by_key(|r| &r.domain);
-
-    for route in routes {
-        let source_str = match &route.source {
-            devenv_tunnel_daemon::discovery::ServiceSource::Process { .. } => {
-                format!("PID {}", route.pid)
-            }
-            devenv_tunnel_daemon::discovery::ServiceSource::Container { id, .. } => {
-                format!("container {}", &id[..id.len().min(12)])
-            }
-        };
-
+    for (domain, port, source) in &rows {
         println!(
             "{:<domain_w$}  {:<port_w$}  {}",
-            route.domain,
-            route.port,
-            source_str,
+            domain,
+            port,
+            source,
             domain_w = max_domain,
             port_w = max_port,
         );
+    }
+
+    if !overlay.is_empty() && !overlay.overlay_active {
+        println!();
+        println!(
+            "Note: .devenv.local services listed above are not reachable — the local overlay\n\
+             network requires CAP_NET_ADMIN. Run the daemon as root or grant the capability:\n\
+             \n  sudo setcap cap_net_admin+eip $(which devenv-tunnel)"
+        );
+    }
+}
+
+fn format_source(source: &devenv_tunnel_daemon::discovery::ServiceSource, pid: u32) -> String {
+    match source {
+        devenv_tunnel_daemon::discovery::ServiceSource::Process { .. } => {
+            format!("PID {pid}")
+        }
+        devenv_tunnel_daemon::discovery::ServiceSource::Container { id, .. } => {
+            format!("container {}", &id[..id.len().min(12)])
+        }
     }
 }
 

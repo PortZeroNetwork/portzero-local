@@ -19,10 +19,18 @@
 version: "3.8"
 
 services:
-  web:
+  web-1:
     build: .
     environment:
-      - DEVENV_TUNNEL=web-{branch}.tunnel.devenv.tools
+      - DEVENV_TUNNEL=web-{branch}.local
+    ports:
+      # Use port 0 so the host assigns a random ephemeral port.
+      # The daemon will discover the real host port.
+      - "0:8080"
+  web-2:
+    build: .
+    environment:
+      - DEVENV_TUNNEL=web-{branch}.nate.tunnel.devenv.tools
     ports:
       # Use port 0 so the host assigns a random ephemeral port.
       # The daemon will discover the real host port.

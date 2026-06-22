@@ -179,6 +179,58 @@ impl RouteTable {
     }
 }
 
+/// A route entry for a local overlay (`.devenv.local`) service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverlayRoute {
+    /// Full domain name (e.g. "web-main.devenv.local").
+    pub domain: String,
+    /// Port clients are expected to connect to on the virtual IP (e.g. 8080).
+    pub service_port: u16,
+    /// Actual host address the daemon proxies to (e.g. "127.0.0.1:32771").
+    pub real_addr: String,
+    /// Process ID that owns the service (0 for containers).
+    pub pid: u32,
+    /// How the service was discovered.
+    pub source: ServiceSource,
+}
+
+/// Snapshot of all discovered overlay services, persisted to `overlay.json`.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct OverlayState {
+    /// Whether the virtual overlay network (TUN device) is running.
+    pub overlay_active: bool,
+    pub routes: Vec<OverlayRoute>,
+}
+
+impl OverlayState {
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        }
+        let json =
+            serde_json::to_string_pretty(self).context("Failed to serialize overlay state")?;
+        std::fs::write(path, json)
+            .with_context(|| format!("Failed to write overlay state to: {}", path.display()))?;
+        Ok(())
+    }
+
+    pub fn load(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read overlay state from: {}", path.display()))?;
+        let state: OverlayState = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse overlay state from: {}", path.display()))?;
+        Ok(state)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.routes.is_empty()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
