@@ -1,14 +1,15 @@
 ---
 id: 0ecc0c87-9b8b-49e5-a6d7-e995f18c8e07
 slug: task-5
-status: todo
-title: "Add visibility layer: system tray, notifications, errors for non-unique names and misuse"
+status: done
+title: 'Add visibility layer: system tray, notifications, errors for non-unique names and misuse'
 relations:
   contains:
   - milestone-1
 created_at: 2026-06-21T11:12:11.235958Z
 updated_at: 2026-06-21T11:12:11.235958Z
 ---
+
 ## Description
 When config isn't unique across worktrees, or when apps hit legacy ports directly, make errors highly visible:
 

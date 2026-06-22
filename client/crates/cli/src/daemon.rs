@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use devenv_tunnel_daemon::discovery_loop::{
     read_cloud_connected, read_cloud_error, read_daemon_pid, DaemonConfig,
 };
+use devenv_tunnel_daemon::notify::read_issues;
 use devenv_tunnel_daemon::route_table::RouteTable;
 
 use crate::auth::AuthConfig;
@@ -136,6 +137,8 @@ pub async fn status() -> Result<()> {
         }
     }
 
+    print_issues(&config);
+
     // Auth / tunnel status — verify the token against the API so we catch
     // expired sessions instead of showing a stale "logged in" from the local file.
     match AuthConfig::load() {
@@ -191,6 +194,25 @@ pub async fn status() -> Result<()> {
     print_routes(&config);
 
     Ok(())
+}
+
+/// Surface any current visibility issues (e.g. duplicate `.devenv.local` names
+/// claimed by multiple worktrees) recorded by the running daemon.
+fn print_issues(config: &DaemonConfig) {
+    let state = read_issues(&config.issues_path());
+    if state.is_empty() {
+        return;
+    }
+
+    println!();
+    println!(
+        "Issues: {} problem(s) detected — see fixes below:",
+        state.issues.len()
+    );
+    for issue in &state.issues {
+        println!("  ! {}", issue.summary());
+        println!("    fix: {}", issue.fix_hint());
+    }
 }
 
 fn print_routes(config: &DaemonConfig) {
