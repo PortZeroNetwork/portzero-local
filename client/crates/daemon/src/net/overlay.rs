@@ -42,6 +42,9 @@ pub struct OverlayNetwork {
     services: Arc<RwLock<ServiceTable>>,
     stack: VirtualStack,
     dns_task: tokio::task::JoinHandle<()>,
+    /// Name of the overlay's TUN link (e.g. `deven0`). The scoped resolver is
+    /// attached to this real link, so teardown must revert the same one.
+    link_name: String,
 }
 
 impl OverlayNetwork {
@@ -51,6 +54,10 @@ impl OverlayNetwork {
     pub async fn start(config: OverlayConfig) -> Result<Self> {
         // Create the TUN device first (this may require root).
         let tun = TunDevice::create(&config.tun)?;
+        // Capture the actual link name (the kernel may pick a different unit
+        // number than requested) before the device is moved into the stack. The
+        // scoped resolver is attached to THIS real link, not `lo`.
+        let link_name = tun.name().to_string();
 
         // Shared service table
         let services: Arc<RwLock<ServiceTable>> = Arc::new(RwLock::new(ServiceTable::new()));
@@ -68,9 +75,10 @@ impl OverlayNetwork {
         });
 
         // Install scoped OS resolver — routes *.devenv.local to our DNS server.
-        // Log errors but do not abort startup; the overlay still works for
-        // services that manually configure their DNS.
-        if let Err(e) = resolver_config::install(config.dns_listen).await {
+        // Attached to the TUN link (created above), so on Linux this works even
+        // when systemd-networkd is absent. Log errors but do not abort startup;
+        // the overlay still works for services that manually configure DNS.
+        if let Err(e) = resolver_config::install(config.dns_listen, &link_name).await {
             tracing::warn!("scoped resolver setup failed (may need elevated privileges): {:#}", e);
         }
 
@@ -78,6 +86,7 @@ impl OverlayNetwork {
             services,
             stack,
             dns_task,
+            link_name,
         })
     }
 
@@ -97,7 +106,7 @@ impl OverlayNetwork {
     /// Shutdown the overlay components.
     pub async fn shutdown(self) {
         // Remove the scoped OS resolver before tearing down DNS.
-        if let Err(e) = resolver_config::uninstall().await {
+        if let Err(e) = resolver_config::uninstall(&self.link_name).await {
             tracing::warn!("scoped resolver teardown failed: {:#}", e);
         }
 

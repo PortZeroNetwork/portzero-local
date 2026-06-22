@@ -4,7 +4,10 @@
 //! without hijacking the whole system resolver. Three platforms are supported:
 //!
 //! - **macOS**: writes `/etc/resolver/devenv.local` (requires privileges).
-//! - **Linux**: calls `resolvectl dns` and `resolvectl domain` (systemd-resolved).
+//! - **Linux**: attaches scoped DNS + `~devenv.local` routing domain to the
+//!   overlay's own TUN link via systemd-resolved's `resolve1` D-Bus API
+//!   (`busctl`), with a dnsmasq-snippet fallback when resolved is absent. See
+//!   the Linux section for the per-environment strategy.
 //! - **Windows**: calls `Add-DnsClientNrptRule` via PowerShell.
 //!
 //! On unsupported platforms (other Unix platforms) the calls compile to no-ops with a
@@ -21,7 +24,10 @@ use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use tracing::info;
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+#[cfg(any(
+    target_os = "linux",
+    not(any(target_os = "macos", target_os = "linux", target_os = "windows"))
+))]
 use tracing::warn;
 
 // ---------------------------------------------------------------------------
@@ -31,17 +37,26 @@ use tracing::warn;
 /// Install the scoped resolver for `*.devenv.local`, routing queries to
 /// `dns_addr` (our embedded DNS server).
 ///
+/// `link_name` is the name of the overlay's own TUN interface (e.g. `deven0`),
+/// which the daemon created before calling this. On Linux the scoped DNS is
+/// attached to that real link (not `lo`), so systemd-resolved manages it via
+/// its `resolve1` D-Bus API independently of systemd-networkd. Other platforms
+/// ignore `link_name`.
+///
 /// May require elevated privileges on macOS (needs write access to
-/// `/etc/resolver/`). On Linux, `resolvectl` talks to systemd-resolved over
-/// D-Bus and usually does not require root when called by a service. On
-/// Windows, `Add-DnsClientNrptRule` requires Administrator.
-pub async fn install(dns_addr: SocketAddr) -> Result<()> {
-    install_impl(dns_addr)
+/// `/etc/resolver/`). On Linux, the daemon already runs privileged to create
+/// the TUN; talking to systemd-resolved over D-Bus does not itself require
+/// root. On Windows, `Add-DnsClientNrptRule` requires Administrator.
+pub async fn install(dns_addr: SocketAddr, link_name: &str) -> Result<()> {
+    install_impl(dns_addr, link_name)
 }
 
 /// Remove the scoped resolver configuration installed by [`install`].
-pub async fn uninstall() -> Result<()> {
-    uninstall_impl()
+///
+/// `link_name` must match the TUN interface name passed to [`install`] so the
+/// per-link settings can be reverted on the correct link.
+pub async fn uninstall(link_name: &str) -> Result<()> {
+    uninstall_impl(link_name)
 }
 
 // ---------------------------------------------------------------------------
@@ -49,7 +64,7 @@ pub async fn uninstall() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "macos")]
-fn install_impl(dns_addr: SocketAddr) -> Result<()> {
+fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
     use std::fs;
     use std::path::Path;
 
@@ -66,7 +81,7 @@ fn install_impl(dns_addr: SocketAddr) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn uninstall_impl() -> Result<()> {
+fn uninstall_impl(_link_name: &str) -> Result<()> {
     use std::path::Path;
     let path = Path::new("/etc/resolver/devenv.local");
     if path.exists() {
@@ -89,47 +104,246 @@ pub(crate) fn macos_resolver_file_content(dns_addr: SocketAddr) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Linux (systemd-resolved via resolvectl)
+// Linux
 // ---------------------------------------------------------------------------
+//
+// The previous implementation attached the scoped DNS to the loopback link
+// (`lo`) via `resolvectl dns lo …`. On boxes where systemd-resolved is active
+// but systemd-**networkd** is NOT (the common NetworkManager setup), that path
+// fails with `Unit dbus-org.freedesktop.network1.service not found` (network1 =
+// networkd): resolvectl tries to coordinate the link's config with networkd,
+// which is not running, so nothing gets wired up even though resolved is fine.
+//
+// We now detect the resolver environment and pick a strategy, attaching the
+// scoped config to the overlay's OWN TUN link (e.g. `deven0`) — a real link
+// resolved manages directly — instead of `lo`:
+//
+//   (A) systemd-resolved + networkd        -> works (per-link config on TUN)
+//   (B) systemd-resolved WITHOUT networkd  -> works: talk to resolved's
+//        (NetworkManager)                     `resolve1` D-Bus API directly via
+//                                             `busctl`, addressing the TUN by
+//                                             ifindex. This bypasses resolvectl's
+//                                             networkd coordination entirely, so
+//                                             the `network1` error never occurs.
+//   (C) no systemd-resolved                -> dnsmasq snippet fallback, when a
+//                                             dnsmasq-based resolver is detected;
+//                                             otherwise a clear, actionable warn.
+//
+// Everything is best-effort / non-fatal with actionable warnings, matching the
+// rest of the overlay's treatment of privileged operations.
+//
+// `busctl` (the resolve1 path) is preferred over `resolvectl dns deven0 …`
+// because resolvectl still routes per-link DNS changes through networkd on some
+// systemd versions. The resolvectl-on-TUN path is kept as a structured
+// alternative (`resolvectl_dns_args` / `resolvectl_domain_args`) so a human can
+// switch mechanisms after on-box validation tells us which one resolved accepts.
 
+/// The routing domain we scope to. The leading-`~`/`true` "routing domain only"
+/// semantics ensure general hostname resolution is never affected.
+const SCOPED_DOMAIN: &str = "devenv.local";
+
+/// Which resolver mechanism is wired up on this host. Detected at install time;
+/// the matching teardown is selected the same way at uninstall time.
 #[cfg(target_os = "linux")]
-fn install_impl(dns_addr: SocketAddr) -> Result<()> {
-    // We need a network interface name to attach the resolver to.
-    // Using the loopback interface here would not actually scope the resolver.
-    // systemd-resolved requires a link to attach per-link DNS settings.
-    // The idiomatic approach is to use a dummy/loopback link or the TUN link.
-    // For maximum compatibility we create a virtual dummy link and use that,
-    // but that requires `ip` commands.  A simpler approach supported by
-    // systemd-resolved is to use the global DNS stub + split-DNS via `resolvectl`.
-    //
-    // We use the loopback interface index as the attachment point, then set
-    // the domain restriction to "~devenv.local" (tilde prefix = routing domain
-    // only, never search domain) and the DNS server.
-    //
-    // This requires systemd-resolved to be active. We fail gracefully when it
-    // is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxResolver {
+    /// systemd-resolved is active: attach per-link config to the TUN via the
+    /// resolve1 D-Bus API (`busctl`).
+    SystemdResolved,
+    /// systemd-resolved absent but a dnsmasq-based resolver owns resolv.conf:
+    /// drop a scoped `server=/devenv.local/…` snippet.
+    Dnsmasq,
+    /// Nothing we can configure automatically.
+    None,
+}
 
-    let link = loopback_link_name()?;
-    run_resolvectl(&resolvectl_dns_args(&link, dns_addr))
-        .context("resolvectl dns")?;
-    run_resolvectl(&resolvectl_domain_args(&link))
-        .context("resolvectl domain")?;
-    info!("Linux: configured systemd-resolved for devenv.local via link {}", link);
-    Ok(())
+/// Inputs describing the host resolver environment, captured so detection is a
+/// pure function (and therefore unit-testable without touching the system).
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy)]
+struct ResolverEnv {
+    /// `systemctl is-active systemd-resolved` succeeded.
+    resolved_active: bool,
+    /// `/run/systemd/resolve/` exists (resolved's runtime dir).
+    resolved_runtime_present: bool,
+    /// A NetworkManager-managed dnsmasq instance was detected.
+    nm_dnsmasq: bool,
+    /// A standalone dnsmasq is on PATH / active.
+    plain_dnsmasq: bool,
+}
+
+/// Pure environment -> mechanism mapping. Tested directly.
+#[cfg(target_os = "linux")]
+fn classify_resolver(env: &ResolverEnv) -> LinuxResolver {
+    if env.resolved_active || env.resolved_runtime_present {
+        LinuxResolver::SystemdResolved
+    } else if env.nm_dnsmasq || env.plain_dnsmasq {
+        LinuxResolver::Dnsmasq
+    } else {
+        LinuxResolver::None
+    }
 }
 
 #[cfg(target_os = "linux")]
-fn uninstall_impl() -> Result<()> {
-    let link = loopback_link_name()?;
-    // Revert the link-level DNS and domain settings to defaults.
-    run_resolvectl(&["revert", &link]).context("resolvectl revert")?;
-    info!("Linux: reverted systemd-resolved settings for link {}", link);
-    Ok(())
+fn install_impl(dns_addr: SocketAddr, link_name: &str) -> Result<()> {
+    let env = detect_resolver_env();
+    match classify_resolver(&env) {
+        LinuxResolver::SystemdResolved => {
+            let ifindex = read_ifindex(link_name).with_context(|| {
+                format!("reading ifindex for TUN link {link_name}")
+            })?;
+            // resolve1 SetLinkDNS + SetLinkDomains, addressed by ifindex. This
+            // talks to systemd-resolved directly and does NOT involve networkd.
+            run_busctl(&busctl_set_link_dns_args(ifindex, dns_addr))
+                .context("busctl SetLinkDNS")?;
+            run_busctl(&busctl_set_link_domains_args(ifindex))
+                .context("busctl SetLinkDomains")?;
+            info!(
+                "Linux: configured systemd-resolved for {} on link {} (ifindex {}) via resolve1 D-Bus",
+                SCOPED_DOMAIN, link_name, ifindex
+            );
+            Ok(())
+        }
+        LinuxResolver::Dnsmasq => {
+            let path = dnsmasq_snippet_path(env.nm_dnsmasq);
+            let content = dnsmasq_snippet_content(dns_addr);
+            std::fs::write(&path, content)
+                .with_context(|| format!("writing dnsmasq snippet {}", path.display()))?;
+            reload_dnsmasq(env.nm_dnsmasq);
+            info!(
+                "Linux: wrote scoped dnsmasq snippet {} for {}",
+                path.display(),
+                SCOPED_DOMAIN
+            );
+            Ok(())
+        }
+        LinuxResolver::None => {
+            warn!(
+                "Linux: no supported local resolver detected (systemd-resolved inactive, \
+                 no dnsmasq). *.{} will not resolve automatically. To fix, either enable \
+                 systemd-resolved, or point your resolver's {} domain at {}.",
+                SCOPED_DOMAIN, SCOPED_DOMAIN, dns_addr
+            );
+            Ok(())
+        }
+    }
 }
+
+#[cfg(target_os = "linux")]
+fn uninstall_impl(link_name: &str) -> Result<()> {
+    let env = detect_resolver_env();
+    match classify_resolver(&env) {
+        LinuxResolver::SystemdResolved => {
+            // Revert the per-link config we set. RevertLink restores defaults for
+            // exactly this link, so no global resolver state is disturbed.
+            let ifindex = read_ifindex(link_name).with_context(|| {
+                format!("reading ifindex for TUN link {link_name}")
+            })?;
+            run_busctl(&busctl_revert_link_args(ifindex))
+                .context("busctl RevertLink")?;
+            info!(
+                "Linux: reverted systemd-resolved settings for link {} (ifindex {})",
+                link_name, ifindex
+            );
+            Ok(())
+        }
+        LinuxResolver::Dnsmasq => {
+            // Remove either possible snippet location, best-effort.
+            for nm in [true, false] {
+                let path = dnsmasq_snippet_path(nm);
+                if path.exists() {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        warn!("Linux: failed to remove dnsmasq snippet {}: {e}", path.display());
+                    } else {
+                        info!("Linux: removed dnsmasq snippet {}", path.display());
+                        reload_dnsmasq(nm);
+                    }
+                }
+            }
+            Ok(())
+        }
+        LinuxResolver::None => Ok(()),
+    }
+}
+
+// --- resolve1 (busctl) argument builders — pure, unit-tested ---------------
+
+/// Build `busctl call … SetLinkDNS` args for an IPv4/IPv6 `dns_addr` on `ifindex`.
+///
+/// resolve1 `SetLinkDNS` signature: `ia(iay)` = link ifindex, then an array of
+/// (address-family, address-bytes) pairs. We pass exactly one server. Note that
+/// `SetLinkDNS` carries no port, so the embedded DNS must listen on port 53 for
+/// this path; the dnsmasq fallback and macOS/Windows paths do carry the port.
+/// (`SetLinkDNSEx` adds port+SNI but is less widely available; kept simple here.)
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn busctl_set_link_dns_args(ifindex: u32, dns_addr: SocketAddr) -> Vec<String> {
+    let ip = dns_addr.ip();
+    let (family, bytes): (i32, Vec<u8>) = match ip {
+        std::net::IpAddr::V4(v4) => (libc_af_inet(), v4.octets().to_vec()),
+        std::net::IpAddr::V6(v6) => (libc_af_inet6(), v6.octets().to_vec()),
+    };
+    let mut args = vec![
+        "call".to_string(),
+        "org.freedesktop.resolve1".to_string(),
+        "/org/freedesktop/resolve1".to_string(),
+        "org.freedesktop.resolve1.Manager".to_string(),
+        "SetLinkDNS".to_string(),
+        "ia(iay)".to_string(),
+        ifindex.to_string(),
+        "1".to_string(), // one DNS server in the array
+        family.to_string(),
+        bytes.len().to_string(),
+    ];
+    for b in bytes {
+        args.push(b.to_string());
+    }
+    args
+}
+
+/// Build `busctl call … SetLinkDomains` args restricting `ifindex` to the
+/// `devenv.local` ROUTING domain.
+///
+/// resolve1 `SetLinkDomains` signature: `ia(sb)` = link ifindex, then an array
+/// of (domain, routing-only?) pairs. `routing-only = true` is the D-Bus
+/// equivalent of resolvectl's `~devenv.local`: queries for this domain are
+/// routed to this link's DNS but it is never used as a search domain.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn busctl_set_link_domains_args(ifindex: u32) -> Vec<String> {
+    vec![
+        "call".to_string(),
+        "org.freedesktop.resolve1".to_string(),
+        "/org/freedesktop/resolve1".to_string(),
+        "org.freedesktop.resolve1.Manager".to_string(),
+        "SetLinkDomains".to_string(),
+        "ia(sb)".to_string(),
+        ifindex.to_string(),
+        "1".to_string(), // one domain in the array
+        SCOPED_DOMAIN.to_string(),
+        "true".to_string(), // routing-domain only (not a search domain)
+    ]
+}
+
+/// Build `busctl call … RevertLink` args to restore defaults for `ifindex`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn busctl_revert_link_args(ifindex: u32) -> Vec<String> {
+    vec![
+        "call".to_string(),
+        "org.freedesktop.resolve1".to_string(),
+        "/org/freedesktop/resolve1".to_string(),
+        "org.freedesktop.resolve1.Manager".to_string(),
+        "RevertLink".to_string(),
+        "i".to_string(),
+        ifindex.to_string(),
+    ]
+}
+
+// --- resolvectl-on-TUN alternative (kept for easy mechanism swap) ----------
 
 /// Returns the resolvectl args to set the DNS server for a link.
-/// Exported for testing.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// Exported for testing. Alternative to the busctl/resolve1 path: pass the TUN
+/// link name (e.g. `deven0`), NOT `lo`. Kept (not wired in by default) so the
+/// mechanism can be swapped after on-box validation; hence `allow(dead_code)`.
+#[allow(dead_code)]
 pub(crate) fn resolvectl_dns_args(link: &str, dns_addr: SocketAddr) -> Vec<String> {
     // resolvectl dns <link> <ip>:<port>  (port supported since systemd 245)
     let addr_str = format!("{}:{}", dns_addr.ip(), dns_addr.port());
@@ -137,30 +351,135 @@ pub(crate) fn resolvectl_dns_args(link: &str, dns_addr: SocketAddr) -> Vec<Strin
 }
 
 /// Returns the resolvectl args to restrict a link to the devenv.local domain.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// Kept as the alternative mechanism to the busctl/resolve1 path; see
+/// [`resolvectl_dns_args`].
+#[allow(dead_code)]
 pub(crate) fn resolvectl_domain_args(link: &str) -> Vec<String> {
     // ~devenv.local means "routing domain only" — queries for devenv.local go
     // here but it is not used as a search domain.
-    vec!["domain".to_string(), link.to_string(), "~devenv.local".to_string()]
+    vec![
+        "domain".to_string(),
+        link.to_string(),
+        format!("~{SCOPED_DOMAIN}"),
+    ]
+}
+
+// --- dnsmasq fallback snippet — pure builders, unit-tested ------------------
+
+/// Path of the scoped dnsmasq snippet. NetworkManager's integrated dnsmasq
+/// reads `/etc/NetworkManager/dnsmasq.d/`; a standalone dnsmasq reads
+/// `/etc/dnsmasq.d/`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn dnsmasq_snippet_path(nm: bool) -> std::path::PathBuf {
+    if nm {
+        std::path::PathBuf::from("/etc/NetworkManager/dnsmasq.d/devenv.conf")
+    } else {
+        std::path::PathBuf::from("/etc/dnsmasq.d/devenv.conf")
+    }
+}
+
+/// Scoped dnsmasq snippet: route only `devenv.local` to our embedded DNS,
+/// preserving the port. `server=/devenv.local/<ip>#<port>`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn dnsmasq_snippet_content(dns_addr: SocketAddr) -> String {
+    format!(
+        "# Managed by devenv-tunnel — do not edit by hand.\n\
+         server=/{domain}/{ip}#{port}\n",
+        domain = SCOPED_DOMAIN,
+        ip = dns_addr.ip(),
+        port = dns_addr.port(),
+    )
+}
+
+// --- ifindex parsing — pure, unit-tested -----------------------------------
+
+/// Parse the contents of `/sys/class/net/<link>/ifindex` into a link index.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn parse_ifindex(contents: &str) -> Result<u32> {
+    contents
+        .trim()
+        .parse::<u32>()
+        .with_context(|| format!("unexpected ifindex contents: {contents:?}"))
 }
 
 #[cfg(target_os = "linux")]
-fn loopback_link_name() -> Result<String> {
-    // We use a stable dummy loopback device name.  The actual loopback ("lo")
-    // works for local-only listeners on 127.0.0.1, which is exactly our case.
-    Ok("lo".to_string())
+fn read_ifindex(link_name: &str) -> Result<u32> {
+    let path = format!("/sys/class/net/{link_name}/ifindex");
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading {path}"))?;
+    parse_ifindex(&contents)
+}
+
+// --- system detection (impure shims kept thin) ------------------------------
+
+#[cfg(target_os = "linux")]
+fn detect_resolver_env() -> ResolverEnv {
+    ResolverEnv {
+        resolved_active: systemctl_is_active("systemd-resolved"),
+        resolved_runtime_present: std::path::Path::new("/run/systemd/resolve").exists(),
+        nm_dnsmasq: std::path::Path::new("/etc/NetworkManager/dnsmasq.d").exists()
+            && command_on_path("dnsmasq"),
+        plain_dnsmasq: command_on_path("dnsmasq")
+            && std::path::Path::new("/etc/dnsmasq.d").exists(),
+    }
 }
 
 #[cfg(target_os = "linux")]
-fn run_resolvectl(args: &[impl AsRef<std::ffi::OsStr>]) -> Result<()> {
-    let status = std::process::Command::new("resolvectl")
+fn systemctl_is_active(unit: &str) -> bool {
+    matches!(
+        std::process::Command::new("systemctl")
+            .args(["is-active", "--quiet", unit])
+            .status(),
+        Ok(s) if s.success()
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn command_on_path(cmd: &str) -> bool {
+    matches!(
+        std::process::Command::new("sh")
+            .args(["-c", &format!("command -v {cmd} >/dev/null 2>&1")])
+            .status(),
+        Ok(s) if s.success()
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn reload_dnsmasq(nm: bool) {
+    // Best-effort reload so the new snippet takes effect. NetworkManager owns
+    // its embedded dnsmasq; a standalone dnsmasq is a systemd unit.
+    let (program, args): (&str, &[&str]) = if nm {
+        ("systemctl", &["reload-or-restart", "NetworkManager"])
+    } else {
+        ("systemctl", &["reload-or-restart", "dnsmasq"])
+    };
+    if let Err(e) = std::process::Command::new(program).args(args).status() {
+        warn!("Linux: failed to reload resolver ({program} {}): {e}", args.join(" "));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_busctl(args: &[impl AsRef<std::ffi::OsStr>]) -> Result<()> {
+    let status = std::process::Command::new("busctl")
         .args(args)
         .status()
-        .context("running resolvectl (is systemd-resolved active?)")?;
+        .context("running busctl (is systemd-resolved active?)")?;
     if !status.success() {
-        anyhow::bail!("resolvectl exited with {}", status);
+        anyhow::bail!("busctl exited with {}", status);
     }
     Ok(())
+}
+
+/// `AF_INET` / `AF_INET6` constants used in the resolve1 `(iay)` address family
+/// field. Defined here (rather than pulling in libc just for two ints) so the
+/// pure arg builders need no platform crate; they are the stable Linux values.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const fn libc_af_inet() -> i32 {
+    2
+}
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const fn libc_af_inet6() -> i32 {
+    10
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +487,7 @@ fn run_resolvectl(args: &[impl AsRef<std::ffi::OsStr>]) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "windows")]
-fn install_impl(dns_addr: SocketAddr) -> Result<()> {
+fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
     let script = powershell_add_nrpt_script(dns_addr);
     run_powershell(&script).context("Add-DnsClientNrptRule")?;
     info!("Windows: added NRPT rule for devenv.local -> {}", dns_addr);
@@ -176,7 +495,7 @@ fn install_impl(dns_addr: SocketAddr) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn uninstall_impl() -> Result<()> {
+fn uninstall_impl(_link_name: &str) -> Result<()> {
     let script = powershell_remove_nrpt_script();
     run_powershell(&script).context("Remove-DnsClientNrptRule")?;
     info!("Windows: removed NRPT rule for devenv.local");
@@ -223,7 +542,7 @@ fn run_powershell(script: &str) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn install_impl(dns_addr: SocketAddr) -> Result<()> {
+fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
     warn!(
         "scoped resolver not supported on this platform; \
          configure your OS to send *.devenv.local queries to {}",
@@ -233,7 +552,7 @@ fn install_impl(dns_addr: SocketAddr) -> Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn uninstall_impl() -> Result<()> {
+fn uninstall_impl(_link_name: &str) -> Result<()> {
     Ok(())
 }
 
@@ -346,5 +665,174 @@ mod tests {
         // Only one domain listed, and it must be ~devenv.local.
         assert_eq!(domain_args.len(), 3, "exactly [domain, link, ~devenv.local]");
         assert_eq!(domain_args[2], "~devenv.local");
+    }
+
+    // --- Linux: resolvectl on the TUN link (not lo) ---
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolvectl_dns_args_use_tun_link() {
+        // The fix attaches to the overlay's own TUN link, never `lo`.
+        let args = resolvectl_dns_args("deven0", addr("127.0.0.1", 5300));
+        assert_eq!(args, vec!["dns", "deven0", "127.0.0.1:5300"]);
+        assert_ne!(args[1], "lo", "must not attach scoped DNS to the loopback link");
+    }
+
+    // --- Linux: resolve1 / busctl argument builders ---
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn busctl_set_link_dns_ipv4() {
+        let args = busctl_set_link_dns_args(7, addr("127.0.0.1", 5300));
+        // Prefix: call <dest> <path> <iface> SetLinkDNS ia(iay) <ifindex> <count> <family> <len> <bytes...>
+        assert_eq!(args[0], "call");
+        assert_eq!(args[1], "org.freedesktop.resolve1");
+        assert_eq!(args[2], "/org/freedesktop/resolve1");
+        assert_eq!(args[3], "org.freedesktop.resolve1.Manager");
+        assert_eq!(args[4], "SetLinkDNS");
+        assert_eq!(args[5], "ia(iay)");
+        assert_eq!(args[6], "7", "ifindex");
+        assert_eq!(args[7], "1", "exactly one DNS server");
+        assert_eq!(args[8], "2", "AF_INET");
+        assert_eq!(args[9], "4", "IPv4 is 4 bytes");
+        assert_eq!(&args[10..], &["127", "0", "0", "1"], "address bytes");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn busctl_set_link_dns_ipv6_family() {
+        let args = busctl_set_link_dns_args(3, addr("::1", 5300));
+        assert_eq!(args[5], "ia(iay)");
+        assert_eq!(args[8], "10", "AF_INET6");
+        assert_eq!(args[9], "16", "IPv6 is 16 bytes");
+        // ::1 -> 15 zero bytes then 1.
+        assert_eq!(args.last().map(String::as_str), Some("1"));
+        assert_eq!(args.len(), 10 + 16, "16 address bytes follow the length");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn busctl_set_link_domains_routing_only() {
+        let args = busctl_set_link_domains_args(7);
+        assert_eq!(args[4], "SetLinkDomains");
+        assert_eq!(args[5], "ia(sb)");
+        assert_eq!(args[6], "7", "ifindex");
+        assert_eq!(args[7], "1", "exactly one domain");
+        assert_eq!(args[8], "devenv.local");
+        assert_eq!(
+            args[9], "true",
+            "routing-domain only — must not be used as a search domain"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn busctl_revert_link_targets_ifindex() {
+        let args = busctl_revert_link_args(42);
+        assert_eq!(args[4], "RevertLink");
+        assert_eq!(args[5], "i");
+        assert_eq!(args[6], "42");
+    }
+
+    // --- Linux: ifindex parsing ---
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_ifindex_trims_and_parses() {
+        assert_eq!(parse_ifindex("7\n").unwrap(), 7);
+        assert_eq!(parse_ifindex("  12 ").unwrap(), 12);
+        assert!(parse_ifindex("not-a-number").is_err());
+        assert!(parse_ifindex("").is_err());
+    }
+
+    // --- Linux: resolver environment classification ---
+
+    #[cfg(target_os = "linux")]
+    fn env(
+        resolved_active: bool,
+        resolved_runtime_present: bool,
+        nm_dnsmasq: bool,
+        plain_dnsmasq: bool,
+    ) -> ResolverEnv {
+        ResolverEnv {
+            resolved_active,
+            resolved_runtime_present,
+            nm_dnsmasq,
+            plain_dnsmasq,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn classify_prefers_systemd_resolved() {
+        // (A) resolved + (implicitly) networkd, and (B) resolved without
+        // networkd both classify as SystemdResolved — the mechanism (per-link
+        // busctl on the TUN) is networkd-independent and handles both.
+        assert_eq!(
+            classify_resolver(&env(true, false, false, false)),
+            LinuxResolver::SystemdResolved
+        );
+        assert_eq!(
+            classify_resolver(&env(false, true, false, false)),
+            LinuxResolver::SystemdResolved
+        );
+        // resolved wins even if dnsmasq is also present.
+        assert_eq!(
+            classify_resolver(&env(true, true, true, true)),
+            LinuxResolver::SystemdResolved
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn classify_falls_back_to_dnsmasq() {
+        assert_eq!(
+            classify_resolver(&env(false, false, true, false)),
+            LinuxResolver::Dnsmasq
+        );
+        assert_eq!(
+            classify_resolver(&env(false, false, false, true)),
+            LinuxResolver::Dnsmasq
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn classify_none_when_nothing_detected() {
+        assert_eq!(
+            classify_resolver(&env(false, false, false, false)),
+            LinuxResolver::None
+        );
+    }
+
+    // --- Linux: dnsmasq snippet ---
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dnsmasq_snippet_scopes_only_devenv_local() {
+        let content = dnsmasq_snippet_content(addr("127.0.0.1", 5300));
+        assert!(
+            content.contains("server=/devenv.local/127.0.0.1#5300"),
+            "must route only devenv.local to the embedded DNS with its port: {content}"
+        );
+        // No catch-all server line that would hijack the whole resolver.
+        assert!(
+            !content.lines().any(|l| l.trim() == "server=127.0.0.1#5300"),
+            "must not add an unscoped server line"
+        );
+        assert!(content.contains("devenv-tunnel"), "management comment");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dnsmasq_snippet_path_selection() {
+        assert_eq!(
+            dnsmasq_snippet_path(true),
+            std::path::PathBuf::from("/etc/NetworkManager/dnsmasq.d/devenv.conf")
+        );
+        assert_eq!(
+            dnsmasq_snippet_path(false),
+            std::path::PathBuf::from("/etc/dnsmasq.d/devenv.conf")
+        );
     }
 }

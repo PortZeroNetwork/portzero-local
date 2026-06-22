@@ -1,7 +1,7 @@
 ---
 id: ee0488f7-2163-465d-805a-0f9b1d17959e
 slug: task-15
-status: todo
+status: done
 title: Make Linux scoped DNS robust (systemd-resolved without networkd, plus fallbacks)
 milestones:
 - milestone-1
