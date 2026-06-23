@@ -1,0 +1,64 @@
+---
+id: d692cc40-3cfc-42fb-9035-61bc0cce34e2
+slug: task-32
+status: todo
+title: Daemon foreground does not stop on Ctrl-C/SIGINT (must sudo pkill)
+milestones:
+- milestone-2
+created_at: 2026-06-23T14:55:21.364176Z
+updated_at: 2026-06-23T14:55:21.364176Z
+---
+
+## Context
+
+Observed during the [[[task-22](../work/task-22.task.md)]] / [[[task-31](../work/task-31.task.md)]] macOS bring-up runs: a daemon
+started in the foreground as root does **not** stop on Ctrl-C — it has to be
+killed with `sudo pkill -f devenv-tunnel`. This hurts the dev loop and matters
+for the [[[task-23](../work/task-23.task.md)]] LaunchDaemon story (clean stop/teardown).
+
+Repro:
+
+```
+sudo -E RUST_LOG=info ./target/debug/devenv-tunnel start --foreground
+# ^C  -> no effect; process keeps logging / has to be pkill'd
+```
+
+What the code looks like today (so this isn't a missing-handler bug):
+
+- `discovery_loop::wait_for_shutdown_signal()` (discovery_loop.rs:739) correctly
+  `select!`s on `SIGTERM` and `tokio::signal::ctrl_c()`.
+- It is only awaited in the main loop's `select!` (discovery_loop.rs:551-559),
+  which races it against `sleep(scan_interval)` — i.e. the signal is only polled
+  in the gap **between** scans, not during a scan.
+- Runtime is the default multi-threaded `#[tokio::main]`, so a starved signal
+  driver is unlikely.
+
+## Approach
+
+Investigate which of these is actually happening (add temporary tracing around
+signal receipt and each teardown step):
+
+1. **Blocking scan phase** — the per-iteration scan (discovery_loop.rs:324-550)
+   runs before the `select!` and shells out synchronously (`ps`/`lsof`/`docker`
+   via `std::process::Command`). If one blocks, SIGINT isn't observed until it
+   returns. Candidate fix: move the signal wait to a top-level `select!` that
+   races the WHOLE loop body (or spawn the scan via `spawn_blocking` and select
+   the signal at the outermost level) so Ctrl-C is honoured immediately.
+2. **Hanging teardown** — after the signal fires, shutdown does
+   `docker_monitor.abort()` + `overlay.shutdown().await` + pid-file removal
+   (discovery_loop.rs:566-580). If `overlay.shutdown()` (scoped-resolver
+   uninstall / TUN drop) blocks, the process appears unresponsive. (Note: when
+   the overlay failed to start — the [[[task-31](../work/task-31.task.md)]] case — `overlay` is `None`, so
+   this path is skipped, which points more at #1 for that specific run.)
+3. **Signal delivery under `sudo -E`** — confirm SIGINT is actually reaching the
+   child (sudo forwards it, but verify); compare `kill -INT <pid>` vs the
+   terminal Ctrl-C, and `kill -TERM` behaviour.
+
+Done when:
+
+- [ ] Root cause identified (which of the above)
+- [ ] Foreground daemon exits promptly on Ctrl-C AND `kill -TERM`, running the
+      graceful overlay/resolver teardown
+- [ ] A second Ctrl-C / a timeout forces exit if graceful teardown stalls
+      (no more `sudo pkill` needed)
+- [ ] Verified via the [[[task-22](../work/task-22.task.md)]] runbook (cross-check `kill -TERM` too)
