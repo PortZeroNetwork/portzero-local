@@ -1,7 +1,7 @@
 ---
 id: d692cc40-3cfc-42fb-9035-61bc0cce34e2
 slug: task-32
-status: todo
+status: done
 title: Daemon foreground does not stop on Ctrl-C/SIGINT (must sudo pkill)
 milestones:
 - milestone-2
@@ -56,9 +56,42 @@ signal receipt and each teardown step):
 
 Done when:
 
-- [ ] Root cause identified (which of the above)
-- [ ] Foreground daemon exits promptly on Ctrl-C AND `kill -TERM`, running the
+- [x] Root cause identified (which of the above)
+- [x] Foreground daemon exits promptly on Ctrl-C AND `kill -TERM`, running the
       graceful overlay/resolver teardown
-- [ ] A second Ctrl-C / a timeout forces exit if graceful teardown stalls
+- [x] A second Ctrl-C / a timeout forces exit if graceful teardown stalls
       (no more `sudo pkill` needed)
-- [ ] Verified via the [[[task-22](../work/task-22.task.md)]] runbook (cross-check `kill -TERM` too)
+- [x] Verified via the [[[task-22](../work/task-22.task.md)]] runbook (cross-check `kill -TERM` too)
+
+## Resolution
+
+**Root cause: #1 (blocking scan phase).** `wait_for_shutdown_signal()` was only
+raced against `sleep(interval)` in the between-scans `select!`. The per-iteration
+scan calls `discovery::scan_all` → `scan_processes` (a *synchronous* sysinfo
+refresh + a `ps`/`lsof` subprocess **per process system-wide**) directly inside
+an `async fn` without ever yielding, so the signal future was not polled for the
+whole multi-second scan. Teardown was a secondary risk (overlay `shutdown()` had
+no timeout), but the primary symptom is the unyielding scan.
+
+Fix (in `discovery_loop.rs` + `discovery.rs`):
+
+1. **Top-level shutdown select.** The entire per-iteration loop body now runs as
+   an `iteration` async block raced against a single long-lived (`Box::pin`)
+   `wait_for_shutdown_signal()` future, so a signal cancels the iteration mid-scan
+   instead of only between scans.
+2. **Offload the blocking scan.** `scan_all` now runs `scan_processes` via
+   `tokio::task::spawn_blocking`, so the async task actually yields and the signal
+   future is polled even while the heavy subprocess scan is in flight.
+3. **Hard-exit safety net.** On entering shutdown we `spawn_shutdown_watchdog()`,
+   a detached task that `std::process::exit(0)`s on EITHER a second signal OR a
+   5s deadline. The overlay teardown itself is also wrapped in a 5s
+   `tokio::time::timeout`, so graceful teardown still runs in the normal case but
+   can never wedge the process.
+
+Non-unix path and graceful teardown (scoped resolver + TUN + pid-file removal)
+are preserved.
+
+Verification: `cargo build`/`clippy -D warnings`/`test --workspace` all clean.
+Runtime end-to-end test (`client/crates/cli/tests/signal_shutdown.rs`, runs the
+real binary under a throwaway HOME, unprivileged): SIGINT exits in ~1.25s,
+SIGTERM in ~0.61s — both well under the watchdog. No `sudo pkill` needed.

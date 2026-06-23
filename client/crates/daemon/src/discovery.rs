@@ -183,7 +183,19 @@ enum SelectedPort {
 /// Scan all processes and Docker containers for DEVENV_TUNNEL.
 pub async fn scan_all(account_id: Option<&str>, username: Option<&str>) -> Vec<DiscoveredService> {
     let mut services = Vec::new();
-    services.extend(scan_processes(account_id, username));
+    // `scan_processes` does a full sysinfo refresh and shells out (`ps`/`lsof`)
+    // for every process system-wide, all synchronously. Run it on a blocking
+    // thread so the async task yields control — otherwise the executor thread is
+    // held for the whole (potentially multi-second) scan and the daemon's
+    // shutdown-signal future never gets polled mid-scan.
+    let acct = account_id.map(str::to_owned);
+    let user = username.map(str::to_owned);
+    let process_services = tokio::task::spawn_blocking(move || {
+        scan_processes(acct.as_deref(), user.as_deref())
+    })
+    .await
+    .unwrap_or_default();
+    services.extend(process_services);
     services.extend(scan_docker_containers(account_id, username).await);
     services
 }

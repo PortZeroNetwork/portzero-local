@@ -321,7 +321,20 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         }
     };
 
+    // Long-lived shutdown future. We `select!` the ENTIRE loop body against this
+    // every iteration so a SIGTERM/Ctrl-C is honoured immediately — even in the
+    // middle of a (potentially slow, subprocess-heavy) scan — rather than only
+    // in the gap between scans. `Box::pin` keeps the same future alive across
+    // iterations so a signal that arrives mid-iteration is not lost when the
+    // branch's local future is dropped.
+    let mut shutdown = Box::pin(wait_for_shutdown_signal());
+
     loop {
+        // The per-iteration work (scan + cloud sync + sleep) lives in this async
+        // block so it can be raced against `shutdown` at the top level. If the
+        // signal fires, this future is dropped at its next `.await` point and we
+        // break out to teardown.
+        let iteration = async {
         // Check process liveness for existing routes
         let routes_snapshot: Vec<(String, u32)> = route_table
             .routes
@@ -546,22 +559,32 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             }
         }
 
-        // Sleep until the next scan, but wake early on a shutdown signal so we
-        // can tear the overlay (and its TUN/resolver config) down cleanly.
+        // Sleep until the next scan, waking early when the Docker event monitor
+        // sees a relevant container start/die so a new (or vanished) container is
+        // reflected promptly instead of waiting the full poll interval. The
+        // shutdown signal is handled one level up (the top-level `select!`
+        // below), so it can interrupt this sleep AND any of the scan work above.
         tokio::select! {
             _ = tokio::time::sleep(interval) => {}
-            // Wake early when the Docker event monitor sees a relevant container
-            // start/die, so a new (or vanished) container is reflected promptly
-            // instead of waiting the full poll interval.
             _ = docker_rescan.notified() => {
                 tracing::trace!("Docker event triggered an immediate rescan");
             }
-            _ = wait_for_shutdown_signal() => {
+        }
+        }; // end of `iteration` async block
+
+        tokio::select! {
+            _ = iteration => {}
+            _ = &mut shutdown => {
                 tracing::info!("Shutdown signal received, stopping discovery daemon");
                 break;
             }
         }
     }
+
+    // We have begun shutting down. From here on, a SECOND signal (or a stalled
+    // graceful teardown) must force the process to exit so the operator never
+    // has to `pkill`. Arm a watchdog that hard-exits on either condition.
+    spawn_shutdown_watchdog();
 
     // Stop the Docker event monitor cleanly alongside the overlay teardown.
     docker_shutdown.notify_one();
@@ -569,16 +592,53 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
 
     // Graceful shutdown: tear down the overlay (removes the scoped resolver
     // config and the TUN device) before exiting so we don't leave the system's
-    // DNS pointed at a dead server. Best-effort — never blocks process exit.
+    // DNS pointed at a dead server. Best-effort and time-bounded — if teardown
+    // wedges (e.g. a blocking resolver uninstall), the watchdog above forces
+    // exit, but we also cap the overlay teardown directly so the common case
+    // returns promptly.
     if let Some(ov) = overlay {
-        ov.shutdown().await;
-        tracing::info!("Virtual overlay network shut down");
+        match tokio::time::timeout(GRACEFUL_SHUTDOWN_TIMEOUT, ov.shutdown()).await {
+            Ok(()) => tracing::info!("Virtual overlay network shut down"),
+            Err(_) => tracing::warn!(
+                "Overlay shutdown did not complete within {}s; continuing exit",
+                GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
+            ),
+        }
     }
 
     remove_pid_file(config);
     tracing::info!("Discovery daemon stopped");
 
     Ok(())
+}
+
+/// Hard upper bound on how long the graceful teardown may take before we force
+/// the process to exit. Keeps Ctrl-C / SIGTERM responsive even if a teardown
+/// step wedges.
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Arm a safety net so shutdown can never wedge the process:
+///   * a SECOND Ctrl-C / SIGTERM forces an immediate exit, and
+///   * an overall deadline forces exit even if no second signal arrives.
+///
+/// Either path calls `std::process::exit(0)` after logging. This runs as a
+/// detached task alongside the graceful teardown; in the normal case the
+/// process exits cleanly via the loop returning before this fires.
+fn spawn_shutdown_watchdog() {
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = wait_for_shutdown_signal() => {
+                tracing::warn!("Second shutdown signal received, forcing immediate exit");
+            }
+            _ = tokio::time::sleep(GRACEFUL_SHUTDOWN_TIMEOUT) => {
+                tracing::warn!(
+                    "Graceful shutdown exceeded {}s, forcing exit",
+                    GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
+                );
+            }
+        }
+        std::process::exit(0);
+    });
 }
 
 /// Persist discovered overlay services to `overlay.json` so `devenv tunnel status` can read them.
