@@ -7,6 +7,7 @@ milestones:
 - milestone-2
 depends_on:
 - 2a8cf42b-859e-449a-802b-6f8ffa24caf0
+- 90c60514-3fb9-4866-b2e0-1932ad263477
 created_at: 2026-06-23T12:51:59.270601Z
 updated_at: 2026-06-23T12:51:59.270601Z
 ---

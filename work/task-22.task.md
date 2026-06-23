@@ -1,7 +1,7 @@
 ---
 id: 2a8cf42b-859e-449a-802b-6f8ffa24caf0
 slug: task-22
-status: todo
+status: done
 title: 'macOS bring-up: first privileged run + runtime triage'
 milestones:
 - milestone-2
@@ -44,10 +44,39 @@ silently degrade ("continuing in cloud/local-only mode").
 
 Done when:
 
-- [ ] Privileged foreground run documented with the daemon log captured
-- [ ] Each overlay step (utun create, route, scoped resolver) marked
+- [x] Privileged foreground run documented with the daemon log captured
+- [x] Each overlay step (utun create, route, scoped resolver) marked
       works / broken / degraded
-- [ ] End-to-end `curl http://<svc>.devenv.local/` result recorded (carries
+- [x] End-to-end `curl http://<svc>.devenv.local/` result recorded (carries
       traffic vs. resolves-but-hangs vs. no-resolve)
-- [ ] Findings triaged into [[[task-24](../work/task-24.task.md)]], [[[task-25](../work/task-25.task.md)]], [[[task-26](../work/task-26.task.md)]] (close any
-      that already pass; sharpen the rest with the observed behaviour)
+- [x] Findings triaged into the dependent tickets
+
+## Findings (run 2026-06-23, macOS, as root)
+
+The overlay **never starts** — TUN creation fails at step 1 even as root:
+
+```
+WARN ... Virtual overlay network not started (continuing in cloud/local-only
+mode): failed to create TUN device (are you root?): cannot parse integer from
+empty string.
+```
+
+Per-step result:
+
+- **utun create — BROKEN.** Bare `"utun"` name → `tun` crate parse error. Root
+  cause + fix tracked in [[[task-31](../work/task-31.task.md)]] (the real macOS blocker). Everything below
+  is downstream of this.
+- **route `10.254.0.0/16` — never ran** (`netstat -rn` empty). Blocked on
+  [[[task-31](../work/task-31.task.md)]].
+- **scoped resolver — never ran** (`/etc/resolver/devenv.local` absent,
+  `dscacheutil` empty). Blocked on [[[task-31](../work/task-31.task.md)]]; [[[task-25](../work/task-25.task.md)]] re-pointed at it.
+- **data path / `curl` — no-resolve** (overlay down). [[[task-24](../work/task-24.task.md)]]'s utun-header
+  question is still UNASSESSED — we never reached the data path; re-pointed at
+  [[[task-31](../work/task-31.task.md)]].
+- **discovery — WORKS.** Log: `DEVENV_TUNNEL value ends in .local — routing to
+  overlay path … domain="hello.devenv.local"`. The macOS `ps`-based env scan
+  found the service. [[[task-26](../work/task-26.task.md)]] is an optimisation, not a fix.
+
+Orthogonal (not parity bugs): auth token expired (`AuthFailed` — needs
+`devenv tunnel login`); `examples/local-overlay/verify.sh` is Linux-only
+(`resolvectl`) and needs a macOS DNS-check path.
