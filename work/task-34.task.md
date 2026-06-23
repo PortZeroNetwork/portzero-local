@@ -1,7 +1,7 @@
 ---
 id: f039a3ba-4461-44ec-8b0c-350ecc4f9be5
 slug: task-34
-status: todo
+status: done
 title: macOS lsof port discovery parses (LISTEN) as the address — services never register
 milestones:
 - milestone-2
@@ -59,6 +59,22 @@ Done when:
 - [x] `discover_ports_lsof` extracts the address/port past a trailing `(LISTEN)`
 - [x] Unit tests cover IPv4/IPv6 + the `(LISTEN)` suffix
 - [x] Linux behaviour unchanged; builds clean with `clippy -D warnings`
-- [ ] Privileged re-run: service registers (`status` + `dig @127.0.0.1` show it)
+- [x] Privileged re-run: service registers (`status` + `dig @127.0.0.1` show it)
 
 Related broader hardening (single-pass lsof, libproc) stays in [[[task-26](../work/task-26.task.md)]].
+
+## Verified (run 2026-06-23, macOS, as root)
+
+With the parser fix (`6e0c366`):
+
+```
+$ dig @127.0.0.1 -p 10053 hello.devenv.local +short
+10.254.0.2
+$ devenv-tunnel status
+DOMAIN              PORT  SOURCE
+hello.devenv.local  8080  PID 91511
+```
+
+The service now registers, gets VIP `10.254.0.2`, and the DNS server answers.
+Confirmed root cause and fix. (The remaining `curl` timeout is the data-path
+header issue → [[[task-24](../work/task-24.task.md)]], not discovery.)

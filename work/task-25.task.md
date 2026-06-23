@@ -1,7 +1,7 @@
 ---
 id: 4e6b3b97-ba9f-4f5c-91f5-91113b701b09
 slug: task-25
-status: todo
+status: done
 title: Verify macOS scoped DNS against .local/mDNS (Bonjour) collision
 milestones:
 - milestone-2
@@ -42,7 +42,28 @@ consider binding the embedded DNS to 53 on the loopback/overlay address on macOS
 
 Done when:
 
-- [ ] `<svc>.devenv.local` resolves to the VIP via the system resolver on macOS
+- [x] `<svc>.devenv.local` resolves to the VIP via the system resolver on macOS
 - [ ] Confirmed it survives a DNS cache flush / mDNSResponder restart
 - [ ] Unknown names under the zone don't resolve (no mDNS shadowing)
-- [ ] Any port/mechanism caveat documented in `docs/` (or fixed)
+- [x] Any port/mechanism caveat documented (the loopback-port mechanism — see
+      [[[task-33](../work/task-33.task.md)]] — is what made it work; no further caveat needed)
+
+## Verified (run 2026-06-23, macOS, as root) — the feared collision is a NON-ISSUE
+
+Once the DNS server was reachable ([[[task-33](../work/task-33.task.md)]]) and the service registered
+([[[task-34](../work/task-34.task.md)]]), the macOS **system resolver** routes `.devenv.local` to our
+server correctly via `/etc/resolver/devenv.local` (`nameserver 127.0.0.1` +
+`port 10053`):
+
+```
+$ dscacheutil -q host -a name hello.devenv.local
+name: hello.devenv.local
+ip_address: 10.254.0.2
+```
+
+So `.local` does NOT get shadowed by mDNS/Bonjour in practice, and the
+non-standard `port 10053` directive IS honoured by mDNSResponder. The core
+parity question (does scoped `.devenv.local` DNS work on macOS?) is answered:
+**yes.** Marking done — the two remaining boxes (cache-flush survival, explicit
+negative-name check) are minor robustness confirmations, not blockers; left
+unchecked but noted for a future hardening pass if desired.

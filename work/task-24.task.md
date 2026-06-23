@@ -26,18 +26,40 @@ depends on how the `tun` crate (v0.6.1) handles the header on macOS — it may o
 may not strip it for us. If unhandled, the overlay **compiles and resolves but
 carries no traffic** on macOS (a resolve-but-hang in [[[task-22](../work/task-22.task.md)]] is the tell).
 
+## CONFIRMED (2026-06-23) — this is the active data-path bug
+
+The [[[task-22](../work/task-22.task.md)]] re-run (after [[[task-31](../work/task-31.task.md)]] + [[[task-33](../work/task-33.task.md)]] + [[[task-34](../work/task-34.task.md)]]) reaches
+the resolve-but-hang: `hello.devenv.local` resolves to its VIP `10.254.0.2` and
+`status` shows the route, but `curl http://hello.devenv.local:8080/` connects to
+`10.254.0.2:8080` and **times out after 8s** — no traffic crosses the overlay.
+
+Root cause verified by reading the crate source: `tun` 0.6.1's macOS backend
+(`platform/posix/fd.rs` `Fd::read`/`Fd::write`) does raw `libc::read`/`write` on
+the utun fd with **no header handling**. macOS utun prepends a 4-byte
+address-family header (`00 00 00 02` = `AF_INET`, big-endian) on every read and
+REQUIRES it on every write. So:
+
+- **read:** `stack.rs` feeds `[00 00 00 02][IP…]` to smoltcp, which reads the
+  first nibble `0x0` as IP version 0 → drops the SYN.
+- **write:** smoltcp's bare IP packet is written with no AF header → the kernel
+  rejects/misroutes it.
+
 ## Approach
 
-- Confirm from [[[task-22](../work/task-22.task.md)]]'s run whether traffic flows. If it does, the `tun`
-  crate already strips the header — close this and just add a regression note.
-- If it hangs, determine `tun` 0.6.1's macOS behaviour (does `Reader`/`Writer`
-  include the 4-byte prefix?). Then either enable the crate's
-  packet-information handling, or strip-on-read / prepend-on-write in the macOS
-  branch of `stack.rs` (`tun_reader.read` / `tun_writer.write`).
-- Keep Linux behaviour byte-for-byte unchanged (no header there).
+- Add the macOS utun 4-byte header handling at the TUN boundary in
+  `net/tun_device.rs` (preferred — keeps `stack.rs` platform-agnostic): on macOS,
+  `TunReader::read` strips the leading 4 bytes before returning the IP packet,
+  and `TunWriter::write` prepends the 4-byte AF header. Choose the family from
+  the IP version nibble of the outgoing packet: IPv4 (`0x4…`) → `AF_INET`
+  (`00 00 00 02`); IPv6 (`0x6…`) → `AF_INET6` (`00 00 00 1E`). The header is a
+  big-endian `u32` protocol family.
+- Keep **Linux byte-for-byte unchanged** (no header there — passthrough).
+- Make the strip/prepend logic pure where possible and unit-test it (header
+  bytes in/out) so it's verifiable without root.
 
 Done when:
 
-- [ ] macOS `curl http://<svc>.devenv.local/` returns a real response body
-- [ ] Header handling is macOS-scoped and leaves Linux untouched
-- [ ] A test or documented manual check guards against regression
+- [ ] macOS `curl http://hello.devenv.local:8080/` returns a real response body
+- [ ] Header strip-on-read / prepend-on-write is macOS-scoped; Linux untouched
+- [ ] Unit test covers the header add/strip (incl. IPv4 vs IPv6 family byte)
+- [ ] Verified by a privileged [[[task-22](../work/task-22.task.md)]] re-run (curl carries traffic)
