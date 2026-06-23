@@ -807,6 +807,13 @@ fn inspect_container(
     let mounts_json = if parts.len() > 4 { parts[4] } else { "[]" };
     let labels_json = if parts.len() > 5 { parts[5] } else { "{}" };
 
+    // State.Pid == 0 means the container is stopped/exited. This can happen in
+    // a race between docker ps (lists running IDs) and docker inspect (runs
+    // slightly later after the container stops). Ignore such containers.
+    if container_pid == 0 {
+        return Ok(None);
+    }
+
     let env_vars: Vec<String> = serde_json::from_str(env_json).unwrap_or_default();
 
     let raw = env_vars
@@ -1143,6 +1150,11 @@ async fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkS
         let pid: u32 = parts[3].parse().unwrap_or(0);
         let mounts_json = if parts.len() > 4 { parts[4] } else { "[]" };
         let labels_json = if parts.len() > 5 { parts[5] } else { "{}" };
+
+        // State.Pid == 0 → container stopped/exited (race between docker ps and inspect).
+        if pid == 0 {
+            continue;
+        }
 
         let envs: Vec<String> = match serde_json::from_str(env_json) {
             Ok(v) => v,
