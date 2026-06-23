@@ -1,7 +1,7 @@
 ---
 id: 90c60514-3fb9-4866-b2e0-1932ad263477
 slug: task-31
-status: todo
+status: done
 title: 'macOS TUN never created: pass None for kernel-assigned utun (bare "utun" name panics tun crate)'
 milestones:
 - milestone-2
@@ -55,13 +55,30 @@ not be assessed.
 
 Done when:
 
-- [ ] macOS `OverlayNetwork::start` creates a `utunN` device as root (no parse
+- [x] macOS `OverlayNetwork::start` creates a `utunN` device as root (no parse
       error) — verified by a re-run of the [[[task-22](../work/task-22.task.md)]] runbook
-- [ ] `10.254.0.0/16` route + `/etc/resolver/devenv.local` then install
+- [x] `10.254.0.0/16` route + `/etc/resolver/devenv.local` then install
       (unblocks assessment of [[[task-24](../work/task-24.task.md)]] / [[[task-25](../work/task-25.task.md)]])
 - [x] Linux device creation (`deven0`) unchanged; builds clean with
       `clippy -D warnings`
 - [x] Misleading comments corrected
+
+## Verified (run 2026-06-23, macOS, as root)
+
+Re-run of the [[[task-22](../work/task-22.task.md)]] runbook with the fix (`adf3b39`):
+
+```
+TUN device created: name=utun4 address=10.254.0.1/16 mtu=1500
+route add succeeded: route -n add -net 10.254.0.0/16 -interface utun4
+overlay DNS listening on 10.254.0.1:53
+macOS: wrote scoped resolver /etc/resolver/devenv.local
+Virtual overlay network started (.devenv.local)
+```
+
+`ifconfig` shows `utun4` with `inet 10.254.0.1`, `netstat -rn` shows
+`10.254/16 -> utun4`, `/etc/resolver/devenv.local` written. The overlay now
+starts. Remaining DNS-resolution + data-path issues are downstream
+([[[task-25](../work/task-25.task.md)]] / [[[task-24](../work/task-24.task.md)]]).
 
 ## Implementation notes
 
