@@ -31,7 +31,10 @@ pub struct TunConfig {
     /// Suggested device name (platform dependent). `None` lets each platform
     /// pick a sensible default (see [`default_device_name`]).
     ///
-    /// macOS: `utun` lets the kernel choose the next free `utunN`.
+    /// macOS: leave `None` for kernel assignment — the `tun` crate then passes
+    /// utun unit `id = 0`, letting the kernel pick the next free `utunN`.
+    /// Passing a name here on macOS requests a *specific* `utunN` (e.g.
+    /// `"utun7"`); the bare prefix `"utun"` is invalid (empty unit number).
     /// Linux: `deven0` (or any `tunN`-style name).
     /// Windows: the wintun adapter name.
     pub name: Option<String>,
@@ -61,9 +64,11 @@ impl Default for TunConfig {
 /// Pick a sensible default interface name for the current platform when the
 /// caller did not request one.
 ///
-/// On macOS the kernel only accepts `utun`-prefixed names and assigns the unit
-/// number itself, so we request the bare prefix `"utun"`. On Linux and Windows
-/// we use a stable, descriptive name.
+/// On macOS the kernel assigns the utun unit number itself, so the default path
+/// does NOT pass this name to the `tun` crate at all (it leaves the name `None`
+/// so the crate uses unit `id = 0` / next-free `utunN`). The bare `"utun"`
+/// string returned here is only used as a logging placeholder. On Linux and
+/// Windows we use this stable, descriptive name as the real device name.
 fn default_device_name() -> &'static str {
     #[cfg(target_os = "macos")]
     {
@@ -72,6 +77,63 @@ fn default_device_name() -> &'static str {
     #[cfg(not(target_os = "macos"))]
     {
         "deven0"
+    }
+}
+
+/// Outcome of [`select_device_name`]: which name (if any) to set on the `tun`
+/// `Configuration`, plus a non-empty placeholder used only for logging when the
+/// post-creation kernel name query fails.
+#[derive(Debug, PartialEq, Eq)]
+struct DeviceNameSelection {
+    /// `Some(name)` => call `tuncfg.name(name)`. `None` => leave the name unset
+    /// so the kernel assigns it (macOS default path: next free `utunN`).
+    set_name: Option<String>,
+    /// Placeholder name for logging if `dev.get_ref().name()` ever fails.
+    requested_name: String,
+}
+
+/// Decide whether to request a specific device name from the kernel.
+///
+/// On macOS the `tun` crate maps a name to a utun unit number by parsing the
+/// digits after the `utun` prefix; the bare `"utun"` has no digits and fails
+/// with "cannot parse integer from empty string". The crate's `None` path
+/// instead passes unit `id = 0`, which tells the kernel to assign the next free
+/// `utunN`. So on macOS we only set the name when the caller explicitly asked
+/// for a specific `utunN` (e.g. `"utun7"`); the default path (`None`) leaves the
+/// name unset.
+///
+/// On Linux/Windows the default (`deven0`) is a real, valid device name and must
+/// always be set — behaviour there is unchanged.
+///
+/// Pure and side-effect free so it can be unit-tested unprivileged.
+fn select_device_name(requested: Option<&str>) -> DeviceNameSelection {
+    #[cfg(target_os = "macos")]
+    {
+        match requested {
+            // Caller asked for a specific utunN — honour it.
+            Some(name) => DeviceNameSelection {
+                set_name: Some(name.to_string()),
+                requested_name: name.to_string(),
+            },
+            // Default path: leave the name unset so the kernel assigns the next
+            // free utunN. The placeholder is used only for logging.
+            None => DeviceNameSelection {
+                set_name: None,
+                requested_name: default_device_name().to_string(),
+            },
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Linux/Windows: always set a concrete, valid name (caller's or the
+        // platform default such as `deven0`).
+        let name = requested
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| default_device_name().to_string());
+        DeviceNameSelection {
+            set_name: Some(name.clone()),
+            requested_name: name,
+        }
     }
 }
 
@@ -375,11 +437,16 @@ impl TunDevice {
     pub fn create(config: &TunConfig) -> Result<Self> {
         let mut tuncfg = Configuration::default();
 
-        let requested_name = config
-            .name
-            .clone()
-            .unwrap_or_else(|| default_device_name().to_string());
-        tuncfg.name(&requested_name);
+        // Decide whether to request a specific device name from the kernel, and
+        // what placeholder name to use for logging if the post-creation name
+        // query fails. See [`select_device_name`] for the platform rationale.
+        let DeviceNameSelection {
+            set_name,
+            requested_name,
+        } = select_device_name(config.name.as_deref());
+        if let Some(name) = set_name.as_ref() {
+            tuncfg.name(name);
+        }
 
         tuncfg.address(config.address);
         tuncfg.netmask(config.netmask);
@@ -699,6 +766,43 @@ mod tests {
         assert_eq!(name, "utun");
         #[cfg(not(target_os = "macos"))]
         assert_eq!(name, "deven0");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn select_device_name_macos_default_leaves_name_unset() {
+        // The default path passes None: the `tun` crate must NOT receive a name
+        // (so it uses unit id=0 and the kernel assigns the next free utunN).
+        // The placeholder is only for logging and must be non-empty.
+        let sel = select_device_name(None);
+        assert_eq!(sel.set_name, None);
+        assert_eq!(sel.requested_name, "utun");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn select_device_name_macos_explicit_is_honoured() {
+        // An explicit utunN must be passed through to the crate verbatim.
+        let sel = select_device_name(Some("utun7"));
+        assert_eq!(sel.set_name.as_deref(), Some("utun7"));
+        assert_eq!(sel.requested_name, "utun7");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn select_device_name_non_macos_default_sets_deven0() {
+        // Linux/Windows must always set a concrete, valid name.
+        let sel = select_device_name(None);
+        assert_eq!(sel.set_name.as_deref(), Some("deven0"));
+        assert_eq!(sel.requested_name, "deven0");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn select_device_name_non_macos_explicit_is_honoured() {
+        let sel = select_device_name(Some("deven1"));
+        assert_eq!(sel.set_name.as_deref(), Some("deven1"));
+        assert_eq!(sel.requested_name, "deven1");
     }
 
     #[cfg(target_os = "linux")]

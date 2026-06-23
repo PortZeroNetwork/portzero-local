@@ -59,6 +59,36 @@ Done when:
       error) — verified by a re-run of the [[[task-22](../work/task-22.task.md)]] runbook
 - [ ] `10.254.0.0/16` route + `/etc/resolver/devenv.local` then install
       (unblocks assessment of [[[task-24](../work/task-24.task.md)]] / [[[task-25](../work/task-25.task.md)]])
-- [ ] Linux device creation (`deven0`) unchanged; builds clean with
+- [x] Linux device creation (`deven0`) unchanged; builds clean with
       `clippy -D warnings`
-- [ ] Misleading comments corrected
+- [x] Misleading comments corrected
+
+## Implementation notes
+
+Fixed in `client/crates/daemon/src/net/tun_device.rs`. Extracted the
+name-selection decision into a pure `select_device_name(Option<&str>)` helper
+returning a `DeviceNameSelection { set_name, requested_name }`:
+
+- **macOS + `None`** (the daemon's default path): `set_name = None`, so
+  `create()` does NOT call `tuncfg.name(...)`. The `tun` crate then uses utun
+  unit `id = 0` and the kernel assigns the next free `utunN`. The non-empty
+  placeholder `"utun"` is kept only for logging if the post-create name query
+  fails.
+- **macOS + `Some("utunN")`**: honoured verbatim (caller requested a specific
+  unit).
+- **Linux/Windows**: always sets a concrete valid name (caller's or `deven0`) —
+  byte-for-byte unchanged.
+
+`actual_name` is still derived from `dev.get_ref().name()` after creation, so
+route install/teardown use the real kernel-assigned name. The stale
+delete/retry path is unaffected on macOS (`delete_device_command` still returns
+`None` there). Doc comments on `default_device_name()` and `TunConfig::name`
+corrected.
+
+Verified: `cargo build --workspace` (clean, no warnings),
+`cargo clippy --workspace --all-targets -- -D warnings` (passes),
+`cargo test --workspace` (passes; added unprivileged unit tests for
+`select_device_name`). Did NOT bump the `tun` crate.
+
+The first two boxes need a privileged (root) re-run of the [task-22](../work/task-22.task.md) runbook to
+confirm a `utunN` actually comes up — left unchecked. Runtime unverified.
