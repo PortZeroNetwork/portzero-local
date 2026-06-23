@@ -47,6 +47,24 @@ native mechanism for a privileged service:
 | Linux    | systemd **user** unit (`~/.config/systemd/user/devenv-daemon.service`); the binary itself carries `CAP_NET_ADMIN`, so the user-level service is sufficient. |
 | Windows  | Scheduled task at logon (admin for adapter setup). |
 
+### Enabling / disabling autostart
+
+Manage autostart with the `autostart` subcommands:
+
+```bash
+devenv tunnel autostart enable    # install the system service
+devenv tunnel autostart disable   # remove it
+devenv tunnel autostart status    # show whether it's installed
+```
+
+On macOS, `enable`/`disable` write to `/Library/LaunchDaemons` and must be run
+with `sudo` (see below); the command fails fast with that hint when run without
+root:
+
+```bash
+sudo devenv-tunnel autostart enable
+```
+
 ### macOS: why a LaunchDaemon (not a LaunchAgent)
 
 macOS has no `setcap` equivalent, so the binary cannot be granted networking

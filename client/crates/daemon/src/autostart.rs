@@ -186,13 +186,13 @@ fn require_root(action: &str) -> Result<()> {
             "Installing the devenv-tunnel autostart service as a root LaunchDaemon \
              requires administrator privileges to {action} {dir}.\n\n\
              Re-run this command with sudo, e.g.:\n    \
-             sudo devenv-tunnel daemon {verb}",
+             sudo devenv-tunnel autostart {verb}",
             action = action,
             dir = LAUNCHDAEMONS_DIR,
             verb = if action.contains("remove") {
-                "autostart-disable"
+                "disable"
             } else {
-                "autostart-enable"
+                "enable"
             },
         );
     }

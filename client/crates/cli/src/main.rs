@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 
 mod api_client;
 mod auth;
+mod autostart;
 mod daemon;
 mod domains;
 mod team;
@@ -62,6 +63,20 @@ enum Command {
     /// Manage teams.
     #[command(subcommand)]
     Team(TeamCommand),
+
+    /// Manage starting the daemon automatically at boot.
+    #[command(subcommand)]
+    Autostart(AutostartCommand),
+}
+
+#[derive(Subcommand)]
+enum AutostartCommand {
+    /// Install the daemon as a system service that starts at boot.
+    Enable,
+    /// Remove the autostart system service.
+    Disable,
+    /// Show whether autostart is installed.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -145,6 +160,11 @@ async fn main() -> anyhow::Result<()> {
             TeamCommand::List => team::list().await?,
             TeamCommand::Invite { email } => team::invite(&email).await?,
             TeamCommand::Members => team::members().await?,
+        },
+        Command::Autostart(cmd) => match cmd {
+            AutostartCommand::Enable => autostart::enable()?,
+            AutostartCommand::Disable => autostart::disable()?,
+            AutostartCommand::Status => autostart::status()?,
         },
     }
 

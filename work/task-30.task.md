@@ -1,7 +1,7 @@
 ---
 id: 20a6e935-ce4e-4404-a8c5-8df280b6923d
 slug: task-30
-status: todo
+status: done
 title: Wire autostart enable/disable/status into the CLI (autostart.rs has no caller)
 milestones:
 - milestone-2
@@ -32,8 +32,14 @@ points at a CLI subcommand that doesn't exist yet.
 
 Done when:
 
-- [ ] `autostart enable/disable/status` (or equivalent) exist and call into
-      `autostart.rs`
-- [ ] Root requirement is reported with the correct command name
-- [ ] Help/docs updated; builds clean with `clippy -D warnings`
-- [ ] Reconcile the sudo hint added in [[[task-23](../work/task-23.task.md)]] with the real command
+- [x] `autostart enable/disable/status` (or equivalent) exist and call into
+      `autostart.rs` — added `devenv tunnel autostart {enable,disable,status}`
+      subcommand group in `client/crates/cli/src/autostart.rs`, wired into
+      `main.rs`, calling `install_autostart`/`uninstall_autostart`/`is_autostart_installed`.
+- [x] Root requirement is reported with the correct command name — macOS
+      `require_root` hint now says `sudo devenv-tunnel autostart enable|disable`.
+- [x] Help/docs updated; builds clean with `clippy -D warnings` — `privileges.md`
+      documents the enable/disable/status flow; `cargo build/clippy -D warnings/test`
+      all clean.
+- [x] Reconcile the sudo hint added in [[[task-23](../work/task-23.task.md)]] with the real command —
+      hint in `autostart.rs::require_root` updated to the real subcommand names.
