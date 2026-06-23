@@ -25,6 +25,56 @@ use tun::{create_as_async, AsyncDevice, Configuration, Device};
 /// Prefix length of the virtual subnet (10.254.0.0/16).
 const VNET_PREFIX_LEN: u8 = 16;
 
+/// Length of the macOS `utun` address-family header prepended to every L3
+/// packet on read and required on every write.
+#[cfg(target_os = "macos")]
+const UTUN_AF_HEADER_LEN: usize = 4;
+
+/// macOS `utun` 4-byte big-endian protocol family header for IPv4
+/// (`AF_INET` = 2).
+const UTUN_AF_INET: [u8; 4] = [0x00, 0x00, 0x00, 0x02];
+
+/// macOS `utun` 4-byte big-endian protocol family header for IPv6
+/// (`AF_INET6` = 0x1E = 30).
+const UTUN_AF_INET6: [u8; 4] = [0x00, 0x00, 0x00, 0x1E];
+
+/// Choose the macOS `utun` 4-byte address-family header for an outgoing bare IP
+/// packet, based on the IP version nibble (`packet[0] >> 4`): `4` → `AF_INET`,
+/// `6` → `AF_INET6`. Anything else (including an empty packet) defaults to
+/// `AF_INET`.
+///
+/// Pure and side-effect free, and available on all platforms so it is unit-test
+/// covered everywhere (CI/Linux included).
+fn af_header_for(packet: &[u8]) -> [u8; 4] {
+    match packet.first().map(|b| b >> 4) {
+        Some(6) => UTUN_AF_INET6,
+        _ => UTUN_AF_INET,
+    }
+}
+
+/// Strip the macOS `utun` 4-byte address-family header from a packet just read
+/// into `buf` (where `n` is the number of bytes read), shifting the bare IP
+/// packet to the front and returning its length. A short read (`n < 4`) yields
+/// an empty packet (returns 0) rather than panicking.
+///
+/// On non-macOS platforms there is no header: this is a byte-for-byte
+/// passthrough that returns `n` unchanged.
+fn strip_utun_header(buf: &mut [u8], n: usize) -> usize {
+    #[cfg(target_os = "macos")]
+    {
+        if n < UTUN_AF_HEADER_LEN {
+            return 0;
+        }
+        buf.copy_within(UTUN_AF_HEADER_LEN..n, 0);
+        n - UTUN_AF_HEADER_LEN
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = buf;
+        n
+    }
+}
+
 /// Configuration for the virtual TUN interface.
 #[derive(Debug, Clone)]
 pub struct TunConfig {
@@ -543,22 +593,36 @@ impl TunDevice {
     }
 
     /// Read one L3 packet from the TUN.
-    /// Returns the number of bytes read.
+    /// Returns the number of bytes of the bare IP packet (macOS: with the 4-byte
+    /// utun address-family header stripped; other platforms: unchanged).
     pub async fn read_packet(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.dev
+        let n = self
+            .dev
             .as_mut()
             .expect("TUN device used after split")
             .read(buf)
-            .await
+            .await?;
+        Ok(strip_utun_header(buf, n))
     }
 
-    /// Write one L3 packet to the TUN.
+    /// Write one L3 packet to the TUN (macOS: prepending the 4-byte utun
+    /// address-family header; other platforms: unchanged).
     pub async fn write_packet(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        self.dev
-            .as_mut()
-            .expect("TUN device used after split")
-            .write_all(buf)
-            .await
+        let dev = self.dev.as_mut().expect("TUN device used after split");
+        #[cfg(target_os = "macos")]
+        {
+            if buf.is_empty() {
+                return Ok(());
+            }
+            let mut framed = Vec::with_capacity(UTUN_AF_HEADER_LEN + buf.len());
+            framed.extend_from_slice(&af_header_for(buf));
+            framed.extend_from_slice(buf);
+            dev.write_all(&framed).await
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            dev.write_all(buf).await
+        }
     }
 
     /// Split into read and write halves for concurrent use.
@@ -697,9 +761,13 @@ pub struct TunReader {
 }
 
 impl TunReader {
+    /// Read one bare IP packet. On macOS the leading 4-byte utun
+    /// address-family header is stripped before returning; on other platforms
+    /// the bytes are returned unchanged.
     pub async fn read(&self, buf: &mut [u8]) -> std::io::Result<usize> {
         let mut guard = self.inner.lock().await;
-        guard.read(buf).await
+        let n = guard.read(buf).await?;
+        Ok(strip_utun_header(buf, n))
     }
 }
 
@@ -712,9 +780,25 @@ pub struct TunWriter {
 }
 
 impl TunWriter {
+    /// Write one bare IP packet. On macOS the 4-byte utun address-family header
+    /// (chosen from the IP version nibble) is prepended; on other platforms the
+    /// bytes are written unchanged.
     pub async fn write(&self, buf: &[u8]) -> std::io::Result<()> {
         let mut guard = self.inner.lock().await;
-        guard.write_all(buf).await
+        #[cfg(target_os = "macos")]
+        {
+            if buf.is_empty() {
+                return Ok(());
+            }
+            let mut framed = Vec::with_capacity(UTUN_AF_HEADER_LEN + buf.len());
+            framed.extend_from_slice(&af_header_for(buf));
+            framed.extend_from_slice(buf);
+            guard.write_all(&framed).await
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            guard.write_all(buf).await
+        }
     }
 }
 
@@ -854,6 +938,76 @@ mod tests {
                 "utun7"
             ]
         );
+    }
+
+    #[test]
+    fn af_header_for_ipv4() {
+        // IPv4 version nibble (0x4) → AF_INET = 0x00000002.
+        let pkt = [0x45u8, 0x00, 0x00, 0x28];
+        assert_eq!(af_header_for(&pkt), [0, 0, 0, 2]);
+    }
+
+    #[test]
+    fn af_header_for_ipv6() {
+        // IPv6 version nibble (0x6) → AF_INET6 = 0x0000001E.
+        let pkt = [0x60u8, 0x00, 0x00, 0x00];
+        assert_eq!(af_header_for(&pkt), [0, 0, 0, 0x1E]);
+    }
+
+    #[test]
+    fn af_header_for_unknown_and_empty_default_to_inet() {
+        // Anything that isn't an IPv6 nibble defaults to AF_INET, including an
+        // empty packet (no first byte to inspect).
+        assert_eq!(af_header_for(&[0x00u8]), [0, 0, 0, 2]);
+        assert_eq!(af_header_for(&[]), [0, 0, 0, 2]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn strip_utun_header_removes_four_bytes() {
+        // [AF_INET header][IP packet] → bare IP packet shifted to the front.
+        let mut buf = vec![0x00, 0x00, 0x00, 0x02, 0x45, 0x11, 0x22, 0x33];
+        let n = strip_utun_header(&mut buf, 8);
+        assert_eq!(n, 4);
+        assert_eq!(&buf[..n], &[0x45, 0x11, 0x22, 0x33]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn strip_utun_header_short_read_is_empty() {
+        // A read shorter than the 4-byte header yields an empty packet, never a
+        // panic.
+        let mut buf = vec![0x00, 0x00, 0x00];
+        assert_eq!(strip_utun_header(&mut buf, 3), 0);
+        let mut empty: Vec<u8> = vec![];
+        assert_eq!(strip_utun_header(&mut empty, 0), 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_prepend_then_strip_round_trips() {
+        // Prepending the AF header (as the writer does) and then stripping it
+        // (as the reader does) must yield the original IP packet.
+        let ip_packet = [0x45u8, 0x00, 0x00, 0x28, 0xde, 0xad, 0xbe, 0xef];
+        let header = af_header_for(&ip_packet);
+        let mut framed = Vec::new();
+        framed.extend_from_slice(&header);
+        framed.extend_from_slice(&ip_packet);
+        let n = framed.len();
+        let stripped = strip_utun_header(&mut framed, n);
+        assert_eq!(stripped, ip_packet.len());
+        assert_eq!(&framed[..stripped], &ip_packet);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn strip_utun_header_passthrough_off_macos() {
+        // Non-macOS: byte-for-byte passthrough; n returned unchanged, buffer
+        // untouched.
+        let mut buf = vec![0x45, 0x11, 0x22, 0x33];
+        let original = buf.clone();
+        assert_eq!(strip_utun_header(&mut buf, 4), 4);
+        assert_eq!(buf, original);
     }
 
     #[cfg(not(target_os = "linux"))]

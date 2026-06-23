@@ -60,6 +60,6 @@ REQUIRES it on every write. So:
 Done when:
 
 - [ ] macOS `curl http://hello.devenv.local:8080/` returns a real response body
-- [ ] Header strip-on-read / prepend-on-write is macOS-scoped; Linux untouched
-- [ ] Unit test covers the header add/strip (incl. IPv4 vs IPv6 family byte)
+- [x] Header strip-on-read / prepend-on-write is macOS-scoped; Linux untouched
+- [x] Unit test covers the header add/strip (incl. IPv4 vs IPv6 family byte)
 - [ ] Verified by a privileged [[[task-22](../work/task-22.task.md)]] re-run (curl carries traffic)
