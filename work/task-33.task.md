@@ -66,8 +66,9 @@ still missing, file a dedicated discovery/registration ticket then.
 
 Done when:
 
-- [ ] macOS binds the embedded DNS to loopback; `/etc/resolver/devenv.local`
-      points at `127.0.0.1:<port>`
-- [ ] Linux DNS binding unchanged; builds clean with `clippy -D warnings`
+- [x] macOS binds the embedded DNS to loopback; `/etc/resolver/devenv.local`
+      points at `127.0.0.1:<port>` (`127.0.0.1:10053`,
+      `MACOS_DNS_LOOPBACK_PORT`)
+- [x] Linux DNS binding unchanged; builds clean with `clippy -D warnings`
 - [ ] `dig @127.0.0.1 -p <port> <name>` reachable on a privileged re-run
 - [ ] Registration symptom re-checked (note above)

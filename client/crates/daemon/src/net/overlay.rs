@@ -15,19 +15,50 @@ use crate::net::resolver_config;
 use crate::net::service_table::ServiceTable;
 use crate::net::stack::VirtualStack;
 use crate::net::tun_device::{TunConfig, TunDevice};
+#[cfg(not(target_os = "macos"))]
 use crate::net::virtual_ip::gateway_ip;
+
+/// macOS loopback port for the embedded DNS server. A high, non-privileged
+/// port that won't collide with anything; change here if it ever conflicts.
+/// (Must NOT be 53 — the macOS `/etc/resolver` file carries the port, so any
+/// port works as long as it matches what the server binds.)
+#[cfg(target_os = "macos")]
+const MACOS_DNS_LOOPBACK_PORT: u16 = 10053;
+
+/// The default address the embedded DNS server listens on AND that the scoped
+/// OS resolver is pointed at.
+///
+/// **Linux / others:** the TUN **gateway** address on port **53**
+/// (e.g. `10.254.0.1:53`). systemd-resolved sends per-link DNS queries via the
+/// TUN link (`deven0`), where loopback (`127.0.0.1`) is unreachable but the
+/// gateway — the TUN's own address — is reachable; and resolve1's `SetLinkDNS`
+/// carries no port, so resolved always queries port 53 (hence the server must
+/// listen on 53, not 5300). The dnsmasq fallback path carries the port too and
+/// reaches the gateway:53 just the same.
+///
+/// **macOS exception:** the utun is point-to-point and has NO local route for
+/// the gateway IP, so a packet to `10.254.0.1:53` routes OUT the tunnel instead
+/// of reaching the local `UdpSocket` (queries time out — see task-33). macOS
+/// therefore binds to loopback (`127.0.0.1:<MACOS_DNS_LOOPBACK_PORT>`), which is
+/// always locally deliverable; the `/etc/resolver/devenv.local` file carries the
+/// matching `port` line so the system resolver finds it.
+fn default_dns_listen() -> SocketAddr {
+    #[cfg(target_os = "macos")]
+    {
+        SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), MACOS_DNS_LOOPBACK_PORT)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        SocketAddr::new(IpAddr::V4(gateway_ip()), 53)
+    }
+}
 
 /// Configuration for the overlay network.
 #[derive(Debug, Clone)]
 pub struct OverlayConfig {
     /// Address the embedded DNS server listens on AND that the scoped OS resolver
-    /// is pointed at. This must be the TUN **gateway** address on port **53**
-    /// (e.g. `10.254.0.1:53`). systemd-resolved sends per-link DNS queries via the
-    /// TUN link (`deven0`), where loopback (`127.0.0.1`) is unreachable but the
-    /// gateway — the TUN's own address — is reachable; and resolve1's `SetLinkDNS`
-    /// carries no port, so resolved always queries port 53 (hence the server must
-    /// listen on 53, not 5300). The macOS (`/etc/resolver`) and dnsmasq fallback
-    /// paths carry the port too and reach the gateway:53 just the same.
+    /// is pointed at. See [`default_dns_listen`] for the per-platform default and
+    /// the macOS loopback exception.
     pub dns_listen: SocketAddr,
     /// TUN device configuration.
     pub tun: TunConfig,
@@ -36,12 +67,7 @@ pub struct OverlayConfig {
 impl Default for OverlayConfig {
     fn default() -> Self {
         Self {
-            // The embedded DNS server lives on the overlay gateway at :53 so that
-            // systemd-resolved (per-link, port-less SetLinkDNS) can reach it via
-            // the TUN link. The daemon already runs as root to create the TUN, so
-            // binding :53 on this dedicated address is fine (it does not collide
-            // with systemd-resolved's own 127.0.0.53:53 stub).
-            dns_listen: SocketAddr::new(IpAddr::V4(gateway_ip()), 53),
+            dns_listen: default_dns_listen(),
             tun: TunConfig::default(),
         }
     }
@@ -122,5 +148,62 @@ impl OverlayNetwork {
 
         let _ = self.stack.shutdown().await;
         self.dns_task.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// On macOS the default DNS server must bind to loopback (not the overlay
+    /// gateway), because the point-to-point utun has no local route for the
+    /// gateway IP — so a query to `10.254.0.1:53` routes into the tunnel and the
+    /// real `UdpSocket` never sees it (task-33).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_default_dns_listen_is_loopback() {
+        let addr = default_dns_listen();
+        assert_eq!(addr.ip(), IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        assert_ne!(
+            addr.ip(),
+            IpAddr::V4(gateway_ip_for_test()),
+            "must not bind the DNS server to the unreachable overlay gateway"
+        );
+        assert_eq!(addr.port(), MACOS_DNS_LOOPBACK_PORT);
+        assert_ne!(addr.port(), 53, "must not use privileged port 53 on macOS");
+    }
+
+    /// The scoped `/etc/resolver/devenv.local` file written from the macOS
+    /// default must point the system resolver at that same loopback address,
+    /// including the matching `port` line.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_resolver_file_points_at_loopback_default() {
+        let addr = default_dns_listen();
+        let content = crate::net::resolver_config::macos_resolver_file_content(addr);
+        assert!(
+            content.contains("nameserver 127.0.0.1\n"),
+            "resolver file must point at loopback: {content}"
+        );
+        assert!(
+            content.contains(&format!("port {MACOS_DNS_LOOPBACK_PORT}\n")),
+            "resolver file must carry the loopback port: {content}"
+        );
+    }
+
+    /// On Linux (and other non-macOS targets) the default is unchanged: the
+    /// overlay gateway on port 53, which the kernel makes locally reachable via
+    /// the interface route.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn non_macos_default_dns_listen_is_gateway_53() {
+        let addr = default_dns_listen();
+        assert_eq!(addr, SocketAddr::new(IpAddr::V4(gateway_ip()), 53));
+    }
+
+    /// The gateway IP, for asserting the macOS default does NOT use it.
+    #[cfg(target_os = "macos")]
+    fn gateway_ip_for_test() -> std::net::Ipv4Addr {
+        crate::net::virtual_ip::gateway_ip()
     }
 }
