@@ -147,7 +147,7 @@ enum BindAddr {
     Loopback,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ListeningPort {
     port: u16,
     bind: BindAddr,
@@ -535,28 +535,47 @@ fn discover_ports_lsof(pid: u32) -> Vec<ListeningPort> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut ports = Vec::new();
+    parse_lsof_stdout(&stdout)
+}
 
-    for line in stdout.lines().skip(1) {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if let Some(name) = parts.last() {
-            // name is like "*:8080" or "127.0.0.1:8080" or "[::]:8080"
-            if let Some((addr, port_str)) = name.rsplit_once(':') {
-                if let Ok(port) = port_str.parse::<u16>() {
-                    if port > 0 {
-                        let bind = if addr == "*" || addr == "0.0.0.0" || addr == "[::]" {
-                            BindAddr::Public
-                        } else {
-                            BindAddr::Loopback
-                        };
-                        ports.push(ListeningPort { port, bind });
-                    }
-                }
-            }
+/// Parse the full stdout of `lsof -iTCP -sTCP:LISTEN -nP -p <pid>` into the set
+/// of listening ports. Pure (no process spawning) so it is unit-testable.
+///
+/// The first line is the `lsof` header (`COMMAND PID USER …`) and is skipped.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn parse_lsof_stdout(stdout: &str) -> Vec<ListeningPort> {
+    stdout.lines().skip(1).filter_map(parse_lsof_line).collect()
+}
+
+/// Parse a single `lsof` output line into a [`ListeningPort`], if it carries a
+/// listening address/port.
+///
+/// With `-sTCP:LISTEN` the NAME column is printed as e.g.
+/// `127.0.0.1:50706 (LISTEN)`, so the trailing whitespace token is `(LISTEN)`
+/// rather than the address. We therefore scan every whitespace token and pick
+/// the address token = the one whose `rsplit_once(':')` yields a parseable
+/// `u16` port. This naturally skips `(LISTEN)`, `TCP`, `0t0`, and other columns.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn parse_lsof_line(line: &str) -> Option<ListeningPort> {
+    for token in line.split_whitespace() {
+        // token is like "*:8080", "127.0.0.1:50706", "[::]:8080", "[::1]:57889"
+        let Some((addr, port_str)) = token.rsplit_once(':') else {
+            continue;
+        };
+        let Ok(port) = port_str.parse::<u16>() else {
+            continue;
+        };
+        if port == 0 {
+            continue;
         }
+        let bind = if addr == "*" || addr == "0.0.0.0" || addr == "[::]" {
+            BindAddr::Public
+        } else {
+            BindAddr::Loopback
+        };
+        return Some(ListeningPort { port, bind });
     }
-
-    ports
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -1242,6 +1261,85 @@ mod tests {
         assert_eq!(
             parse_http_port_selection("notaport"),
             HttpPortSelection::ChooseLowest
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn test_parse_lsof_line_ipv4_loopback() {
+        let p = parse_lsof_line(
+            "Python    32520 loumtech    3u  IPv4 0xc2df...      0t0  TCP 127.0.0.1:50706 (LISTEN)",
+        )
+        .expect("should parse a port");
+        assert_eq!(p.port, 50706);
+        assert_eq!(p.bind, BindAddr::Loopback);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn test_parse_lsof_line_public_forms() {
+        let star =
+            parse_lsof_line("node 100 u 5u IPv4 0x0 0t0 TCP *:8080 (LISTEN)").expect("star parses");
+        assert_eq!(star.port, 8080);
+        assert_eq!(star.bind, BindAddr::Public);
+
+        let any = parse_lsof_line("node 100 u 5u IPv4 0x0 0t0 TCP 0.0.0.0:8080 (LISTEN)")
+            .expect("0.0.0.0 parses");
+        assert_eq!(any.port, 8080);
+        assert_eq!(any.bind, BindAddr::Public);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn test_parse_lsof_line_ipv6() {
+        let loopback =
+            parse_lsof_line("Parallels  7174 loumtech   13u  IPv6 0x1e18...      0t0  TCP [::1]:57889 (LISTEN)")
+                .expect("[::1] parses");
+        assert_eq!(loopback.port, 57889);
+        assert_eq!(loopback.bind, BindAddr::Loopback);
+
+        let public = parse_lsof_line("node 100 u 5u IPv6 0x0 0t0 TCP [::]:8080 (LISTEN)")
+            .expect("[::] parses");
+        assert_eq!(public.port, 8080);
+        assert_eq!(public.bind, BindAddr::Public);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn test_parse_lsof_line_no_address() {
+        // A line with no address token (just a state) must not panic or produce a port.
+        assert_eq!(parse_lsof_line("(LISTEN)"), None);
+        assert_eq!(parse_lsof_line(""), None);
+        // Header-ish / non-address tokens only.
+        assert_eq!(parse_lsof_line("COMMAND PID USER FD TYPE"), None);
+        // Port 0 is filtered.
+        assert_eq!(parse_lsof_line("node 1 u 5u IPv4 0x0 0t0 TCP *:0 (LISTEN)"), None);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn test_parse_lsof_stdout_skips_header() {
+        let stdout = "COMMAND     PID     USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n\
+            Python    32520 loumtech    3u  IPv4 0xc2df...      0t0  TCP 127.0.0.1:50706 (LISTEN)\n\
+            Parallels  7174 loumtech   13u  IPv6 0x1e18...      0t0  TCP [::1]:57889 (LISTEN)\n\
+            ollama      580 loumtech    3u  IPv4 0xd11a...      0t0  TCP 127.0.0.1:11434 (LISTEN)\n";
+        let ports = parse_lsof_stdout(stdout);
+        assert_eq!(
+            ports,
+            vec![
+                ListeningPort {
+                    port: 50706,
+                    bind: BindAddr::Loopback
+                },
+                ListeningPort {
+                    port: 57889,
+                    bind: BindAddr::Loopback
+                },
+                ListeningPort {
+                    port: 11434,
+                    bind: BindAddr::Loopback
+                },
+            ]
         );
     }
 

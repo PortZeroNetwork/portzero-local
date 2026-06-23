@@ -56,9 +56,9 @@ discovery has never worked here. The same bug also corrupts
 
 Done when:
 
-- [ ] `discover_ports_lsof` extracts the address/port past a trailing `(LISTEN)`
-- [ ] Unit tests cover IPv4/IPv6 + the `(LISTEN)` suffix
-- [ ] Linux behaviour unchanged; builds clean with `clippy -D warnings`
+- [x] `discover_ports_lsof` extracts the address/port past a trailing `(LISTEN)`
+- [x] Unit tests cover IPv4/IPv6 + the `(LISTEN)` suffix
+- [x] Linux behaviour unchanged; builds clean with `clippy -D warnings`
 - [ ] Privileged re-run: service registers (`status` + `dig @127.0.0.1` show it)
 
 Related broader hardening (single-pass lsof, libproc) stays in [[[task-26](../work/task-26.task.md)]].
