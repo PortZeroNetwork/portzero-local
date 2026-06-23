@@ -1,7 +1,7 @@
 ---
 id: 2c4637f2-5092-460d-afbb-c8806ee3dd6f
 slug: task-33
-status: todo
+status: done
 title: 'macOS overlay DNS unreachable on gateway IP: bind to loopback + /etc/resolver port'
 milestones:
 - milestone-2
@@ -70,5 +70,5 @@ Done when:
       points at `127.0.0.1:<port>` (`127.0.0.1:10053`,
       `MACOS_DNS_LOOPBACK_PORT`)
 - [x] Linux DNS binding unchanged; builds clean with `clippy -D warnings`
-- [ ] `dig @127.0.0.1 -p <port> <name>` reachable on a privileged re-run
-- [ ] Registration symptom re-checked (note above)
+- [x] `dig @127.0.0.1 -p <port> <name>` reachable on a privileged re-run
+- [x] Registration symptom re-checked — registered after [[[task-34](../work/task-34.task.md)]]; `dig @127.0.0.1 -p 10053` returns `10.254.0.2`
