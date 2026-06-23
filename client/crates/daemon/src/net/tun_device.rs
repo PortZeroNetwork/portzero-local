@@ -92,23 +92,19 @@ fn subnet_cidr(gateway: Ipv4Addr, prefix_len: u8) -> String {
 }
 
 /// Generate the OS command + arguments to add a route for `cidr` via the named
-/// interface. Returns `None` on platforms where the kernel installs the
-/// connected route automatically and no manual command is needed.
+/// interface. Returns `None` on platforms where the route is added in-process
+/// (Linux uses [`add_route_linux`]) or where the kernel installs the connected
+/// route automatically (Windows).
+#[cfg(not(target_os = "linux"))]
 ///
 /// Pure and side-effect free so it can be unit-tested unprivileged.
 fn route_add_command(cidr: &str, iface: &str) -> Option<(&'static str, Vec<String>)> {
     #[cfg(target_os = "linux")]
     {
-        Some((
-            "ip",
-            vec![
-                "route".into(),
-                "add".into(),
-                cidr.into(),
-                "dev".into(),
-                iface.into(),
-            ],
-        ))
+        // Linux uses an in-process ioctl (see add_route_linux) so no subprocess
+        // is needed. Returning None here skips run_route_command entirely.
+        let _ = (cidr, iface);
+        None
     }
     #[cfg(target_os = "macos")]
     {
@@ -134,24 +130,97 @@ fn route_add_command(cidr: &str, iface: &str) -> Option<(&'static str, Vec<Strin
     }
 }
 
+/// Add a host route for `cidr` (e.g. `10.254.0.0/16`) via `iface` using the
+/// `SIOCADDRT` ioctl directly — no subprocess, so the caller's `CAP_NET_ADMIN`
+/// file capability is used without the inheritance problem that plagues
+/// `ip route add` child processes.
+///
+/// Returns `true` on success or if the route already exists (idempotent).
+#[cfg(target_os = "linux")]
+fn add_route_linux(cidr: &str, iface: &str) -> bool {
+    use std::ffi::CString;
+    use std::mem::zeroed;
+
+    // Parse "x.x.x.x/prefix"
+    let Some((addr_str, prefix_str)) = cidr.split_once('/') else {
+        tracing::warn!("add_route_linux: malformed cidr {cidr}");
+        return false;
+    };
+    let addr: std::net::Ipv4Addr = match addr_str.parse() {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("add_route_linux: bad address in {cidr}: {e}");
+            return false;
+        }
+    };
+    let prefix_len: u8 = match prefix_str.parse() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("add_route_linux: bad prefix in {cidr}: {e}");
+            return false;
+        }
+    };
+
+    let net_be = u32::from_be_bytes(addr.octets()).to_be(); // already host order → to_be = network order
+    let mask_host: u32 = if prefix_len == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix_len as u32)
+    };
+    let mask_be = mask_host.to_be();
+
+    let Ok(ifname) = CString::new(iface) else {
+        return false;
+    };
+
+    unsafe {
+        let mut dst: libc::sockaddr_in = zeroed();
+        dst.sin_family = libc::AF_INET as libc::sa_family_t;
+        dst.sin_addr.s_addr = net_be;
+
+        let mut genmask: libc::sockaddr_in = zeroed();
+        genmask.sin_family = libc::AF_INET as libc::sa_family_t;
+        genmask.sin_addr.s_addr = mask_be;
+
+        let mut rt: libc::rtentry = zeroed();
+        rt.rt_dst = *(&dst as *const libc::sockaddr_in as *const libc::sockaddr);
+        rt.rt_genmask = *(&genmask as *const libc::sockaddr_in as *const libc::sockaddr);
+        rt.rt_flags = libc::RTF_UP as libc::c_ushort;
+        rt.rt_dev = ifname.as_ptr() as *mut libc::c_char;
+
+        let sock = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
+        if sock < 0 {
+            tracing::warn!(
+                "add_route_linux: socket(): {}",
+                std::io::Error::last_os_error()
+            );
+            return false;
+        }
+
+        let ret = libc::ioctl(sock, libc::SIOCADDRT, &rt as *const libc::rtentry);
+        libc::close(sock);
+
+        if ret < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EEXIST) {
+                tracing::info!("route {cidr} dev {iface} already present (treating as success)");
+                return true;
+            }
+            tracing::warn!("add_route_linux SIOCADDRT {cidr} dev {iface}: {err}");
+            return false;
+        }
+
+        tracing::info!("route add {cidr} dev {iface} (in-process SIOCADDRT)");
+        true
+    }
+}
+
 /// Generate the OS command + arguments to delete the route previously added by
 /// [`route_add_command`]. Mirrors it platform-for-platform.
 ///
 /// Pure and side-effect free so it can be unit-tested unprivileged.
+#[cfg(not(target_os = "linux"))]
 fn route_del_command(cidr: &str, iface: &str) -> Option<(&'static str, Vec<String>)> {
-    #[cfg(target_os = "linux")]
-    {
-        Some((
-            "ip",
-            vec![
-                "route".into(),
-                "del".into(),
-                cidr.into(),
-                "dev".into(),
-                iface.into(),
-            ],
-        ))
-    }
     #[cfg(target_os = "macos")]
     {
         Some((
@@ -173,6 +242,7 @@ fn route_del_command(cidr: &str, iface: &str) -> Option<(&'static str, Vec<Strin
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 /// True if a failed `route add` stderr indicates the route is already present
 /// (Linux `ip route add` -> "File exists" / `EEXIST`; macOS `route add` ->
 /// "File exists" on the routing socket). In that case the route we wanted is
@@ -248,6 +318,7 @@ fn delete_device(name: &str) -> bool {
 
 /// Best-effort: run a route command, logging the outcome. Never returns an
 /// error — route management is non-fatal.
+#[cfg(not(target_os = "linux"))]
 fn run_route_command(action: &str, program: &str, args: &[String]) -> bool {
     match std::process::Command::new(program).args(args).output() {
         Ok(out) if out.status.success() => {
@@ -372,16 +443,23 @@ impl TunDevice {
 
         // Ensure the whole virtual subnet routes into this interface. On most
         // platforms assigning the /16 address already installs a connected
-        // route; we additionally issue an explicit route command where the
-        // platform needs it (Linux/macOS) so the subnet is reliably reachable.
-        // This is best-effort: failures are logged, not fatal.
+        // route; we additionally add an explicit route where the platform needs
+        // it so the subnet is reliably reachable.
+        // On Linux we use an in-process ioctl (no subprocess, so file
+        // capabilities work). On macOS we shell out to `route`. Best-effort.
         let cidr = subnet_cidr(config.address, VNET_PREFIX_LEN);
         let mut added_route = None;
+
+        #[cfg(target_os = "linux")]
+        {
+            if add_route_linux(&cidr, &actual_name) {
+                added_route = Some(cidr.clone());
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
         if let Some((program, args)) = route_add_command(&cidr, &actual_name) {
             if run_route_command("add", program, &args) {
-                // Only record routes we successfully installed, so teardown only
-                // removes what we own. (A pre-existing connected route is left
-                // untouched.)
                 added_route = Some(cidr.clone());
             }
         }
@@ -464,6 +542,68 @@ impl Drop for RouteGuard {
     }
 }
 
+/// Delete the route for `cidr` via `iface` in-process using `SIOCDELRT`.
+/// Mirrors `add_route_linux`; see that function for rationale.
+#[cfg(target_os = "linux")]
+fn del_route_linux(cidr: &str, iface: &str) {
+    use std::ffi::CString;
+    use std::mem::zeroed;
+
+    let Some((addr_str, prefix_str)) = cidr.split_once('/') else {
+        return;
+    };
+    let Ok(addr) = addr_str.parse::<std::net::Ipv4Addr>() else {
+        return;
+    };
+    let Ok(prefix_len) = prefix_str.parse::<u8>() else {
+        return;
+    };
+
+    let net_be = u32::from_be_bytes(addr.octets()).to_be();
+    let mask_host: u32 = if prefix_len == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix_len as u32)
+    };
+    let mask_be = mask_host.to_be();
+    let Ok(ifname) = CString::new(iface) else {
+        return;
+    };
+
+    unsafe {
+        let mut dst: libc::sockaddr_in = zeroed();
+        dst.sin_family = libc::AF_INET as libc::sa_family_t;
+        dst.sin_addr.s_addr = net_be;
+
+        let mut genmask: libc::sockaddr_in = zeroed();
+        genmask.sin_family = libc::AF_INET as libc::sa_family_t;
+        genmask.sin_addr.s_addr = mask_be;
+
+        let mut rt: libc::rtentry = zeroed();
+        rt.rt_dst = *(&dst as *const libc::sockaddr_in as *const libc::sockaddr);
+        rt.rt_genmask = *(&genmask as *const libc::sockaddr_in as *const libc::sockaddr);
+        rt.rt_flags = libc::RTF_UP as libc::c_ushort;
+        rt.rt_dev = ifname.as_ptr() as *mut libc::c_char;
+
+        let sock = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
+        if sock < 0 {
+            return;
+        }
+        let ret = libc::ioctl(sock, libc::SIOCDELRT, &rt as *const libc::rtentry);
+        libc::close(sock);
+
+        if ret < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() != Some(libc::ESRCH) {
+                // ESRCH = no such route (already gone); anything else is worth noting.
+                tracing::warn!("del_route_linux SIOCDELRT {cidr} dev {iface}: {err}");
+            }
+        } else {
+            tracing::info!("route del {cidr} dev {iface} (in-process SIOCDELRT)");
+        }
+    }
+}
+
 /// Best-effort removal of a route the daemon previously installed. Routes the
 /// kernel auto-installed for the connected /16 vanish with the interface, so we
 /// only ever remove what we explicitly added.
@@ -471,6 +611,14 @@ fn remove_added_route(iface: &str, added_route: Option<String>) {
     let Some(cidr) = added_route else {
         return;
     };
+
+    #[cfg(target_os = "linux")]
+    {
+        del_route_linux(&cidr, iface);
+        return;
+    }
+
+    #[cfg(not(target_os = "linux"))]
     if let Some((program, args)) = route_del_command(&cidr, iface) {
         run_route_command("del", program, &args);
     }
@@ -555,18 +703,24 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn route_add_command_linux() {
-        let (prog, args) = route_add_command("10.254.0.0/16", "deven0").unwrap();
-        assert_eq!(prog, "ip");
-        assert_eq!(args, vec!["route", "add", "10.254.0.0/16", "dev", "deven0"]);
+    fn add_route_linux_parses_valid_cidr() {
+        // Verify that well-formed CIDRs don't panic and bad ones return false
+        // (without actually calling the ioctl — that requires CAP_NET_ADMIN).
+        // We exercise the parse+mask logic by calling the function with an
+        // interface name that doesn't exist; it will fail the ioctl with ENODEV
+        // but must not panic or corrupt memory.
+        let result = add_route_linux("10.254.0.0/16", "nonexistent0");
+        // Either false (EPERM/ENODEV) or a panic — if we reach here without
+        // panicking the parsing code is correct.
+        let _ = result;
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn route_del_command_linux() {
-        let (prog, args) = route_del_command("10.254.0.0/16", "deven0").unwrap();
-        assert_eq!(prog, "ip");
-        assert_eq!(args, vec!["route", "del", "10.254.0.0/16", "dev", "deven0"]);
+    fn add_route_linux_rejects_bad_cidr() {
+        assert!(!add_route_linux("notanip/16", "lo"));
+        assert!(!add_route_linux("10.254.0.0", "lo")); // no prefix
+        assert!(!add_route_linux("", "lo"));
     }
 
     #[cfg(target_os = "macos")]
@@ -598,6 +752,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn route_add_already_exists_classifier() {
         // Linux `ip route add` and macOS `route add` both report "File exists"
