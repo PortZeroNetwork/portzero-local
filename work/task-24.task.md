@@ -1,7 +1,7 @@
 ---
 id: 24ca8d9d-6eda-47d0-8efc-a10012e62739
 slug: task-24
-status: todo
+status: done
 title: macOS utun 4-byte protocol-family header in the smoltcp data path
 milestones:
 - milestone-2
@@ -59,7 +59,26 @@ REQUIRES it on every write. So:
 
 Done when:
 
-- [ ] macOS `curl http://hello.devenv.local:8080/` returns a real response body
+- [x] macOS `curl http://hello.devenv.local:8080/` returns a real response body
 - [x] Header strip-on-read / prepend-on-write is macOS-scoped; Linux untouched
 - [x] Unit test covers the header add/strip (incl. IPv4 vs IPv6 family byte)
-- [ ] Verified by a privileged [[[task-22](../work/task-22.task.md)]] re-run (curl carries traffic)
+- [x] Verified by a privileged [[[task-22](../work/task-22.task.md)]] re-run (curl carries traffic)
+
+## Verified (run 2026-06-23, macOS, as root)
+
+A temporary packet trace at the TUN boundary (since removed) captured a full,
+successful HTTP transaction over the overlay:
+
+```
+RX 64  raw_head=[00,00,00,02, 45,00,00,40]  SYN in  (header stripped → ip0=0x45)
+TX 52                                        SYN-ACK out
+RX 40                                        ACK (handshake complete)
+RX 126                                       GET request
+TX 40 / TX 97                                ACK + 97-byte HTTP response
+RX 40 / RX 40 / TX 40                        response ACKed, clean FIN/close
+```
+
+The macOS utun 4-byte AF header (`00 00 00 02` = AF_INET) is correctly stripped
+on read and prepended on write, so smoltcp sees valid IPv4 and the proxy carries
+traffic both ways. The earlier "resolve-but-hang" timeouts were a stale binary
+built before this fix. **macOS `.devenv.local` overlay now works end to end.**
