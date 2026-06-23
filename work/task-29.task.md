@@ -1,7 +1,7 @@
 ---
 id: aaca088a-a35c-4add-96a8-c2bf2ae38f7a
 slug: task-29
-status: todo
+status: done
 title: 'Decision: macOS (and Windows) daemon elevation model'
 milestones:
 - milestone-2
@@ -42,8 +42,27 @@ implementation through [[[task-23](../work/task-23.task.md)]] / [[[task-28](../w
 Consider: install UX, code-signing/notarization cost, how `install.sh` conveys
 the privilege step, and keeping graceful unprivileged degradation intact.
 
+## Decision
+
+**Chosen: Option A — Root LaunchDaemon (macOS) / Administrator scheduled task
+(Windows).**
+
+Rationale: it is the simplest path to a working privileged overlay and requires
+no Apple signing identity or notarization. The daemon runs as root from boot, so
+utun creation, scoped `/etc/resolver` writes, and route edits all succeed; the
+cost is a one-time `sudo` step at install/uninstall. Network Extensions (B) and
+a privileged helper (C) buy nicer UX but add a Developer-ID/signing dependency
+and many more moving parts — deferred to a possible later milestone.
+
+- macOS path → [[[task-23](../work/task-23.task.md)]]: autostart now writes a system-domain LaunchDaemon at
+  `/Library/LaunchDaemons/tools.devenv.daemon.plist`, loaded via
+  `launchctl bootstrap system`. Install/uninstall require root and fail fast
+  with a `sudo` hint otherwise.
+- Windows path → [[[task-28](../work/task-28.task.md)]]: Administrator-installed scheduled task / service
+  (same elevation principle), to be implemented there.
+
 Decision (fill in):
 
-- [ ] Option chosen + rationale recorded here
-- [ ] macOS path handed to [[[task-23](../work/task-23.task.md)]]; Windows path handed to [[[task-28](../work/task-28.task.md)]]
-- [ ] `docs/privileges.md` updated to reflect the decision
+- [x] Option chosen + rationale recorded here
+- [x] macOS path handed to [[[task-23](../work/task-23.task.md)]]; Windows path handed to [[[task-28](../work/task-28.task.md)]]
+- [x] `docs/privileges.md` updated to reflect the decision

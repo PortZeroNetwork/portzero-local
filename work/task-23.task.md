@@ -36,9 +36,17 @@ one-time privilege step). Keep graceful degradation when privileges are absent.
 
 Done when:
 
-- [ ] Elevation model from [[[task-29](../work/task-29.task.md)]] implemented for macOS autostart
+- [x] Elevation model from [[[task-29](../work/task-29.task.md)]] implemented for macOS autostart
+      (root LaunchDaemon in `/Library/LaunchDaemons`, loaded via
+      `launchctl bootstrap system`; root-writable logs at `/Library/Logs/devenv`)
 - [ ] macOS autostart brings the overlay up **privileged** (utun + resolver +
       route all succeed under the installed service, verified via [[[task-22](../work/task-22.task.md)]])
-- [ ] Install/uninstall is clean and idempotent; teardown removes the service
-- [ ] `docs/privileges.md` updated to match the implemented model
-- [ ] Unprivileged fallback still degrades gracefully (no hard failure)
+      — UNVERIFIED: needs a real `sudo` install + boot run, which can't be done
+      in CI / from this environment.
+- [x] Install/uninstall is clean and idempotent; teardown removes the service
+      (install/uninstall require root and fail fast with a `sudo` hint;
+      uninstall is a no-op when the plist is absent)
+- [x] `docs/privileges.md` updated to match the implemented model
+- [x] Unprivileged fallback still degrades gracefully (no hard failure) — the
+      daemon's runtime degradation path is unchanged; only autostart
+      install/uninstall now requires root.

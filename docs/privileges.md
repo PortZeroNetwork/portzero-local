@@ -34,6 +34,40 @@ sudo -E devenv-tunnel start --foreground
 
 `-E` preserves your environment.
 
+## Autostart (running the daemon privileged at boot)
+
+To have the overlay come up automatically, the daemon must autostart **with
+privileges** — otherwise it would relaunch unprivileged and silently degrade to
+cloud/local-only mode (see "Graceful degradation" below). Each platform uses the
+native mechanism for a privileged service:
+
+| Platform | Autostart mechanism                                                        |
+|----------|----------------------------------------------------------------------------|
+| macOS    | **Root LaunchDaemon** at `/Library/LaunchDaemons/tools.devenv.daemon.plist`. Runs as root, so utun + `/etc/resolver` + routes all succeed. |
+| Linux    | systemd **user** unit (`~/.config/systemd/user/devenv-daemon.service`); the binary itself carries `CAP_NET_ADMIN`, so the user-level service is sufficient. |
+| Windows  | Scheduled task at logon (admin for adapter setup). |
+
+### macOS: why a LaunchDaemon (not a LaunchAgent)
+
+macOS has no `setcap` equivalent, so the binary cannot be granted networking
+capabilities the way it is on Linux. A user-level **LaunchAgent** runs as the
+logged-in user and is unprivileged, so the overlay would never come up. The
+autostart installer therefore writes a system-domain **LaunchDaemon**, which
+launchd runs as **root**.
+
+Installing or removing this system service is a **one-time privileged step** and
+must be run with `sudo`. Logs are written to a root-writable location
+(`/Library/Logs/devenv/daemon.log`), since root's home is not the installing
+user's. The installer loads the daemon with the modern
+`launchctl bootstrap system <plist>` and unloads it with
+`launchctl bootout system/tools.devenv.daemon` (the deprecated `load -w` /
+`unload -w` are kept only as a fallback). If you run the autostart install or
+uninstall without root, it fails fast with a message telling you to re-run under
+`sudo`.
+
+The decision to use a root LaunchDaemon (rather than a Network Extension or a
+privileged helper) is recorded in `work/task-29.task.md`.
+
 ## Graceful degradation without privileges
 
 The daemon does **not** require root to run. Without sufficient privileges it

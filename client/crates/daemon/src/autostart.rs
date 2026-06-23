@@ -1,6 +1,8 @@
 //! Auto-start support: install/uninstall the daemon as a system service.
 //!
-//! - macOS: LaunchAgent plist in ~/Library/LaunchAgents/
+//! - macOS: root LaunchDaemon plist in /Library/LaunchDaemons/ (runs as root,
+//!   so the privileged overlay — utun + /etc/resolver + routes — actually comes
+//!   up; install/uninstall therefore require `sudo`).
 //! - Linux: systemd user unit in ~/.config/systemd/user/
 //! - Windows: scheduled task (start at logon)
 
@@ -122,28 +124,27 @@ fn which(name: &str) -> Result<PathBuf> {
 // macOS: LaunchAgent
 // ---------------------------------------------------------------------------
 
+/// System LaunchDaemon directory. The daemon must run as **root** so the
+/// privileged overlay (utun + `/etc/resolver` + routes) can come up, so the
+/// plist lives in the system domain rather than the per-user LaunchAgents dir.
+#[cfg(target_os = "macos")]
+const LAUNCHDAEMONS_DIR: &str = "/Library/LaunchDaemons";
+
+/// Root-writable log directory. A LaunchDaemon runs as root, whose home is not
+/// the installing user's, so logs cannot live under `~/.devenv`.
+#[cfg(target_os = "macos")]
+const DAEMON_LOG_DIR: &str = "/Library/Logs/devenv";
+
 #[cfg(target_os = "macos")]
 fn launchd_plist_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Library/LaunchAgents")
-        .join(format!("{}.plist", SERVICE_NAME))
+    PathBuf::from(LAUNCHDAEMONS_DIR).join(format!("{}.plist", SERVICE_NAME))
 }
 
+/// Build the LaunchDaemon plist XML. Pure and unit-testable (no I/O), so the
+/// generated content can be asserted without root.
 #[cfg(target_os = "macos")]
-fn install_launchd(binary: &std::path::Path) -> Result<()> {
-    let plist_path = launchd_plist_path();
-    let plist_dir = plist_path.parent().expect(
-        "launchd plist path has no parent directory — this is a bug in launchd_plist_path()",
-    );
-    std::fs::create_dir_all(plist_dir)?;
-
-    let log_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".devenv/daemon");
-    std::fs::create_dir_all(&log_dir)?;
-
-    let plist = format!(
+fn render_launchd_plist(binary: &str, log_dir: &str) -> String {
+    format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -169,50 +170,114 @@ fn install_launchd(binary: &std::path::Path) -> Result<()> {
 </plist>
 "#,
         label = SERVICE_NAME,
-        binary = binary.display(),
-        log_dir = log_dir.display(),
+        binary = binary,
+        log_dir = log_dir,
+    )
+}
+
+/// Fail with an actionable message if we are not root. Writing to
+/// `/Library/LaunchDaemons` and bootstrapping the system domain both require it.
+#[cfg(target_os = "macos")]
+fn require_root(action: &str) -> Result<()> {
+    // SAFETY: geteuid is always safe to call.
+    let euid = unsafe { libc::geteuid() };
+    if euid != 0 {
+        anyhow::bail!(
+            "Installing the devenv-tunnel autostart service as a root LaunchDaemon \
+             requires administrator privileges to {action} {dir}.\n\n\
+             Re-run this command with sudo, e.g.:\n    \
+             sudo devenv-tunnel daemon {verb}",
+            action = action,
+            dir = LAUNCHDAEMONS_DIR,
+            verb = if action.contains("remove") {
+                "autostart-disable"
+            } else {
+                "autostart-enable"
+            },
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn install_launchd(binary: &std::path::Path) -> Result<()> {
+    require_root("write to")?;
+
+    let plist_path = launchd_plist_path();
+    let plist_dir = plist_path.parent().expect(
+        "launchd plist path has no parent directory — this is a bug in launchd_plist_path()",
     );
+    std::fs::create_dir_all(plist_dir)
+        .with_context(|| format!("Failed to create {}", plist_dir.display()))?;
+
+    let log_dir = PathBuf::from(DAEMON_LOG_DIR);
+    std::fs::create_dir_all(&log_dir)
+        .with_context(|| format!("Failed to create log directory {}", log_dir.display()))?;
+
+    let plist = render_launchd_plist(&binary.display().to_string(), DAEMON_LOG_DIR);
 
     std::fs::write(&plist_path, &plist).with_context(|| {
         format!(
-            "Failed to write LaunchAgent plist to {}",
+            "Failed to write LaunchDaemon plist to {}",
             plist_path.display()
         )
     })?;
 
-    // Load the agent
+    // Modern launchctl: `bootstrap system <plist>` loads a system daemon
+    // (`load -w` is deprecated for the system domain).
     let status = std::process::Command::new("launchctl")
-        .args(["load", "-w"])
+        .args(["bootstrap", "system"])
         .arg(&plist_path)
         .status()
-        .context("Failed to run launchctl load")?;
+        .context("Failed to run launchctl bootstrap")?;
 
     if !status.success() {
-        tracing::warn!("launchctl load returned non-zero; the agent may already be loaded");
+        // Already-loaded is the common non-zero case; fall back to the legacy
+        // verb so older systems still load the daemon.
+        tracing::warn!(
+            "launchctl bootstrap returned non-zero; the daemon may already be loaded. \
+             Falling back to legacy `load -w`."
+        );
+        let _ = std::process::Command::new("launchctl")
+            .args(["load", "-w"])
+            .arg(&plist_path)
+            .status();
     }
 
-    tracing::info!("Installed LaunchAgent: {}", plist_path.display());
+    tracing::info!("Installed LaunchDaemon: {}", plist_path.display());
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
 fn uninstall_launchd() -> Result<()> {
+    require_root("remove from")?;
+
     let plist_path = launchd_plist_path();
 
     if plist_path.exists() {
-        let _ = std::process::Command::new("launchctl")
-            .args(["unload", "-w"])
-            .arg(&plist_path)
+        // Modern launchctl: `bootout system/<label>` unloads a system daemon
+        // (`unload -w` is deprecated for the system domain).
+        let status = std::process::Command::new("launchctl")
+            .arg("bootout")
+            .arg(format!("system/{}", SERVICE_NAME))
             .status();
+
+        if !matches!(status, Ok(s) if s.success()) {
+            // Fall back to the legacy verb if bootout isn't available / fails.
+            let _ = std::process::Command::new("launchctl")
+                .args(["unload", "-w"])
+                .arg(&plist_path)
+                .status();
+        }
 
         std::fs::remove_file(&plist_path).with_context(|| {
             format!(
-                "Failed to remove LaunchAgent plist at {}",
+                "Failed to remove LaunchDaemon plist at {}",
                 plist_path.display()
             )
         })?;
 
-        tracing::info!("Uninstalled LaunchAgent: {}", plist_path.display());
+        tracing::info!("Uninstalled LaunchDaemon: {}", plist_path.display());
     }
 
     Ok(())
@@ -397,7 +462,36 @@ mod tests {
     #[test]
     fn test_launchd_plist_path() {
         let path = launchd_plist_path();
-        assert!(path.to_string_lossy().contains("LaunchAgents"));
+        // Must be a *system* LaunchDaemon (runs as root), not a user LaunchAgent.
+        assert!(path.starts_with("/Library/LaunchDaemons"));
+        assert!(!path.to_string_lossy().contains("LaunchAgents"));
         assert!(path.to_string_lossy().contains(SERVICE_NAME));
+        assert!(path.to_string_lossy().ends_with(".plist"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_render_launchd_plist_is_well_formed_root_daemon() {
+        let plist = render_launchd_plist("/usr/local/bin/devenv-tunnel", DAEMON_LOG_DIR);
+
+        // Valid plist scaffolding.
+        assert!(plist.contains("<!DOCTYPE plist"));
+        assert!(plist.contains("<plist version=\"1.0\">"));
+        assert!(plist.trim_end().ends_with("</plist>"));
+
+        // Correct label + ProgramArguments [binary, "daemon"].
+        assert!(plist.contains(&format!("<string>{SERVICE_NAME}</string>")));
+        assert!(plist.contains("<string>/usr/local/bin/devenv-tunnel</string>"));
+        assert!(plist.contains("<string>daemon</string>"));
+
+        // Daemon keys.
+        assert!(plist.contains("<key>RunAtLoad</key>"));
+        assert!(plist.contains("<key>KeepAlive</key>"));
+        assert!(plist.contains("<key>ProcessType</key>"));
+        assert!(plist.contains("<string>Background</string>"));
+
+        // Logs go to a root-writable path, NOT the user's home.
+        assert!(plist.contains("/Library/Logs/devenv/daemon.log"));
+        assert!(!plist.contains("/.devenv"));
     }
 }
