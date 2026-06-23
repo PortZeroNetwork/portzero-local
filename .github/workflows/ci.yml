@@ -12,7 +12,14 @@ env:
 jobs:
   check:
     name: Check & Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Run the unprivileged suite on both Linux and macOS. The root-gated
+        # real-TUN test skips cleanly when geteuid() != 0, so it is CI-safe.
+        # windows-latest is a follow-on (task-28).
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 

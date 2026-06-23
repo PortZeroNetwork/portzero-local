@@ -888,7 +888,7 @@ mod tests {
     /// smoltcp, proxies to a real tokio echo backend, and data flows both ways.
     #[tokio::test]
     async fn vip_connect_proxies_to_backend() {
-        let _ = tracing_subscriber_try_init();
+        tracing_subscriber_try_init();
 
         // 1. Start a real backend echo server.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

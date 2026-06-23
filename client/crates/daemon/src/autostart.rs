@@ -5,7 +5,7 @@
 //! - Windows: scheduled task (start at logon)
 
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Service label / unit name used across platforms.
 #[allow(dead_code)]
@@ -131,7 +131,7 @@ fn launchd_plist_path() -> PathBuf {
 }
 
 #[cfg(target_os = "macos")]
-fn install_launchd(binary: &PathBuf) -> Result<()> {
+fn install_launchd(binary: &std::path::Path) -> Result<()> {
     let plist_path = launchd_plist_path();
     let plist_dir = plist_path.parent().expect(
         "launchd plist path has no parent directory — this is a bug in launchd_plist_path()",
@@ -231,7 +231,7 @@ fn systemd_unit_path() -> PathBuf {
 }
 
 #[cfg(target_os = "linux")]
-fn install_systemd(binary: &Path) -> Result<()> {
+fn install_systemd(binary: &std::path::Path) -> Result<()> {
     let unit_path = systemd_unit_path();
     let unit_dir = unit_path
         .parent()

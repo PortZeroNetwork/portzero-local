@@ -218,11 +218,17 @@ pub struct NotifyCommand {
 }
 
 /// Escape a string for embedding inside an AppleScript double-quoted literal.
+///
+/// Only used by the macOS notification path.
+#[cfg(target_os = "macos")]
 fn applescript_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Escape a string for embedding inside a single-quoted PowerShell literal.
+///
+/// Only used by the Windows notification path.
+#[cfg(target_os = "windows")]
 fn powershell_escape(s: &str) -> String {
     s.replace('\'', "''")
 }
@@ -279,8 +285,9 @@ pub fn build_notify_command(title: &str, body: &str) -> NotifyCommand {
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // Linux / other unix: notify-send is the de-facto standard and matches
-        // the existing shell-out pattern (resolvectl, systemctl, etc.).
-        let _ = (applescript_escape, powershell_escape);
+        // the existing shell-out pattern (resolvectl, systemctl, etc.). The
+        // applescript/powershell escapers are `#[cfg]`-gated to their own
+        // platforms, so there is nothing to reference here.
         NotifyCommand {
             program: "notify-send".to_string(),
             args: vec![
@@ -521,11 +528,13 @@ mod tests {
         assert!(cmd.args.contains(&"My Body".to_string()));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_applescript_escape() {
         assert_eq!(applescript_escape(r#"a"b\c"#), r#"a\"b\\c"#);
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn test_powershell_escape() {
         assert_eq!(powershell_escape("it's"), "it''s");

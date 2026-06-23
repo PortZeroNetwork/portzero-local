@@ -120,9 +120,9 @@ mod tests {
     #[test]
     fn release_frees_ip() {
         let mut alloc = VirtualIpAllocator::new();
-        let ip = alloc.assign("temp");
+        let _ip = alloc.assign("temp");
         alloc.release("temp");
-        let ip2 = alloc.assign("other");
+        let _ip2 = alloc.assign("other");
         // We don't guarantee immediate reuse, but lookup must be gone
         assert!(alloc.lookup_name("temp").is_none());
     }

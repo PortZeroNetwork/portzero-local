@@ -292,8 +292,10 @@ async fn real_tun_overlay() {
     let result = tokio::time::timeout(TEST_TIMEOUT, async {
         // Use the embedded DNS on a high local port to avoid clashing with the
         // system resolver during the test.
-        let mut config = OverlayConfig::default();
-        config.dns_listen = "127.0.0.1:53000".parse().unwrap();
+        let config = OverlayConfig {
+            dns_listen: "127.0.0.1:53000".parse().unwrap(),
+            ..Default::default()
+        };
 
         let overlay = OverlayNetwork::start(config)
             .await

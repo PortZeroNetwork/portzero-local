@@ -16,16 +16,6 @@ pub struct ApiClient {
     client: Client,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_api_url_points_at_the_dashboard_api() {
-        assert_eq!(DEFAULT_API_URL, "https://app.devenv.tools/api");
-    }
-}
-
 impl ApiClient {
     /// Create a new API client.
     ///
@@ -109,5 +99,15 @@ impl ApiClient {
         })?;
 
         Ok(resp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_api_url_points_at_the_dashboard_api() {
+        assert_eq!(DEFAULT_API_URL, "https://app.devenv.tools/api");
     }
 }
