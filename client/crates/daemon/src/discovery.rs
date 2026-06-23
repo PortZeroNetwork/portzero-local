@@ -534,8 +534,12 @@ fn parse_proc_net_tcp_line(
 fn discover_ports_lsof(pid: u32) -> Vec<ListeningPort> {
     use std::process::Command;
 
+    // `-a` ANDs the selection criteria. Without it, lsof ORs `-iTCP -sTCP:LISTEN`
+    // with `-p <pid>`, returning EVERY listening TCP socket on the system unioned
+    // with this pid's sockets — so a process would appear to listen on ports it
+    // doesn't own (e.g. sshd's *:22), mismapping the service backend.
     let output = match Command::new("lsof")
-        .args(["-iTCP", "-sTCP:LISTEN", "-nP", "-p", &pid.to_string()])
+        .args(["-a", "-iTCP", "-sTCP:LISTEN", "-nP", "-p", &pid.to_string()])
         .output()
     {
         Ok(o) => o,
@@ -550,8 +554,8 @@ fn discover_ports_lsof(pid: u32) -> Vec<ListeningPort> {
     parse_lsof_stdout(&stdout)
 }
 
-/// Parse the full stdout of `lsof -iTCP -sTCP:LISTEN -nP -p <pid>` into the set
-/// of listening ports. Pure (no process spawning) so it is unit-testable.
+/// Parse the full stdout of `lsof -a -iTCP -sTCP:LISTEN -nP -p <pid>` into the
+/// set of listening ports. Pure (no process spawning) so it is unit-testable.
 ///
 /// The first line is the `lsof` header (`COMMAND PID USER …`) and is skipped.
 #[cfg(any(target_os = "linux", target_os = "macos"))]

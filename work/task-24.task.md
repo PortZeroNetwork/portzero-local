@@ -80,5 +80,12 @@ RX 40 / RX 40 / TX 40                        response ACKed, clean FIN/close
 
 The macOS utun 4-byte AF header (`00 00 00 02` = AF_INET) is correctly stripped
 on read and prepended on write, so smoltcp sees valid IPv4 and the proxy carries
-traffic both ways. The earlier "resolve-but-hang" timeouts were a stale binary
-built before this fix. **macOS `.devenv.local` overlay now works end to end.**
+traffic **both ways** (full handshake + bidirectional data + clean close). The
+earlier "resolve-but-hang" timeouts were a stale binary built before this fix.
+
+CORRECTION: the bytes in that transaction turned out to be an SSH banner, not
+the example body — the overlay was proxying to the wrong backend (port 22) due
+to a separate lsof discovery bug ([[[task-36](../work/task-36.task.md)]]). That does NOT affect this
+ticket: the utun header handling is proven correct by the bidirectional TCP
+flow. The end-to-end "returns the example body" confirmation lands once
+[[[task-36](../work/task-36.task.md)]] is verified.

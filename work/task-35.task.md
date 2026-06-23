@@ -30,6 +30,12 @@ system services (`sshd`, `mDNSResponder`, Parallels, ollama, JetBrains, etc.).
 This is cosmetic (does not affect the overlay) but it's a real UX problem:
 actionable warnings are drowned out.
 
+UPDATE: the primary cause is the lsof `-a` bug ([[[task-36](../work/task-36.task.md)]]) — without `-a`,
+`enumerate_system_listeners` attributes the WHOLE system's listeners to every
+pid, so every process looked like it served 22/8080/etc. The [[[task-36](../work/task-36.task.md)]] fix
+should eliminate most of this flood; re-verify whether any genuine scoping work
+remains here afterward (the heuristic may still want a system-service denylist).
+
 ## Approach
 
 - Scope the legacy-port heuristic so it doesn't flag system/well-known services.
