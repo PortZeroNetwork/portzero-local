@@ -1,7 +1,7 @@
 ---
 id: cdd98720-0620-4919-941b-ba016618cdc4
 slug: task-36
-status: todo
+status: done
 title: 'macOS lsof discovery missing -a: ORs selections, attributes ALL system ports to every pid (maps services to sshd:22)'
 milestones:
 - milestone-2
@@ -56,5 +56,11 @@ Done when:
 
 - [x] `discover_ports_lsof` uses `-a` (only the target pid's ports)
 - [x] Builds clean with `clippy -D warnings`
-- [ ] Privileged re-run: service maps to the real backend; curl returns the body
-- [ ] `Port 22` legacy spam gone (verify [[[task-35](../work/task-35.task.md)]])
+- [x] Privileged re-run: service maps to the real backend; curl returns the body
+- [x] `Port 22` legacy spam gone (verify [[[task-35](../work/task-35.task.md)]])
+
+## Verified (2026-06-23, macOS, as root)
+
+After the `-a` fix, `overlay.json` mapped `hello.devenv.local → 127.0.0.1:52075`
+(the real python backend, not `:22`), and once the stale route was cleared
+([[[task-37](../work/task-37.task.md)]]) `curl http://hello.devenv.local:8080/` returned the python body.

@@ -87,5 +87,8 @@ CORRECTION: the bytes in that transaction turned out to be an SSH banner, not
 the example body — the overlay was proxying to the wrong backend (port 22) due
 to a separate lsof discovery bug ([[[task-36](../work/task-36.task.md)]]). That does NOT affect this
 ticket: the utun header handling is proven correct by the bidirectional TCP
-flow. The end-to-end "returns the example body" confirmation lands once
-[[[task-36](../work/task-36.task.md)]] is verified.
+flow.
+
+CONFIRMED 2026-06-23: after [[[task-36](../work/task-36.task.md)]] (lsof `-a`) and clearing a stale route
+([[[task-37](../work/task-37.task.md)]]), `curl http://hello.devenv.local:8080/` returns the real example
+body end to end. The macOS overlay data path works.
