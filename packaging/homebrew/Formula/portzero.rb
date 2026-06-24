@@ -1,4 +1,4 @@
-class PortZero < Formula
+class Portzero < Formula
   desc "Developer tool that eliminates port conflicts in local development"
   homepage "https://github.com/PortZeroNetwork/port-zero-local"
   version "0.1.0"

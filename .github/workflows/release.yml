@@ -216,9 +216,9 @@ jobs:
           AARCH64_SHA256=$(cat port-zero-aarch64-apple-darwin.sha256)
           X86_64_SHA256=$(cat port-zero-x86_64-apple-darwin.sha256)
 
-          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" tap/Formula/port-zero.rb
-          sed -i "s/sha256 \"[^\"]*\" # arm64/sha256 \"${AARCH64_SHA256}\" # arm64/" tap/Formula/port-zero.rb
-          sed -i "s/sha256 \"[^\"]*\" # x86_64/sha256 \"${X86_64_SHA256}\" # x86_64/" tap/Formula/port-zero.rb
+          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" tap/Formula/portzero.rb
+          sed -i "s/sha256 \"[^\"]*\" # arm64/sha256 \"${AARCH64_SHA256}\" # arm64/" tap/Formula/portzero.rb
+          sed -i "s/sha256 \"[^\"]*\" # x86_64/sha256 \"${X86_64_SHA256}\" # x86_64/" tap/Formula/portzero.rb
 
       - name: Commit and push
         env:
