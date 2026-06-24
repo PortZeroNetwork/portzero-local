@@ -32,19 +32,19 @@ const UTUN_AF_HEADER_LEN: usize = 4;
 
 /// macOS `utun` 4-byte big-endian protocol family header for IPv4
 /// (`AF_INET` = 2).
+#[cfg(target_os = "macos")]
 const UTUN_AF_INET: [u8; 4] = [0x00, 0x00, 0x00, 0x02];
 
 /// macOS `utun` 4-byte big-endian protocol family header for IPv6
 /// (`AF_INET6` = 0x1E = 30).
+#[cfg(target_os = "macos")]
 const UTUN_AF_INET6: [u8; 4] = [0x00, 0x00, 0x00, 0x1E];
 
 /// Choose the macOS `utun` 4-byte address-family header for an outgoing bare IP
 /// packet, based on the IP version nibble (`packet[0] >> 4`): `4` → `AF_INET`,
 /// `6` → `AF_INET6`. Anything else (including an empty packet) defaults to
 /// `AF_INET`.
-///
-/// Pure and side-effect free, and available on all platforms so it is unit-test
-/// covered everywhere (CI/Linux included).
+#[cfg(target_os = "macos")]
 fn af_header_for(packet: &[u8]) -> [u8; 4] {
     match packet.first().map(|b| b >> 4) {
         Some(6) => UTUN_AF_INET6,
@@ -746,7 +746,6 @@ fn remove_added_route(iface: &str, added_route: Option<String>) {
     #[cfg(target_os = "linux")]
     {
         del_route_linux(&cidr, iface);
-        return;
     }
 
     #[cfg(not(target_os = "linux"))]
