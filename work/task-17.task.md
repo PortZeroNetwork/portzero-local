@@ -13,10 +13,10 @@ updated_at: 2026-06-22T11:10:35.036972901Z
 
 ## Goal
 
-Zero-config canonical ports: when no explicit port is declared (see **task-16**),
+Zero-config canonical ports: when no explicit port is declared (see **[task-16](../work/task-16.task.md)**),
 DETECT the service's protocol and expose it on the standard port — **HTTP → 80**,
 **TLS/HTTPS → 443** — so `curl http://web.devenv.local/` just works with no port
-and no env-var fiddling. Explicit `:port` in `DEVENV_TUNNEL` ALWAYS overrides
+and no env-var fiddling. Explicit `:port` in `PORT_ZERO` ALWAYS overrides
 detection and skips probing.
 
 ## Approach
@@ -31,14 +31,14 @@ client-speaks-first — you can't passively sniff it):
 - **TLS:** attempt a TLS ClientHello / check the server completes a TLS
   handshake; if so → canonical **443**.
 
-Precedence: explicit `:port` (task-16) **>** detected canonical **>** discovered
+Precedence: explicit `:port` ([task-16](../work/task-16.task.md)) **>** detected canonical **>** discovered
 ephemeral (fallback) + warning.
 
 ## Caveats to handle (important)
 
 - **Active bytes hit the backend.** Skip probing ENTIRELY when an explicit port
   is set. Use the gentle `HEAD` method. Provide an opt-out env var (e.g.
-  `DEVENV_TUNNEL_NO_PROBE=1`). Document the behavior.
+  `PORT_ZERO_NO_PROBE=1`). Document the behavior.
 - **Server-speaks-first protocols** (Postgres, MySQL banner, SSH, SMTP) are OUT
   OF SCOPE for HTTP/TLS detection — they must NOT be misclassified as 80/443. If
   the probe yields a non-HTTP/non-TLS response or a server greeting, do NOT
@@ -54,18 +54,18 @@ ephemeral (fallback) + warning.
 - [ ] An HTTP service with no explicit port is exposed on `VIP:80`
       (`curl http://<name>.devenv.local/` works, no port in the URL).
 - [ ] A TLS service with no explicit port is exposed on `VIP:443`.
-- [ ] Explicit `DEVENV_TUNNEL=...:port` (task-16) overrides detection and sends
+- [ ] Explicit `PORT_ZERO=...:port` ([task-16](../work/task-16.task.md)) overrides detection and sends
       NO probe.
 - [ ] A non-HTTP/non-TLS backend (raw TCP / DB greeting) is NOT misclassified as
       80/443; it falls back gracefully.
 - [ ] Detection is timeout-bounded, retried, and cached — no probe hot-loop each
       scan.
-- [ ] Opt-out (`DEVENV_TUNNEL_NO_PROBE` or equivalent) disables probing.
+- [ ] Opt-out (`PORT_ZERO_NO_PROBE` or equivalent) disables probing.
 - [ ] Pure classifier unit-tested against captured sample bytes (HTTP response
       line, TLS handshake, server banner, empty/timeout) with probe I/O isolated
       from the classifier; no real network in tests.
 
 ## Relations
 
-Depends on **task-16** (explicit canonical port / the override + the
-`service_port` plumbing). Part of milestone-1.
+Depends on **[task-16](../work/task-16.task.md)** (explicit canonical port / the override + the
+`service_port` plumbing). Part of [milestone-1](../work/milestone-1.task.md).

@@ -70,7 +70,7 @@ With the parser fix (`6e0c366`):
 ```
 $ dig @127.0.0.1 -p 10053 hello.devenv.local +short
 10.254.0.2
-$ devenv-tunnel status
+$ port-zero status
 DOMAIN              PORT  SOURCE
 hello.devenv.local  8080  PID 91511
 ```

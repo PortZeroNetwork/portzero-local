@@ -13,7 +13,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use tokio::time::timeout;
 
-const RELEASES_BASE_URL: &str = "https://github.com/LoumTechnologies/devenv-tunnel/releases";
+const RELEASES_BASE_URL: &str = "https://github.com/LoumTechnologies/port-zero/releases";
 
 /// Minimum interval between remote checks.
 const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);

@@ -27,8 +27,8 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
-use devenv_tunnel_daemon::net::dns::OverlayDnsServer;
-use devenv_tunnel_daemon::net::service_table::ServiceTable;
+use port_zero_daemon::net::dns::OverlayDnsServer;
+use port_zero_daemon::net::service_table::ServiceTable;
 
 use hickory_proto::op::{Message, MessageType, OpCode};
 use hickory_proto::rr::{DNSClass, Name, RData, RecordType};
@@ -195,7 +195,7 @@ async fn unprivileged_overlay_round_trip() {
 /// real tokio backend and echoed back. No root, no real TUN. All waits bounded.
 #[tokio::test]
 async fn unprivileged_vip_byte_proxy() {
-    use devenv_tunnel_daemon::net::stack::{
+    use port_zero_daemon::net::stack::{
         client_iface, new_tcp_socket, test_tcp, MockDevice, TestInstant, TestIpAddress,
         TestIpv4Address, TestSocketSet, VirtualStack,
     };
@@ -285,7 +285,7 @@ async fn real_tun_overlay() {
         return;
     }
 
-    use devenv_tunnel_daemon::net::overlay::{OverlayConfig, OverlayNetwork};
+    use port_zero_daemon::net::overlay::{OverlayConfig, OverlayNetwork};
 
     println!("real_tun_overlay: running as root; bringing up real overlay");
 

@@ -1,13 +1,13 @@
 {
-  "name": "@devenv-tunnel/node",
+  "name": "@port-zero/node",
   "version": "0.1.0",
-  "description": "Thin Node.js/TypeScript helper for devenv-tunnel (bind port 0 + log DEVENV_TUNNEL)",
+  "description": "Thin Node.js/TypeScript helper for port-zero (bind port 0 + log PORT_ZERO)",
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
     "example": "node examples/express-app.js"
   },
-  "keywords": ["devenv-tunnel", "tunnel", "development"],
+  "keywords": ["port-zero", "tunnel", "development"],
   "license": "MIT",
   "engines": {
     "node": ">=18"

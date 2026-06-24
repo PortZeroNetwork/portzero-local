@@ -1,4 +1,4 @@
-//! Service table: maps overlay names (from full DEVENV_TUNNEL=*.devenv.local) to
+//! Service table: maps overlay names (from full PORT_ZERO=*.devenv.local) to
 //! their backing endpoints and virtual IPs.
 //!
 //! A "service" here is something like:

@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::{env, process};
 
-const RELEASES_BASE_URL: &str = "https://github.com/LoumTechnologies/devenv-tunnel/releases";
-const INSTALL_SCRIPT: &str = "curl -fsSL https://devenv.tools/install.sh | sh";
+const RELEASES_BASE_URL: &str = "https://github.com/LoumTechnologies/port-zero/releases";
+const INSTALL_SCRIPT: &str = "curl -fsSL https://portzero.cloud/install.sh | sh";
 
 #[tokio::main]
 async fn main() {

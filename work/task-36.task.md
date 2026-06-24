@@ -48,7 +48,7 @@ TCP sockets.
 ## Verify (privileged re-run by the user)
 
 - `curl http://hello.devenv.local:8080/` returns the python body
-  (`Hello from the devenv-tunnel local overlay!`), not an SSH banner.
+  (`Hello from the port-zero local overlay!`), not an SSH banner.
 - `overlay.json` shows `real_addr` = the python backend port (e.g. `:51994`).
 - The `Port 22 …` legacy warnings stop (confirms [[[task-35](../work/task-35.task.md)]] is resolved too).
 

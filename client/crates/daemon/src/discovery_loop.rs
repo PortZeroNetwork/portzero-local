@@ -1,7 +1,7 @@
 //! Discovery daemon loop: periodically scan for services and update routes.
 //!
 //! The daemon runs as a background process, scanning every few seconds for
-//! processes and Docker containers with DEVENV_TUNNEL set. Changes are
+//! processes and Docker containers with PORT_ZERO set. Changes are
 //! persisted to `~/.devenv/daemon/routes.json`.
 //!
 //! When authenticated, the daemon also connects to the cloud edge and
@@ -57,7 +57,7 @@ impl ReconnectBackoff {
 }
 
 use anyhow::{Context, Result};
-use devenv_tunnel_client::domain_router::DomainRouter;
+use port_zero_client::domain_router::DomainRouter;
 
 use crate::auth::AuthConfig;
 use crate::cloud::CloudConnector;
@@ -119,7 +119,7 @@ impl DaemonConfig {
         self.state_dir.join("issues.json")
     }
 
-    /// Path to the overlay services state file (read by `devenv tunnel status`).
+    /// Path to the overlay services state file (read by `port zero status`).
     pub fn overlay_path(&self) -> PathBuf {
         self.state_dir.join("overlay.json")
     }
@@ -186,7 +186,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         format!(
             "Failed to write PID file: {}\n\n\
              Is another discovery daemon already running? \
-             Check with: devenv tunnel status",
+             Check with: port zero status",
             config.pid_path().display()
         )
     })?;
@@ -418,7 +418,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             result
         } else {
             // Overlay TUN is not running (insufficient privileges), but still scan
-            // so that `devenv tunnel status` can surface discovered .local services.
+            // so that `port zero status` can surface discovered .local services.
             let services = discovery::scan_network_services().await;
             let issues = notify::detect_duplicate_names(&services);
             write_overlay_state(config, &services, false);
@@ -504,13 +504,13 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             if connector.is_auth_failed() {
                 tracing::warn!(
                     "Edge server rejected our token (expired or revoked). \
-                     Run `devenv tunnel login` to re-authenticate."
+                     Run `port zero login` to re-authenticate."
                 );
                 write_cloud_state(
                     config,
                     false,
                     Some(
-                        "Authentication failed. Run `devenv tunnel login` to re-authenticate."
+                        "Authentication failed. Run `port zero login` to re-authenticate."
                             .to_string(),
                     ),
                 );
@@ -641,7 +641,7 @@ fn spawn_shutdown_watchdog() {
     });
 }
 
-/// Persist discovered overlay services to `overlay.json` so `devenv tunnel status` can read them.
+/// Persist discovered overlay services to `overlay.json` so `port zero status` can read them.
 fn write_overlay_state(
     config: &DaemonConfig,
     services: &[DiscoveredNetworkService],
@@ -667,7 +667,7 @@ fn write_overlay_state(
 }
 
 /// Build an overlay `ServiceTable` from the services discovered for the local
-/// virtual network (those whose `DEVENV_TUNNEL` value ends in `.devenv.local`).
+/// virtual network (those whose `PORT_ZERO` value ends in `.devenv.local`).
 ///
 /// This is pure (no TUN / no privileges required) so it can be unit-tested.
 fn build_overlay_table(services: &[DiscoveredNetworkService]) -> ServiceTable {
@@ -710,7 +710,7 @@ async fn refresh_overlay_services(
 ///  - duplicate `.devenv.local` names (from the overlay scan, when the overlay
 ///    is running),
 ///  - legacy listeners: processes serving common/managed ports directly,
-///    bypassing devenv-tunnel.
+///    bypassing port-zero.
 ///
 /// `overlay_issues` / `overlay_services` come from a prior overlay refresh (or
 /// are empty when the overlay isn't running). Best-effort and non-fatal.
@@ -757,7 +757,7 @@ fn build_managed_context(
 }
 
 /// Persist the full set of current issues (from all sources) so
-/// `devenv tunnel status` can surface them, and — only when the set changes
+/// `port zero status` can surface them, and — only when the set changes
 /// since the last scan — log actionable guidance and fire a single native
 /// notification. The change-gating prevents flooding the log/desktop every scan.
 fn publish_issues(
@@ -769,7 +769,7 @@ fn publish_issues(
         issues: issues.clone(),
     };
 
-    // Persist the current state so `devenv tunnel status` can surface it.
+    // Persist the current state so `port zero status` can surface it.
     notify::write_issues(&config.issues_path(), &current);
 
     if current == *notified_issues {
@@ -785,9 +785,9 @@ fn publish_issues(
         // One consolidated notification covering all current issues.
         let first = &issues[0];
         let title = if issues.len() == 1 {
-            "devenv tunnel: issue detected".to_string()
+            "port zero: issue detected".to_string()
         } else {
-            format!("devenv tunnel: {} issues", issues.len())
+            format!("port zero: {} issues", issues.len())
         };
         let body = format!("{}\n{}", first.summary(), first.fix_hint());
         notify::send_notification(&title, &body);
@@ -966,7 +966,7 @@ pub fn stop_daemon(config: &DaemonConfig) -> Result<()> {
     let pid = read_daemon_pid(config).ok_or_else(|| {
         anyhow::anyhow!(
             "Discovery daemon is not running.\n\n\
-             Start it with: devenv tunnel start"
+             Start it with: port zero start"
         )
     })?;
 
@@ -1076,10 +1076,10 @@ mod tests {
         };
 
         // First call: starts tracking, but with 0ms grace it expires immediately
-        assert!(tracker.process_missing("test.devenv.tools"));
+        assert!(tracker.process_missing("test.portzero.cloud"));
 
         // Mark alive clears it
-        tracker.process_alive("test.devenv.tools");
+        tracker.process_alive("test.portzero.cloud");
         assert!(tracker.missing_since.is_empty());
     }
 
@@ -1091,7 +1091,7 @@ mod tests {
         };
 
         // With a 60s grace, it should not expire on first check
-        assert!(!tracker.process_missing("test.devenv.tools"));
+        assert!(!tracker.process_missing("test.portzero.cloud"));
     }
 
     #[test]
@@ -1099,17 +1099,17 @@ mod tests {
         let mut tracker = GracePeriodTracker::new();
         tracker
             .missing_since
-            .insert("old.devenv.tools".to_string(), Instant::now());
+            .insert("old.portzero.cloud".to_string(), Instant::now());
         tracker
             .missing_since
-            .insert("current.devenv.tools".to_string(), Instant::now());
+            .insert("current.portzero.cloud".to_string(), Instant::now());
 
-        let current = "current.devenv.tools".to_string();
+        let current = "current.portzero.cloud".to_string();
         let active = vec![&current];
         tracker.prune(&active);
 
-        assert!(!tracker.missing_since.contains_key("old.devenv.tools"));
-        assert!(tracker.missing_since.contains_key("current.devenv.tools"));
+        assert!(!tracker.missing_since.contains_key("old.portzero.cloud"));
+        assert!(tracker.missing_since.contains_key("current.portzero.cloud"));
     }
 
     #[test]
@@ -1137,7 +1137,7 @@ mod tests {
         let router = DomainRouter::new();
         let changes = RouteChanges {
             added: vec![Route {
-                domain: "api.test.devenv.tools".to_string(),
+                domain: "api.test.portzero.cloud".to_string(),
                 host: "127.0.0.1".to_string(),
                 port: 8080,
                 extra_ports: vec![],
@@ -1150,7 +1150,7 @@ mod tests {
         };
 
         update_domain_router(&router, &changes);
-        assert_eq!(router.resolve("api.test.devenv.tools"), Some(8080));
+        assert_eq!(router.resolve("api.test.portzero.cloud"), Some(8080));
     }
 
     #[test]

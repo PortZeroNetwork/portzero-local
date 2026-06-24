@@ -10,12 +10,12 @@
 # / NetworkManager boxes).
 #
 # What it does:
-#   1. starts the example service (server.py) bound to port 0 with DEVENV_TUNNEL set,
-#   2. starts the devenv-tunnel daemon in the foreground (needs root for the TUN),
+#   1. starts the example service (server.py) bound to port 0 with PORT_ZERO set,
+#   2. starts the port-zero daemon in the foreground (needs root for the TUN),
 #   3. asserts `resolvectl query <name>` returns a 10.254.x.x overlay VIP,
 #   4. asserts `curl http://<name>:<canonical-port>/` reaches the service THROUGH
 #      the overlay (DNS -> VIP -> TUN -> smoltcp -> real ephemeral backend). The
-#      canonical port comes from the `:<port>` declared in DEVENV_TUNNEL, NOT the
+#      canonical port comes from the `:<port>` declared in PORT_ZERO, NOT the
 #      random ephemeral port the service actually bound,
 #   5. tears everything down and asserts the scoped DNS config is gone.
 #
@@ -24,7 +24,7 @@
 # PRE-BUILT binary and refuses to run if it's missing (build it first as your
 # normal user). Run it like:
 #
-#   cargo build -p devenv-tunnel-cli         # as your normal user, once
+#   cargo build -p port-zero-cli         # as your normal user, once
 #   sudo ./examples/local-overlay/verify.sh  # the check itself
 #
 # Optionally pass a custom name (with an optional canonical :port):
@@ -34,7 +34,7 @@
 
 set -uo pipefail
 
-# DEVENV_TUNNEL value: a full `.devenv.local` domain plus a CANONICAL `:port`.
+# PORT_ZERO value: a full `.devenv.local` domain plus a CANONICAL `:port`.
 # The overlay exposes the service on VIP:<canonical-port> (here 8080) and proxies
 # to the real ephemeral backend, so clients use a clean, stable port.
 NAME="${1:-hello.devenv.local:8080}"
@@ -53,7 +53,7 @@ fi
 # --- locate repo + binary --------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel 2>/dev/null || echo "$SCRIPT_DIR/../..")"
-BIN="$REPO_ROOT/target/debug/devenv-tunnel"
+BIN="$REPO_ROOT/target/debug/port-zero"
 
 red()   { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -61,14 +61,14 @@ info()  { printf '\033[36m%s\033[0m\n' "$*"; }
 
 if [[ "$(id -u)" -ne 0 ]]; then
   red "This check must run as root (it creates a TUN + configures scoped DNS)."
-  echo "  build first:  cargo build -p devenv-tunnel-cli"
+  echo "  build first:  cargo build -p port-zero-cli"
   echo "  then run:     sudo $0 ${NAME}"
   exit 2
 fi
 
 if [[ ! -x "$BIN" ]]; then
   red "Binary not found: $BIN"
-  echo "Build it first as your normal user:  cargo build -p devenv-tunnel-cli"
+  echo "Build it first as your normal user:  cargo build -p port-zero-cli"
   exit 2
 fi
 
@@ -121,8 +121,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --- 1. start the backend service (port 0) ---------------------------------
-info "--- starting example service (DEVENV_TUNNEL=$NAME, port 0) ---"
-DEVENV_TUNNEL="$NAME" python3 "$SCRIPT_DIR/server.py" >"$SVC_LOG" 2>&1 &
+info "--- starting example service (PORT_ZERO=$NAME, port 0) ---"
+PORT_ZERO="$NAME" python3 "$SCRIPT_DIR/server.py" >"$SVC_LOG" 2>&1 &
 SVC_PID=$!
 # server.py prints: "[server] bound to 127.0.0.1:<port> (ephemeral)"
 PORT=""
@@ -167,14 +167,14 @@ else
 fi
 
 # --- 4. end-to-end curl THROUGH the overlay --------------------------------
-# Use the CANONICAL port from DEVENV_TUNNEL's `:<port>` (a clean, stable number),
+# Use the CANONICAL port from PORT_ZERO's `:<port>` (a clean, stable number),
 # NOT the random ephemeral port the service actually bound. If no canonical port
 # was declared, fall back to the discovered ephemeral port.
 CURL_PORT="${CANONICAL_PORT:-$PORT}"
 info "--- check 2: curl http://$DOMAIN:$CURL_PORT/ through the overlay ---"
 BODY="$(curl -fsS --max-time 8 "http://$DOMAIN:$CURL_PORT/" 2>&1 || true)"
 echo "$BODY" | sed 's/^/    /'
-if echo "$BODY" | grep -q 'devenv-tunnel local overlay'; then
+if echo "$BODY" | grep -q 'port-zero local overlay'; then
   green "CHECK 2 PASSED: reached the service through the overlay (DNS -> VIP -> TUN -> smoltcp -> backend)."
 else
   red "CHECK 2 FAILED: did not get the expected response via http://$DOMAIN:$CURL_PORT/"

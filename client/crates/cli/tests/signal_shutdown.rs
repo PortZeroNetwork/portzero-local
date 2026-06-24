@@ -1,6 +1,6 @@
 //! Runtime signal-handling test for the foreground daemon (task-32).
 //!
-//! Regression guard for the bug where `devenv-tunnel start --foreground` did
+//! Regression guard for the bug where `port-zero start --foreground` did
 //! not stop on Ctrl-C / SIGTERM (it had to be `pkill`'d). The daemon runs fine
 //! unprivileged — it just degrades to local/cloud-only with no TUN — so we can
 //! exercise the real signal path end-to-end without root.
@@ -28,9 +28,9 @@ fn send_signal(pid: u32, signal: &str) {
 /// Spawn the foreground daemon, send `signal` after it has started, and assert
 /// it exits within `deadline`.
 fn assert_exits_on_signal(signal: &str) {
-    let bin = env!("CARGO_BIN_EXE_devenv-tunnel");
+    let bin = env!("CARGO_BIN_EXE_port-zero");
     let tmp_home = std::env::temp_dir().join(format!(
-        "devenv-tunnel-sigtest-{}-{}",
+        "port-zero-sigtest-{}-{}",
         signal,
         std::process::id()
     ));

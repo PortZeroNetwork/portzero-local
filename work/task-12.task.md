@@ -11,11 +11,11 @@ updated_at: 2026-06-22T02:23:09.488639888Z
 
 ## Description
 
-Deferred from task-5 (visibility layer). task-5 delivered the headless,
+Deferred from [task-5](../work/task-5.task.md) (visibility layer). [task-5](../work/task-5.task.md) delivered the headless,
 crate-free parts of the visibility layer: duplicate `.devenv.local` name
 detection, a persisted `issues.json`, actionable logs, native notifications
 via shell-out (osascript / notify-send / PowerShell toast), and
-`devenv tunnel status` surfacing current issues.
+`port zero status` surfacing current issues.
 
 A persistent **system-tray icon** (red/yellow status indicator) was
 intentionally deferred because it requires a GUI event-loop crate (e.g.
@@ -23,7 +23,7 @@ intentionally deferred because it requires a GUI event-loop crate (e.g.
 would balloon scope / dependencies. Adding it likely means a small separate
 companion binary that reads the daemon's `issues.json` and renders tray state.
 
-Depends conceptually on task-5 (consumes the `issues.json` it introduced).
+Depends conceptually on [task-5](../work/task-5.task.md) (consumes the `issues.json` it introduced).
 
 ## Acceptance Criteria
 

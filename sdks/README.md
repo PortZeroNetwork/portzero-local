@@ -1,6 +1,6 @@
-# devenv-tunnel SDKs
+# port-zero SDKs
 
-Language helpers for the devenv-tunnel ecosystem. Each SDK is a thin
+Language helpers for the port-zero ecosystem. Each SDK is a thin
 convenience wrapper around the two-step universal mechanism.
 
 ## The universal mechanism (no real SDK required)
@@ -8,29 +8,29 @@ convenience wrapper around the two-step universal mechanism.
 Any language, any framework, any container — the integration is always
 the same two steps:
 
-1. **Set `DEVENV_TUNNEL` BEFORE starting your process** to a full domain
+1. **Set `PORT_ZERO` BEFORE starting your process** to a full domain
    name (including suffix). Templates `{branch}` and `{worktree}` are
    resolved by the daemon at the host level, so they work in containers too.
 
    ```
    # Local virtual overlay
-   DEVENV_TUNNEL=myapp-{branch}.devenv.local
+   PORT_ZERO=myapp-{branch}.devenv.local
 
    # Cloud tunnel
-   DEVENV_TUNNEL=myapp-{branch}.tunnel.devenv.tools
+   PORT_ZERO=myapp-{branch}.tunnel.portzero.cloud
    ```
 
    The suffix decides the target — nothing is appended implicitly.
 
 2. **Bind to port 0** so the OS picks an ephemeral port. The
-   long-running discovery daemon (`devenv-tunnel start`) detects your
-   process or container, reads `DEVENV_TUNNEL`, finds the real port,
+   long-running discovery daemon (`port-zero start`) detects your
+   process or container, reads `PORT_ZERO`, finds the real port,
    and routes it.
 
 That's it. You don't install an agent, SDK library, or sidecar inside
 the container. The daemon runs once on the host.
 
-## Why DEVENV_TUNNEL must be set before launch
+## Why PORT_ZERO must be set before launch
 
 The daemon reads each process's environment from **outside** the process:
 
@@ -38,17 +38,17 @@ The daemon reads each process's environment from **outside** the process:
 - macOS: `sysctl KERN_PROCARGS2`
 
 Both sources are **frozen snapshots** from `execve()` time. Setting
-`DEVENV_TUNNEL` inside a running process (Python `os.environ[...]`, Node
+`PORT_ZERO` inside a running process (Python `os.environ[...]`, Node
 `process.env[...]`, Go `os.Setenv(...)`) updates only the in-process libc
 copy — **the daemon never sees it**. A runtime-set variable silently fails
 discovery with no error message.
 
 The language helpers in this directory **do NOT and CANNOT set
-`DEVENV_TUNNEL` for daemon discovery**. They read the variable from the
+`PORT_ZERO` for daemon discovery**. They read the variable from the
 environment (set before launch) and log its value so you can confirm
 the correct domain is configured.
 
-**Recommended setup:** use [direnv](direnv/) — it exports `DEVENV_TUNNEL`
+**Recommended setup:** use [direnv](direnv/) — it exports `PORT_ZERO`
 automatically when you `cd` into your project directory, before any server
 process starts.
 
@@ -57,7 +57,7 @@ process starts.
 Each language helper is a thin convenience wrapper that:
 
 - Binds to **port 0** and returns/logs the chosen ephemeral port.
-- Reads `DEVENV_TUNNEL` from the environment (read-only) and logs its value,
+- Reads `PORT_ZERO` from the environment (read-only) and logs its value,
   or emits a WARNING with setup instructions when it is unset.
 - Attempts local `{branch}`/`{worktree}` resolution for **display/logging only**,
   clearly labelled as informational (the daemon resolves independently from
@@ -67,7 +67,7 @@ Each language helper is a thin convenience wrapper that:
 
 | Language / Tool | Directory               | Notes                                                      |
 |-----------------|-------------------------|------------------------------------------------------------|
-| direnv          | [`direnv/`](direnv/)    | **Start here** — exports `DEVENV_TUNNEL` before any process starts |
+| direnv          | [`direnv/`](direnv/)    | **Start here** — exports `PORT_ZERO` before any process starts |
 | Node.js / TS    | [`node/`](node/)        | Works with plain `http`, Express, Fastify…                 |
 | Python          | [`python/`](python/)    | stdlib-only; Flask/Starlette snippets in README            |
 | Go              | [`go/`](go/)            | Single-file package, no extra dependencies                 |
@@ -79,15 +79,15 @@ Each language helper is a thin convenience wrapper that:
 #    https://direnv.net/docs/installation.html
 
 # 2. Add to your project's .envrc:
-echo 'export DEVENV_TUNNEL="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).devenv.local"' >> .envrc
+echo 'export PORT_ZERO="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).devenv.local"' >> .envrc
 direnv allow
 
-# 3. Start your server — DEVENV_TUNNEL is already set
+# 3. Start your server — PORT_ZERO is already set
 node server.js   # or python3 app.py, go run ., etc.
 ```
 
 See [`direnv/README.md`](direnv/README.md) for full details including the
-`devenv-tunnel-exec` launcher (for when direnv is unavailable) and docker
+`port-zero-exec` launcher (for when direnv is unavailable) and docker
 integration.
 
 ## Deferred / follow-ups
@@ -103,11 +103,11 @@ integration.
 cargo install --path client/crates/cli
 
 # Start (once, leave running)
-devenv-tunnel start
+port-zero start
 
 # Check discovered tunnels
-devenv-tunnel status
+port-zero status
 
 # Stop
-devenv-tunnel stop
+port-zero stop
 ```

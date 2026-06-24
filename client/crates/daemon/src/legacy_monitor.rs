@@ -1,6 +1,6 @@
 //! Legacy-port monitoring, process attribution, and migration helpers.
 //!
-//! This module helps users migrate onto devenv-tunnel and catch a common class
+//! This module helps users migrate onto port-zero and catch a common class
 //! of footguns: services that are still served *directly* on localhost ports
 //! (bypassing the tunnel/overlay), and Docker containers that fail to start
 //! because a published host port is already bound.
@@ -9,7 +9,7 @@
 //!  - **Reuse, don't duplicate.** System-wide listener enumeration lives in
 //!    [`crate::discovery::enumerate_system_listeners`] (which reuses the existing
 //!    per-OS port discovery). Findings flow into the task-5 [`Issue`] model so
-//!    they show up in `devenv tunnel status` + native notifications via the same
+//!    they show up in `port zero status` + native notifications via the same
 //!    de-dup mechanism in `discovery_loop`.
 //!  - **Pure, testable core.** All decision logic (legacy-vs-registered
 //!    comparison, common-port matching, docker-conflict parsing/formatting,
@@ -27,7 +27,7 @@ use crate::discovery::SystemListener;
 use crate::notify::Issue;
 
 /// Common developer service ports that, when served directly (not via
-/// devenv-tunnel), are worth surfacing migration guidance for. Kept small and
+/// port-zero), are worth surfacing migration guidance for. Kept small and
 /// opinionated: databases, caches, web/dev servers, message brokers.
 pub const COMMON_PORTS: &[u16] = &[
     3000, // node / next / rails dev
@@ -108,7 +108,7 @@ pub fn describe_listener_context(cwd: Option<&Path>, git_root: Option<&Path>) ->
 /// distinct legacy listener.
 ///
 /// A listener is "legacy" when ALL of the following hold:
-///  - it does NOT have `DEVENV_TUNNEL` set (it isn't already managed by us),
+///  - it does NOT have `PORT_ZERO` set (it isn't already managed by us),
 ///  - its port is interesting (common dev port, or a port a managed service
 ///    uses),
 ///  - its port is not itself a managed/registered port owned by us (we don't
@@ -130,8 +130,8 @@ pub fn detect_legacy_listeners(
     let mut issues = Vec::new();
 
     for l in listeners {
-        // Already managed by devenv-tunnel — never legacy.
-        if l.has_devenv_tunnel {
+        // Already managed by port-zero — never legacy.
+        if l.has_port_zero {
             continue;
         }
         // Port must be interesting.
@@ -243,12 +243,12 @@ pub fn docker_conflict_issue(container: &str, port: u16) -> Issue {
 ///
 /// Thin impure wrapper: it calls the (separately tested) enumeration helper and
 /// the pure [`detect_legacy_listeners`], resolving git roots via the real
-/// `devenv_tunnel_domain::find_git_root`. Never panics; on platforms without
+/// `port_zero_domain::find_git_root`. Never panics; on platforms without
 /// enumeration support it yields an empty list.
 pub fn scan_legacy_listeners(managed: &ManagedContext) -> Vec<Issue> {
     let listeners = crate::discovery::enumerate_system_listeners();
     detect_legacy_listeners(&listeners, managed, COMMON_PORTS, |cwd| {
-        devenv_tunnel_domain::find_git_root(cwd).map(|(_, root)| root)
+        port_zero_domain::find_git_root(cwd).map(|(_, root)| root)
     })
 }
 
@@ -261,7 +261,7 @@ mod tests {
             port,
             pid,
             cwd: cwd.map(PathBuf::from),
-            has_devenv_tunnel: tunneled,
+            has_port_zero: tunneled,
         }
     }
 

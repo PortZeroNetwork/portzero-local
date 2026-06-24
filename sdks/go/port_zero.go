@@ -1,13 +1,13 @@
-// Package devenvtunnel provides a thin helper for devenv-tunnel integration.
+// Package portzero provides a thin helper for port-zero integration.
 //
 // The universal mechanism (no real SDK needed):
-//  1. Set DEVENV_TUNNEL to a full domain name BEFORE starting your process.
+//  1. Set PORT_ZERO to a full domain name BEFORE starting your process.
 //     The suffix decides the route:
 //       - myapp-{branch}.devenv.local        → local virtual overlay
-//       - myapp-{branch}.tunnel.devenv.tools → cloud tunnel
+//       - myapp-{branch}.tunnel.portzero.cloud → cloud tunnel
 //     See sdks/direnv/README.md for the recommended direnv setup.
 //  2. Bind your server to port 0 — the OS assigns an ephemeral port.
-//  3. The devenv-tunnel daemon discovers the process, reads DEVENV_TUNNEL,
+//  3. The port-zero daemon discovers the process, reads PORT_ZERO,
 //     finds the real port, and routes traffic to it.
 //
 // IMPORTANT — environment visibility:
@@ -17,10 +17,10 @@
 //
 // Both sources are frozen snapshots from execve() time. Calling os.Setenv
 // at runtime updates only the in-process copy and is NEVER visible to the
-// daemon. This package does NOT set DEVENV_TUNNEL — set it before launch.
+// daemon. This package does NOT set PORT_ZERO — set it before launch.
 //
 // This package has no external dependencies.
-package devenvtunnel
+package portzero
 
 import (
 	"fmt"
@@ -98,19 +98,19 @@ func gitOutput(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// ReadTunnel returns the value of DEVENV_TUNNEL from the environment, or an
+// ReadTunnel returns the value of PORT_ZERO from the environment, or an
 // empty string if unset. This function is read-only — it does not set the
 // variable. The daemon reads /proc/<pid>/environ at launch time and cannot
 // see runtime os.Setenv changes.
 func ReadTunnel() string {
-	return os.Getenv("DEVENV_TUNNEL")
+	return os.Getenv("PORT_ZERO")
 }
 
 // FindFreeListener binds a TCP listener to port 0 and returns it along with
 // the assigned port number. The listener stays open — pass it to your HTTP
 // server (e.g. http.Serve(ln, handler)) or close it yourself.
 //
-// DEVENV_TUNNEL must already be set before the process was started.
+// PORT_ZERO must already be set before the process was started.
 // If unset, a WARNING is logged with setup instructions.
 func FindFreeListener(opts Options) (net.Listener, int, error) {
 	tunnel := ReadTunnel()
@@ -118,13 +118,13 @@ func FindFreeListener(opts Options) (net.Listener, int, error) {
 	addr := fmt.Sprintf("%s:0", opts.host())
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, 0, fmt.Errorf("devenv-tunnel: failed to listen on %s: %w", addr, err)
+		return nil, 0, fmt.Errorf("port-zero: failed to listen on %s: %w", addr, err)
 	}
 
 	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
 	if !ok {
 		ln.Close() //nolint:errcheck
-		return nil, 0, fmt.Errorf("devenv-tunnel: unexpected address type %T", ln.Addr())
+		return nil, 0, fmt.Errorf("port-zero: unexpected address type %T", ln.Addr())
 	}
 	port := tcpAddr.Port
 
@@ -134,16 +134,16 @@ func FindFreeListener(opts Options) (net.Listener, int, error) {
 		if changed {
 			note = " (informational local resolution — daemon resolves independently)"
 		}
-		opts.logf("[devenv-tunnel] %s bound to %s:%d — tunnel domain: %s%s",
+		opts.logf("[port-zero] %s bound to %s:%d — tunnel domain: %s%s",
 			opts.serviceName(), opts.host(), port, display, note)
 	} else {
-		opts.logf("[devenv-tunnel] WARNING: %s bound to %s:%d — DEVENV_TUNNEL is not set.\n"+
+		opts.logf("[port-zero] WARNING: %s bound to %s:%d — PORT_ZERO is not set.\n"+
 			"  The daemon reads the process environment at launch time (execve snapshot) and\n"+
 			"  cannot see runtime os.Setenv changes.\n"+
-			"  Set DEVENV_TUNNEL before starting your process:\n"+
-			"    direnv:  export DEVENV_TUNNEL=myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local\n"+
-			"    shell:   export DEVENV_TUNNEL=myapp-{branch}.devenv.local\n"+
-			"    docker:  docker run -e DEVENV_TUNNEL=myapp-{branch}.devenv.local ...\n"+
+			"  Set PORT_ZERO before starting your process:\n"+
+			"    direnv:  export PORT_ZERO=myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local\n"+
+			"    shell:   export PORT_ZERO=myapp-{branch}.devenv.local\n"+
+			"    docker:  docker run -e PORT_ZERO=myapp-{branch}.devenv.local ...\n"+
 			"  See sdks/direnv/README.md for the recommended setup.",
 			opts.serviceName(), opts.host(), port)
 	}

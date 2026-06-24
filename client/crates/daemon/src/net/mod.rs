@@ -1,7 +1,7 @@
 //! Virtual overlay network: "Port 0 + Virtual Mesh" implementation.
 //!
 //! Core idea:
-//! - A service sets `DEVENV_TUNNEL=my-db.devenv.local` (full domain name)
+//! - A service sets `PORT_ZERO=my-db.devenv.local` (full domain name)
 //!   and binds to port 0.
 //! - Discovery routes it to overlay because of the `.devenv.local` suffix.
 //! - We discover the real ephemeral host port.

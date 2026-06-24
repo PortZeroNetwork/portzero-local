@@ -33,11 +33,11 @@ points at a CLI subcommand that doesn't exist yet.
 Done when:
 
 - [x] `autostart enable/disable/status` (or equivalent) exist and call into
-      `autostart.rs` — added `devenv tunnel autostart {enable,disable,status}`
+      `autostart.rs` — added `port zero autostart {enable,disable,status}`
       subcommand group in `client/crates/cli/src/autostart.rs`, wired into
       `main.rs`, calling `install_autostart`/`uninstall_autostart`/`is_autostart_installed`.
 - [x] Root requirement is reported with the correct command name — macOS
-      `require_root` hint now says `sudo devenv-tunnel autostart enable|disable`.
+      `require_root` hint now says `sudo port-zero autostart enable|disable`.
 - [x] Help/docs updated; builds clean with `clippy -D warnings` — `privileges.md`
       documents the enable/disable/status flow; `cargo build/clippy -D warnings/test`
       all clean.

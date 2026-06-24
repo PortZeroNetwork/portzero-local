@@ -29,7 +29,7 @@ The overlay performs three privileged operations when it starts
 The simplest path for local development is to start the daemon with `sudo`:
 
 ```bash
-sudo -E devenv-tunnel start --foreground
+sudo -E port-zero start --foreground
 ```
 
 `-E` preserves your environment.
@@ -52,9 +52,9 @@ native mechanism for a privileged service:
 Manage autostart with the `autostart` subcommands:
 
 ```bash
-devenv tunnel autostart enable    # install the system service
-devenv tunnel autostart disable   # remove it
-devenv tunnel autostart status    # show whether it's installed
+port zero autostart enable    # install the system service
+port zero autostart disable   # remove it
+port zero autostart status    # show whether it's installed
 ```
 
 On macOS, `enable`/`disable` write to `/Library/LaunchDaemons` and must be run
@@ -62,7 +62,7 @@ with `sudo` (see below); the command fails fast with that hint when run without
 root:
 
 ```bash
-sudo devenv-tunnel autostart enable
+sudo port-zero autostart enable
 ```
 
 ### macOS: why a LaunchDaemon (not a LaunchAgent)
@@ -102,7 +102,7 @@ and keeps running. Concretely:
   embedded DNS server still runs, just isn't wired into the OS resolver.
 - Route install fails → logged, non-fatal.
 
-Cloud tunnels (`.tunnel.devenv.tools`) and process/container **discovery** still
+Cloud tunnels (`.tunnel.portzero.cloud`) and process/container **discovery** still
 work without root; only the local overlay data path needs it.
 
 ## Consequence: `.devenv.local` visibility

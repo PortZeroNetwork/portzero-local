@@ -7,7 +7,7 @@ overlay is running**, which requires the daemon to be started with **root /
 `CAP_NET_ADMIN`**. Start it with `sudo`:
 
 ```bash
-sudo -E devenv-tunnel start --foreground
+sudo -E port-zero start --foreground
 ```
 
 If you started the daemon unprivileged it logged `continuing in
@@ -16,15 +16,15 @@ cloud/local-only mode` and the overlay (TUN + scoped resolver) is inactive. See
 
 ## My service was never discovered
 
-`DEVENV_TUNNEL` must be set **before** the service process starts. The daemon
+`PORT_ZERO` must be set **before** the service process starts. The daemon
 reads the frozen `execve()` environment (`/proc/<pid>/environ` on Linux,
 `sysctl KERN_PROCARGS2` on macOS) — a value set after launch (in
 `os.environ` / `process.env` / `os.Setenv`) is invisible to it.
 
-- Verify before launching: `echo $DEVENV_TUNNEL`.
-- Use direnv or `devenv-tunnel-exec` so it is exported before exec.
+- Verify before launching: `echo $PORT_ZERO`.
+- Use direnv or `port-zero-exec` so it is exported before exec.
 - Confirm the value is a **full domain** with a recognized suffix
-  (`.devenv.local` or `.tunnel.devenv.tools`); nothing is appended implicitly.
+  (`.devenv.local` or `.tunnel.portzero.cloud`); nothing is appended implicitly.
 
 ## The literal `{branch}` appears in `status`
 
@@ -32,16 +32,16 @@ Template resolution failed. For native processes ensure you are on a real git
 branch (not detached HEAD) within the repo. For containers, the daemon resolves
 `{branch}`/`{worktree}` from bind mounts / compose labels — if discovery of
 those fails the placeholder is left literal. See
-[devenv-tunnel.md](devenv-tunnel.md).
+[port-zero.md](port-zero.md).
 
 ## Wrong path taken (cloud vs. local)
 
 The **suffix** decides the target, not any flag:
 
 - `.devenv.local` → local overlay
-- `.tunnel.devenv.tools` → cloud tunnel
+- `.tunnel.portzero.cloud` → cloud tunnel
 
-Double-check the suffix in your `DEVENV_TUNNEL` value.
+Double-check the suffix in your `PORT_ZERO` value.
 
 ## TUN creation fails even with sudo (Linux)
 
@@ -53,14 +53,14 @@ Ensure `/dev/net/tun` exists and the `tun` module is loaded
 
 The name resolved to a `10.254.x.y` VIP but the proxy could not reach the
 backend. Check that the backend service is still listening on its ephemeral port
-and that `devenv-tunnel status` shows the expected real address. Restarting the
+and that `port-zero status` shows the expected real address. Restarting the
 service re-registers it on the same stable VIP.
 
 ## Seeing the daemon's own logs
 
 - `~/.devenv/daemon/daemon.log` (background mode).
 - Or run `--foreground` to see logs on the console.
-- `devenv-tunnel status` shows the current discovered services and routes.
+- `port-zero status` shows the current discovered services and routes.
 
 ## Running the test suite
 

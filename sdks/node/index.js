@@ -1,18 +1,18 @@
 /**
- * devenv-tunnel Node.js helper
+ * port-zero Node.js helper
  *
  * Thin convenience wrapper — the real mechanism is:
- *   1. Set DEVENV_TUNNEL to a full domain BEFORE launching your process.
+ *   1. Set PORT_ZERO to a full domain BEFORE launching your process.
  *      (Use direnv, shell export, or docker -e — see sdks/direnv/README.md)
  *   2. Bind to port 0 (OS picks ephemeral port).
- *   3. The devenv-tunnel daemon discovers the process via /proc/<pid>/environ
- *      (Linux) or sysctl KERN_PROCARGS2 (macOS), reads DEVENV_TUNNEL, finds
+ *   3. The port-zero daemon discovers the process via /proc/<pid>/environ
+ *      (Linux) or sysctl KERN_PROCARGS2 (macOS), reads PORT_ZERO, finds
  *      the real port, and routes it.
  *
  * IMPORTANT: The daemon reads the process environment from OUTSIDE the process.
- * That snapshot is frozen at execve() time. Setting process.env.DEVENV_TUNNEL
+ * That snapshot is frozen at execve() time. Setting process.env.PORT_ZERO
  * at runtime updates only the in-process libc copy — the daemon NEVER sees it.
- * You MUST set DEVENV_TUNNEL before starting the process.
+ * You MUST set PORT_ZERO before starting the process.
  *
  * No agent or sidecar is installed inside the process. Just env var + port 0.
  */
@@ -66,12 +66,12 @@ function resolveTemplateForDisplay(template) {
 }
 
 /**
- * Listen on port 0 (OS-assigned ephemeral port) and log the DEVENV_TUNNEL value.
+ * Listen on port 0 (OS-assigned ephemeral port) and log the PORT_ZERO value.
  *
  * Works with any object that exposes a `listen(port, [host], callback)` method:
  * Node.js `http.Server`, Express app, Fastify instance, etc.
  *
- * DEVENV_TUNNEL must be set BEFORE starting the process (via direnv, shell
+ * PORT_ZERO must be set BEFORE starting the process (via direnv, shell
  * export, or docker -e). This library cannot set it for daemon discovery.
  *
  * @param {object} server - An http.Server (or compatible) instance
@@ -83,7 +83,7 @@ function resolveTemplateForDisplay(template) {
 function listenWithTunnel(server, options = {}) {
   const { host = "0.0.0.0", serviceName = "app" } = options;
 
-  const tunnel = process.env.DEVENV_TUNNEL;
+  const tunnel = process.env.PORT_ZERO;
 
   return new Promise((resolve, reject) => {
     server.listen(0, host, (err) => {
@@ -110,16 +110,16 @@ function listenWithTunnel(server, options = {}) {
             ? ` (informational local resolution — daemon resolves independently)`
             : "";
         console.log(
-          `[devenv-tunnel] ${serviceName} bound to ${host}:${port} — tunnel domain: ${displayDomain}${displayNote}`
+          `[port-zero] ${serviceName} bound to ${host}:${port} — tunnel domain: ${displayDomain}${displayNote}`
         );
       } else {
         console.warn(
-          `[devenv-tunnel] WARNING: ${serviceName} bound to ${host}:${port} — DEVENV_TUNNEL is not set.\n` +
+          `[port-zero] WARNING: ${serviceName} bound to ${host}:${port} — PORT_ZERO is not set.\n` +
             "  The daemon reads the process environment at launch time and cannot see runtime changes.\n" +
-            "  Set DEVENV_TUNNEL before starting your process:\n" +
-            "    • direnv: add 'export DEVENV_TUNNEL=myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local' to .envrc\n" +
-            "    • shell:  export DEVENV_TUNNEL=myapp-{branch}.devenv.local\n" +
-            "    • docker: docker run -e DEVENV_TUNNEL=myapp-{branch}.devenv.local ...\n" +
+            "  Set PORT_ZERO before starting your process:\n" +
+            "    • direnv: add 'export PORT_ZERO=myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local' to .envrc\n" +
+            "    • shell:  export PORT_ZERO=myapp-{branch}.devenv.local\n" +
+            "    • docker: docker run -e PORT_ZERO=myapp-{branch}.devenv.local ...\n" +
             "  See sdks/direnv/README.md for the recommended direnv setup."
         );
       }
@@ -133,7 +133,7 @@ function listenWithTunnel(server, options = {}) {
  * Create a bare TCP server bound to port 0, resolve with the port number.
  *
  * Useful when you want just the port without passing an http.Server.
- * DEVENV_TUNNEL must be set BEFORE starting the process.
+ * PORT_ZERO must be set BEFORE starting the process.
  *
  * @param {object} [options]
  * @param {string} [options.host="0.0.0.0"]

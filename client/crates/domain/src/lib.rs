@@ -1,11 +1,11 @@
-//! Domain template engine for DEVENV_TUNNEL support.
+//! Domain template engine for PORT_ZERO support.
 //!
-//! Resolves templates like `{service}-{project}-{branch}-{user}.tunnel.devenv.tools`
+//! Resolves templates like `{service}-{project}-{branch}-{user}.tunnel.portzero.cloud`
 //! into stable DNS-safe domain names for tunnel routes.
 //!
-//! Tunnel routes live under `tunnel.devenv.tools`. The prefix before
-//! `.tunnel.devenv.tools` may contain dots to encode namespaces
-//! (e.g. `api.alice.tunnel.devenv.tools`); each dot-separated segment must be
+//! Tunnel routes live under `tunnel.portzero.cloud`. The prefix before
+//! `.tunnel.portzero.cloud` may contain dots to encode namespaces
+//! (e.g. `api.alice.tunnel.portzero.cloud`); each dot-separated segment must be
 //! a valid DNS label (ASCII alphanumeric + hyphens, no leading/trailing hyphens,
 //! ≤ 63 chars).
 
@@ -14,34 +14,34 @@ use std::path::{Path, PathBuf};
 /// Tunnel subdomain namespace — all tunnels live under this.
 pub const TUNNEL_SUBDOMAIN: &str = "tunnel";
 
-/// Default base domain for devenv.tools services.
-pub const DEFAULT_BASE_DOMAIN: &str = "devenv.tools";
+/// Default base domain for portzero.cloud services.
+pub const DEFAULT_BASE_DOMAIN: &str = "portzero.cloud";
 
 /// Default domain template used when none is specified.
 ///
-/// Produces a flat single-label subdomain under `tunnel.devenv.tools`.
-/// The base domain can be overridden via `DEVENV_TOOLS_BASE_DOMAIN` for local
+/// Produces a flat single-label subdomain under `tunnel.portzero.cloud`.
+/// The base domain can be overridden via `PORT_ZERO_BASE_DOMAIN` for local
 /// development.
-pub const DEFAULT_TEMPLATE: &str = "{service}-{project}-{branch}-{user}.tunnel.devenv.tools";
+pub const DEFAULT_TEMPLATE: &str = "{service}-{project}-{branch}-{user}.tunnel.portzero.cloud";
 
 /// Build the default domain template using the configured base domain.
 ///
-/// Reads `DEVENV_TOOLS_BASE_DOMAIN` from the environment, falling back to
-/// `devenv.tools`.
+/// Reads `PORT_ZERO_BASE_DOMAIN` from the environment, falling back to
+/// `portzero.cloud`.
 pub fn default_template() -> String {
-    let base = std::env::var("DEVENV_TOOLS_BASE_DOMAIN")
+    let base = std::env::var("PORT_ZERO_BASE_DOMAIN")
         .unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
     format!("{{service}}-{{project}}-{{branch}}-{{user}}.{TUNNEL_SUBDOMAIN}.{base}")
 }
 
-/// The tunnel base domain (e.g. `tunnel.devenv.tools`), respecting overrides.
+/// The tunnel base domain (e.g. `tunnel.portzero.cloud`), respecting overrides.
 pub fn tunnel_base() -> String {
-    let base = std::env::var("DEVENV_TOOLS_BASE_DOMAIN")
+    let base = std::env::var("PORT_ZERO_BASE_DOMAIN")
         .unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
     format!("{TUNNEL_SUBDOMAIN}.{base}")
 }
 
-/// Context for resolving DEVENV_TUNNEL templates.
+/// Context for resolving PORT_ZERO templates.
 #[derive(Debug, Clone)]
 pub struct DomainContext {
     pub service: String,
@@ -54,7 +54,7 @@ pub struct DomainContext {
     /// Falls back to the OS username when not logged in.
     pub uid: Option<String>,
     /// Cloud account username (e.g. "alice"). Used for namespace-aware tunnel
-    /// domains like `{service}.{username}.tunnel.devenv.tools`.
+    /// domains like `{service}.{username}.tunnel.portzero.cloud`.
     /// Falls back to `{uid}` when not available.
     pub username: Option<String>,
 }
@@ -123,7 +123,7 @@ impl DomainContext {
     }
 }
 
-/// Split an optional trailing `:<port>` off a raw `DEVENV_TUNNEL` value.
+/// Split an optional trailing `:<port>` off a raw `PORT_ZERO` value.
 ///
 /// The canonical-port feature lets a developer declare the port the overlay
 /// should expose a service on by appending `:<port>` to the value, e.g.
@@ -156,15 +156,15 @@ pub fn split_tunnel_port(value: &str) -> (&str, Option<u16>) {
 /// Validate that `domain` is a legal tunnel subdomain.
 ///
 /// Rules:
-/// - Must end with `.tunnel.devenv.tools` (or the configured base domain).
-/// - The prefix before `.tunnel.devenv.tools` may contain dots to encode
-///   namespaces (e.g. `api.alice.tunnel.devenv.tools`).
+/// - Must end with `.tunnel.portzero.cloud` (or the configured base domain).
+/// - The prefix before `.tunnel.portzero.cloud` may contain dots to encode
+///   namespaces (e.g. `api.alice.tunnel.portzero.cloud`).
 /// - Each dot-separated segment must be a valid DNS label: non-empty, ≤ 63
 ///   characters, ASCII alphanumeric or hyphens, no leading/trailing hyphens.
-/// - The bare `tunnel.devenv.tools` hostname is reserved and rejected.
+/// - The bare `tunnel.portzero.cloud` hostname is reserved and rejected.
 ///
-/// The expected tunnel base (e.g. `tunnel.devenv.tools`) is derived from
-/// `DEVENV_TOOLS_BASE_DOMAIN` the same way as `tunnel_base()`.
+/// The expected tunnel base (e.g. `tunnel.portzero.cloud`) is derived from
+/// `PORT_ZERO_BASE_DOMAIN` the same way as `tunnel_base()`.
 pub fn validate_tunnel_domain(domain: &str) -> Result<(), String> {
     let base = tunnel_base();
     let suffix = format!(".{base}");
@@ -456,8 +456,8 @@ mod tests {
             username: Some("alice".to_string()),
         };
 
-        let result = ctx.resolve("{service}-{project}-{branch}-{user}-{uid}.tunnel.devenv.tools");
-        assert_eq!(result, "api-myapp-main-alice-abc12345.tunnel.devenv.tools");
+        let result = ctx.resolve("{service}-{project}-{branch}-{user}-{uid}.tunnel.portzero.cloud");
+        assert_eq!(result, "api-myapp-main-alice-abc12345.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -473,8 +473,8 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}-{uid}.tunnel.devenv.tools");
-        assert_eq!(result, "web-bob.tunnel.devenv.tools");
+        let result = ctx.resolve("{service}-{uid}.tunnel.portzero.cloud");
+        assert_eq!(result, "web-bob.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -490,8 +490,8 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}-{worktree}.tunnel.devenv.tools");
-        assert_eq!(result, "web-main.tunnel.devenv.tools");
+        let result = ctx.resolve("{service}-{worktree}.tunnel.portzero.cloud");
+        assert_eq!(result, "web-main.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -527,8 +527,8 @@ mod tests {
             username: Some("alice".to_string()),
         };
 
-        let result = ctx.resolve("{service}.{username}.tunnel.devenv.tools");
-        assert_eq!(result, "api.alice.tunnel.devenv.tools");
+        let result = ctx.resolve("{service}.{username}.tunnel.portzero.cloud");
+        assert_eq!(result, "api.alice.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -544,8 +544,8 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}.{username}.tunnel.devenv.tools");
-        assert_eq!(result, "api.abc12345.tunnel.devenv.tools");
+        let result = ctx.resolve("{service}.{username}.tunnel.portzero.cloud");
+        assert_eq!(result, "api.abc12345.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -561,8 +561,8 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}.{username}.tunnel.devenv.tools");
-        assert_eq!(result, "api.osuser.tunnel.devenv.tools");
+        let result = ctx.resolve("{service}.{username}.tunnel.portzero.cloud");
+        assert_eq!(result, "api.osuser.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -577,17 +577,17 @@ mod tests {
 
     #[test]
     fn test_validate_tunnel_domain_valid() {
-        assert!(validate_tunnel_domain("myapp.tunnel.devenv.tools").is_ok());
-        assert!(validate_tunnel_domain("api-myapp-main-alice.tunnel.devenv.tools").is_ok());
-        assert!(validate_tunnel_domain("a.tunnel.devenv.tools").is_ok());
-        assert!(validate_tunnel_domain("api.alice.tunnel.devenv.tools").is_ok());
-        assert!(validate_tunnel_domain("my-api.alice.tunnel.devenv.tools").is_ok());
-        assert!(validate_tunnel_domain("svc.team-name.alice.tunnel.devenv.tools").is_ok());
+        assert!(validate_tunnel_domain("myapp.tunnel.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("api-myapp-main-alice.tunnel.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("a.tunnel.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("api.alice.tunnel.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("my-api.alice.tunnel.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("svc.team-name.alice.tunnel.portzero.cloud").is_ok());
     }
 
     #[test]
     fn test_validate_tunnel_domain_reserved_bare() {
-        let err = validate_tunnel_domain("tunnel.devenv.tools").unwrap_err();
+        let err = validate_tunnel_domain("tunnel.portzero.cloud").unwrap_err();
         assert!(
             err.contains("reserved"),
             "Expected reserved error, got: {err}"
@@ -596,36 +596,36 @@ mod tests {
 
     #[test]
     fn test_validate_tunnel_domain_wrong_parent() {
-        let err = validate_tunnel_domain("myapp.devenv.tools").unwrap_err();
-        assert!(err.contains("tunnel.devenv.tools"), "got: {err}");
+        let err = validate_tunnel_domain("myapp.portzero.cloud").unwrap_err();
+        assert!(err.contains("tunnel.portzero.cloud"), "got: {err}");
     }
 
     #[test]
     fn test_validate_tunnel_domain_multi_label_valid() {
-        assert!(validate_tunnel_domain("api.myapp.tunnel.devenv.tools").is_ok());
+        assert!(validate_tunnel_domain("api.myapp.tunnel.portzero.cloud").is_ok());
     }
 
     #[test]
     fn test_validate_tunnel_domain_multi_label_invalid_segment() {
-        assert!(validate_tunnel_domain("api._bad.tunnel.devenv.tools").is_err());
-        assert!(validate_tunnel_domain("api..alice.tunnel.devenv.tools").is_err());
+        assert!(validate_tunnel_domain("api._bad.tunnel.portzero.cloud").is_err());
+        assert!(validate_tunnel_domain("api..alice.tunnel.portzero.cloud").is_err());
     }
 
     #[test]
     fn test_validate_tunnel_domain_hyphen_edges() {
-        assert!(validate_tunnel_domain("-bad.tunnel.devenv.tools").is_err());
-        assert!(validate_tunnel_domain("bad-.tunnel.devenv.tools").is_err());
+        assert!(validate_tunnel_domain("-bad.tunnel.portzero.cloud").is_err());
+        assert!(validate_tunnel_domain("bad-.tunnel.portzero.cloud").is_err());
     }
 
     #[test]
     fn test_validate_tunnel_domain_invalid_chars() {
-        assert!(validate_tunnel_domain("my_app.tunnel.devenv.tools").is_err());
-        assert!(validate_tunnel_domain("my app.tunnel.devenv.tools").is_err());
+        assert!(validate_tunnel_domain("my_app.tunnel.portzero.cloud").is_err());
+        assert!(validate_tunnel_domain("my app.tunnel.portzero.cloud").is_err());
     }
 
     #[test]
     fn test_validate_tunnel_domain_label_too_long() {
-        let long = format!("{}.tunnel.devenv.tools", "a".repeat(64));
+        let long = format!("{}.tunnel.portzero.cloud", "a".repeat(64));
         assert!(validate_tunnel_domain(&long).is_err());
     }
 
@@ -667,8 +667,8 @@ mod tests {
     #[test]
     fn test_split_tunnel_port_cloud_domain() {
         assert_eq!(
-            split_tunnel_port("api.alice.tunnel.devenv.tools:8080"),
-            ("api.alice.tunnel.devenv.tools", Some(8080))
+            split_tunnel_port("api.alice.tunnel.portzero.cloud:8080"),
+            ("api.alice.tunnel.portzero.cloud", Some(8080))
         );
     }
 

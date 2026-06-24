@@ -3,17 +3,17 @@ set -e
 
 # devenv installer — the single source of truth.
 #
-# Usage: curl -fsSL https://devenv.tools/install.sh | sh
-#   (devenv.tools/install.sh redirects to this file, published as a GitHub
+# Usage: curl -fsSL https://portzero.cloud/install.sh | sh
+#   (portzero.cloud/install.sh redirects to this file, published as a GitHub
 #    Release asset at:
-#      https://github.com/LoumTechnologies/devenv-tunnel/releases/latest/download/install.sh)
+#      https://github.com/LoumTechnologies/port-zero/releases/latest/download/install.sh)
 #
-# Downloads the latest `devenv` + `devenv-tunnel` binaries from this repo's
+# Downloads the latest `devenv` + `port-zero` binaries from this repo's
 # GitHub Releases. POSIX sh (runs under whatever `sh` the curl pipe uses).
 #
 # Env: DEVENV_INSTALL_DIR overrides the install directory.
 
-REPO="LoumTechnologies/devenv-tunnel"
+REPO="LoumTechnologies/port-zero"
 RELEASES_URL="https://github.com/${REPO}/releases"
 
 # --- Colors (only on a terminal) ---
@@ -49,7 +49,7 @@ case "$(uname -m)" in
         ;;
 esac
 target="${arch}-${os}"
-archive="devenv-tunnel-${target}.tar.gz"
+archive="port-zero-${target}.tar.gz"
 
 # --- Install directory ---
 if [ -n "${DEVENV_INSTALL_DIR:-}" ]; then
@@ -80,11 +80,11 @@ fi
 
 info "Extracting"
 tar xzf "$tmp/$archive" -C "$tmp"
-# Archive extracts to "devenv-tunnel-${target}/" with both binaries.
-src="$tmp/devenv-tunnel-${target}"
+# Archive extracts to "port-zero-${target}/" with both binaries.
+src="$tmp/port-zero-${target}"
 
 mkdir -p "$install_dir"
-for bin in devenv devenv-tunnel; do
+for bin in devenv port-zero; do
     if [ ! -f "$src/$bin" ]; then
         error "Binary '$bin' missing from archive; please report at ${RELEASES_URL%/releases}/issues"
         exit 1
@@ -109,4 +109,4 @@ case ":${PATH}:" in
 esac
 
 echo ""
-echo "Next: ${BOLD}devenv tunnel login${RESET}  then  ${BOLD}devenv tunnel start${RESET}"
+echo "Next: ${BOLD}port zero login${RESET}  then  ${BOLD}port zero start${RESET}"

@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn encode_decode_register_route() {
         let msg = ClientMessage::RegisterRoute {
-            domain: "test.devenv.tools".into(),
+            domain: "test.portzero.cloud".into(),
             local_port: 8080,
             protocol: RouteProtocol::Tcp,
         };

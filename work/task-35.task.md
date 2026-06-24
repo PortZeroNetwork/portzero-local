@@ -12,11 +12,11 @@ updated_at: 2026-06-23T19:08:14.581933Z
 ## Context
 
 Observed during the [[[task-22](../work/task-22.task.md)]] macOS runs: the legacy-port monitor floods the
-daemon log and `devenv tunnel status` with warnings about **system services**:
+daemon log and `port zero status` with warnings about **system services**:
 
 ```
-WARN ... Port 22 is served directly (not via devenv-tunnel) by pid 606 (unknown
-dir) — Set DEVENV_TUNNEL on this process ... Until then this service bypasses
+WARN ... Port 22 is served directly (not via port-zero) by pid 606 (unknown
+dir) — Set PORT_ZERO on this process ... Until then this service bypasses
 the tunnel.
 ```
 
@@ -43,7 +43,7 @@ remains here afterward (the heuristic may still want a system-service denylist).
   - Only flag listeners whose owning process is in the user's project context
     (has a discoverable cwd under a dev dir, or runs as the invoking user — not
     root/system uids), mirroring how the monitor already uses `cwd` /
-    `has_devenv_tunnel`.
+    `has_port_zero`.
   - Exclude a denylist of well-known system ports (22, 53, 5353, 631, …) and/or
     well-known system process names.
   - Only warn for ports that actually collide with a discovered `.devenv.local`

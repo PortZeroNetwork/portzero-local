@@ -2,12 +2,12 @@
 """Minimal stdlib-only HTTP service for the local .devenv.local overlay demo.
 
 It binds to **port 0** (the OS picks an ephemeral port) and serves a tiny
-response on every path. The devenv-tunnel daemon discovers this process,
-reads DEVENV_TUNNEL from /proc/<pid>/environ, finds the real ephemeral port,
+response on every path. The port-zero daemon discovers this process,
+reads PORT_ZERO from /proc/<pid>/environ, finds the real ephemeral port,
 assigns a virtual IP, and makes the service reachable at
 http://<name>.devenv.local/.
 
-DEVENV_TUNNEL must be set BEFORE this process starts (see README / .envrc).
+PORT_ZERO must be set BEFORE this process starts (see README / .envrc).
 This script never sets it at runtime — a runtime change is invisible to the
 daemon, which reads the frozen execve() environment snapshot.
 """
@@ -21,10 +21,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
-        tunnel = os.environ.get("DEVENV_TUNNEL", "<unset>")
+        tunnel = os.environ.get("PORT_ZERO", "<unset>")
         body = (
-            "Hello from the devenv-tunnel local overlay!\n"
-            f"DEVENV_TUNNEL={tunnel}\n"
+            "Hello from the port-zero local overlay!\n"
+            f"PORT_ZERO={tunnel}\n"
             f"served on real port {self.server.server_address[1]}\n"
         ).encode()
         self.send_response(200)
@@ -38,13 +38,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    tunnel = os.environ.get("DEVENV_TUNNEL")
+    tunnel = os.environ.get("PORT_ZERO")
     if not tunnel:
         sys.stderr.write(
-            "WARNING: DEVENV_TUNNEL is not set. The daemon reads the process\n"
+            "WARNING: PORT_ZERO is not set. The daemon reads the process\n"
             "environment at launch time and cannot see a value set after start.\n"
             "Set it before launching, e.g.:\n"
-            "  export DEVENV_TUNNEL=hello.devenv.local\n"
+            "  export PORT_ZERO=hello.devenv.local\n"
             "  direnv allow   (if using the bundled .envrc)\n\n"
         )
 
@@ -53,7 +53,7 @@ def main() -> None:
     port = httpd.server_address[1]
     sys.stderr.write(
         f"[server] bound to 127.0.0.1:{port} (ephemeral)\n"
-        f"[server] DEVENV_TUNNEL={tunnel or '<unset>'}\n"
+        f"[server] PORT_ZERO={tunnel or '<unset>'}\n"
         f"[server] once the daemon (run with sudo) is up, try:\n"
         f"[server]   curl http://{tunnel or 'hello.devenv.local'}/\n"
     )

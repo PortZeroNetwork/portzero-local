@@ -1,13 +1,13 @@
 //! Autostart control commands: enable, disable, status.
 //!
-//! These wrap `devenv_tunnel_daemon::autostart`, which installs the daemon as a
+//! These wrap `port_zero_daemon::autostart`, which installs the daemon as a
 //! native system service (macOS root LaunchDaemon, Linux systemd user unit,
 //! Windows scheduled task). The underlying functions are cfg-gated per platform,
 //! so the same three subcommands work everywhere.
 
 use anyhow::Result;
 
-use devenv_tunnel_daemon::autostart::{
+use port_zero_daemon::autostart::{
     install_autostart, is_autostart_installed, uninstall_autostart,
 };
 
@@ -44,7 +44,7 @@ pub fn status() -> Result<()> {
         println!("The daemon will start automatically at boot.");
     } else {
         println!("Autostart: not installed");
-        println!("Run `devenv tunnel autostart enable` to start the daemon at boot.");
+        println!("Run `port zero autostart enable` to start the daemon at boot.");
     }
     Ok(())
 }

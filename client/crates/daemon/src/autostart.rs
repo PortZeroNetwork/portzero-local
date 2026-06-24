@@ -33,7 +33,7 @@ pub fn install_autostart() -> Result<()> {
         let _ = binary;
         anyhow::bail!(
             "Auto-start is not supported on this platform.\n\n\
-             You can still run the daemon manually with: devenv tunnel daemon"
+             You can still run the daemon manually with: port zero daemon"
         );
     }
 
@@ -82,29 +82,29 @@ pub fn is_autostart_installed() -> bool {
 // Binary location
 // ---------------------------------------------------------------------------
 
-/// Find the path to the devenv-tunnel binary.
+/// Find the path to the port-zero binary.
 fn find_daemon_binary() -> Result<PathBuf> {
     // First: check if we're running as the binary ourselves
     let current_exe =
         std::env::current_exe().context("Failed to determine current executable path")?;
 
-    // If the current exe looks like devenv-tunnel, use it
+    // If the current exe looks like port-zero, use it
     if let Some(name) = current_exe.file_name() {
         let name_str = name.to_string_lossy();
-        if name_str.starts_with("devenv-tunnel") {
+        if name_str.starts_with("port-zero") {
             return Ok(current_exe);
         }
     }
 
     // Otherwise, search PATH
-    if let Ok(path) = which("devenv-tunnel") {
+    if let Ok(path) = which("port-zero") {
         return Ok(path);
     }
 
     anyhow::bail!(
-        "Could not find devenv-tunnel binary.\n\n\
+        "Could not find port-zero binary.\n\n\
          Ensure devenv is installed and on your PATH, then retry.\n\
-         Install with: curl -fsSL https://devenv.tools/install.sh | sh"
+         Install with: curl -fsSL https://portzero.cloud/install.sh | sh"
     )
 }
 
@@ -183,10 +183,10 @@ fn require_root(action: &str) -> Result<()> {
     let euid = unsafe { libc::geteuid() };
     if euid != 0 {
         anyhow::bail!(
-            "Installing the devenv-tunnel autostart service as a root LaunchDaemon \
+            "Installing the port-zero autostart service as a root LaunchDaemon \
              requires administrator privileges to {action} {dir}.\n\n\
              Re-run this command with sudo, e.g.:\n    \
-             sudo devenv-tunnel autostart {verb}",
+             sudo port-zero autostart {verb}",
             action = action,
             dir = LAUNCHDAEMONS_DIR,
             verb = if action.contains("remove") {
@@ -306,7 +306,7 @@ fn install_systemd(binary: &std::path::Path) -> Result<()> {
     let unit = format!(
         r#"[Unit]
 Description=devenv discovery daemon
-Documentation=https://devenv.tools/docs/daemon
+Documentation=https://portzero.cloud/docs/daemon
 
 [Service]
 Type=simple
@@ -472,7 +472,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn test_render_launchd_plist_is_well_formed_root_daemon() {
-        let plist = render_launchd_plist("/usr/local/bin/devenv-tunnel", DAEMON_LOG_DIR);
+        let plist = render_launchd_plist("/usr/local/bin/port-zero", DAEMON_LOG_DIR);
 
         // Valid plist scaffolding.
         assert!(plist.contains("<!DOCTYPE plist"));
@@ -481,7 +481,7 @@ mod tests {
 
         // Correct label + ProgramArguments [binary, "daemon"].
         assert!(plist.contains(&format!("<string>{SERVICE_NAME}</string>")));
-        assert!(plist.contains("<string>/usr/local/bin/devenv-tunnel</string>"));
+        assert!(plist.contains("<string>/usr/local/bin/port-zero</string>"));
         assert!(plist.contains("<string>daemon</string>"));
 
         // Daemon keys.

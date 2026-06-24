@@ -1,7 +1,7 @@
-# `DEVENV_TUNNEL` semantics
+# `PORT_ZERO` semantics
 
-`DEVENV_TUNNEL` is the single environment variable that opts a service into the
-devenv-tunnel system. Set it, bind to port 0, and the daemon does the rest.
+`PORT_ZERO` is the single environment variable that opts a service into the
+port-zero system. Set it, bind to port 0, and the daemon does the rest.
 
 ## The full-domain rule
 
@@ -9,9 +9,9 @@ The value **must be a full domain name, including its suffix**. Nothing is ever
 appended implicitly. The daemon takes the value verbatim.
 
 ```
-DEVENV_TUNNEL=hello.devenv.local            # valid (local overlay)
-DEVENV_TUNNEL=web.tunnel.devenv.tools       # valid (cloud tunnel)
-DEVENV_TUNNEL=hello                          # NOT valid — no suffix
+PORT_ZERO=hello.devenv.local            # valid (local overlay)
+PORT_ZERO=web.tunnel.portzero.cloud       # valid (cloud tunnel)
+PORT_ZERO=hello                          # NOT valid — no suffix
 ```
 
 ## The suffix decides the target
@@ -21,13 +21,13 @@ The daemon routes a service based purely on the **suffix** of the full domain:
 | Suffix                                            | Target                  |
 |---------------------------------------------------|-------------------------|
 | `.devenv.local`                                   | Local virtual overlay   |
-| `.tunnel.devenv.tools` (incl. `foo.user.tunnel.devenv.tools`) | Cloud tunnel |
+| `.tunnel.portzero.cloud` (incl. `foo.user.tunnel.portzero.cloud`) | Cloud tunnel |
 
 - `.devenv.local` → the service is given a virtual IP from `10.254.0.0/16`,
   served by scoped DNS, and proxied through the TUN + user-space stack on this
   machine. See [architecture.md](architecture.md).
-- `.tunnel.devenv.tools` → the service is exposed via the cloud edge (requires
-  login). Namespaced forms like `foo.username.tunnel.devenv.tools` are also
+- `.tunnel.portzero.cloud` → the service is exposed via the cloud edge (requires
+  login). Namespaced forms like `foo.username.tunnel.portzero.cloud` are also
   cloud routes.
 
 You choose the path simply by which suffix you put in the value.
@@ -48,16 +48,16 @@ Correct ways to set it before launch:
 
 ```bash
 # direnv (recommended): export in .envrc, then `direnv allow`
-export DEVENV_TUNNEL=hello.devenv.local
+export PORT_ZERO=hello.devenv.local
 
 # shell one-off
-export DEVENV_TUNNEL=hello.devenv.local && python3 server.py
+export PORT_ZERO=hello.devenv.local && python3 server.py
 
 # the exec launcher from the SDKs
-sdks/direnv/devenv-tunnel-exec hello.devenv.local python3 server.py
+sdks/direnv/port-zero-exec hello.devenv.local python3 server.py
 
 # docker (passed at container start)
-docker run -e DEVENV_TUNNEL=hello.devenv.local -p 0:8080 myimage
+docker run -e PORT_ZERO=hello.devenv.local -p 0:8080 myimage
 ```
 
 See [`../sdks/direnv/README.md`](../sdks/direnv/README.md) for details.
@@ -73,8 +73,8 @@ git context:
 | `{worktree}` | the basename of the git worktree / repo root        |
 
 ```
-DEVENV_TUNNEL=web-{branch}.devenv.local
-DEVENV_TUNNEL=api-{worktree}.tunnel.devenv.tools
+PORT_ZERO=web-{branch}.devenv.local
+PORT_ZERO=api-{worktree}.tunnel.portzero.cloud
 ```
 
 The daemon resolves these itself from the host (for native processes from the

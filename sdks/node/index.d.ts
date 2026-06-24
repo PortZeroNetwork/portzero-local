@@ -8,12 +8,12 @@ export interface TunnelListenOptions {
 }
 
 /**
- * Listen on port 0 (OS-assigned ephemeral port) and log the DEVENV_TUNNEL value.
+ * Listen on port 0 (OS-assigned ephemeral port) and log the PORT_ZERO value.
  *
  * Works with any object that exposes `listen(port, host, callback)`:
  * Node.js `http.Server`, Express app, Fastify instance, etc.
  *
- * DEVENV_TUNNEL must be set BEFORE starting the process (via direnv, shell
+ * PORT_ZERO must be set BEFORE starting the process (via direnv, shell
  * export, or docker -e). This function cannot set it for daemon discovery —
  * the daemon reads /proc/<pid>/environ which is frozen at execve() time.
  *
@@ -40,6 +40,6 @@ export interface ReservedPort {
  * Reserve an ephemeral port by binding a bare TCP server to port 0.
  * Useful when you need a port number before creating the HTTP server.
  *
- * DEVENV_TUNNEL must be set BEFORE starting the process.
+ * PORT_ZERO must be set BEFORE starting the process.
  */
 export function reservePort(options?: TunnelListenOptions): Promise<ReservedPort>;

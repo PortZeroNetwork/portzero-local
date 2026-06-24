@@ -1,4 +1,4 @@
-//! HTTP client for the devenv.tools cloud API.
+//! HTTP client for the portzero.cloud cloud API.
 
 use anyhow::{Context, Result};
 use reqwest::Client;
@@ -6,10 +6,10 @@ use serde::Serialize;
 
 use crate::auth::AuthConfig;
 
-/// Default base URL for the devenv.tools API.
-pub(crate) const DEFAULT_API_URL: &str = "https://app.devenv.tools/api";
+/// Default base URL for the portzero.cloud API.
+pub(crate) const DEFAULT_API_URL: &str = "https://app.portzero.cloud/api";
 
-/// HTTP client for the devenv.tools API with automatic auth injection.
+/// HTTP client for the portzero.cloud API with automatic auth injection.
 pub struct ApiClient {
     base_url: String,
     auth: Option<AuthConfig>,
@@ -20,11 +20,11 @@ impl ApiClient {
     /// Create a new API client.
     ///
     /// Loads auth config from disk if available, and reads the API URL from
-    /// the `DEVENV_TOOLS_API_URL` environment variable (useful for local
+    /// the `PORT_ZERO_API_URL` environment variable (useful for local
     /// development) or falls back to the default.
     pub fn new() -> Self {
         let base_url =
-            std::env::var("DEVENV_TOOLS_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+            std::env::var("PORT_ZERO_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
         let auth = AuthConfig::load().ok();
 
         Self {
@@ -37,7 +37,7 @@ impl ApiClient {
     /// Require that auth is loaded, returning a helpful error if not.
     pub fn require_auth(&self) -> Result<&AuthConfig> {
         self.auth.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Not logged in. Run `devenv tunnel login` to authenticate.")
+            anyhow::anyhow!("Not logged in. Run `port zero login` to authenticate.")
         })
     }
 
@@ -52,9 +52,9 @@ impl ApiClient {
 
         let resp = req.send().await.with_context(|| {
             format!(
-                "Failed to reach the devenv.tools API at {url}\n\n\
+                "Failed to reach the portzero.cloud API at {url}\n\n\
                  Check your internet connection, or if you are using a custom API URL,\n\
-                 verify that DEVENV_TOOLS_API_URL is correct."
+                 verify that PORT_ZERO_API_URL is correct."
             )
         })?;
 
@@ -72,9 +72,9 @@ impl ApiClient {
 
         let resp = req.send().await.with_context(|| {
             format!(
-                "Failed to reach the devenv.tools API at {url}\n\n\
+                "Failed to reach the portzero.cloud API at {url}\n\n\
                  Check your internet connection, or if you are using a custom API URL,\n\
-                 verify that DEVENV_TOOLS_API_URL is correct."
+                 verify that PORT_ZERO_API_URL is correct."
             )
         })?;
 
@@ -92,9 +92,9 @@ impl ApiClient {
 
         let resp = req.send().await.with_context(|| {
             format!(
-                "Failed to reach the devenv.tools API at {url}\n\n\
+                "Failed to reach the portzero.cloud API at {url}\n\n\
                  Check your internet connection, or if you are using a custom API URL,\n\
-                 verify that DEVENV_TOOLS_API_URL is correct."
+                 verify that PORT_ZERO_API_URL is correct."
             )
         })?;
 
@@ -108,6 +108,6 @@ mod tests {
 
     #[test]
     fn default_api_url_points_at_the_dashboard_api() {
-        assert_eq!(DEFAULT_API_URL, "https://app.devenv.tools/api");
+        assert_eq!(DEFAULT_API_URL, "https://app.portzero.cloud/api");
     }
 }

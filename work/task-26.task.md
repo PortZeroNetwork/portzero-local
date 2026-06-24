@@ -15,7 +15,7 @@ updated_at: 2026-06-23T12:51:59.846197Z
 
 On Linux, discovery is precise and cheap: `/proc/<pid>/fd` gives socket inodes,
 `/proc/net/tcp` maps them to listening ports, and `/proc/<pid>/environ` reads
-`DEVENV_TUNNEL` directly (`discovery.rs`). macOS has neither, so the macOS
+`PORT_ZERO` directly (`discovery.rs`). macOS has neither, so the macOS
 branch shells out to `lsof` for ports and `ps -wwwE` for env vars. Two concerns:
 
 1. **Accuracy** — `discover_ports_lsof` parses `name` columns heuristically and
@@ -34,7 +34,7 @@ over-engineer if accuracy is already fine. Likely items:
   **single** system-wide `lsof -nP -iTCP -sTCP:LISTEN` pass, grouped by PID.
 - Consider `libproc` (`proc_pidinfo` / `proc_pidfdinfo`) to drop the `lsof`/`ps`
   subprocess dependency entirely on macOS — closer to the `/proc` model.
-- Verify `DEVENV_TUNNEL` detection is reliable for the long, templated values
+- Verify `PORT_ZERO` detection is reliable for the long, templated values
   the project uses (no `ps` truncation).
 
 Done when:
@@ -42,5 +42,5 @@ Done when:
 - [ ] `.devenv.local` services are discovered and attributed to the right PID
       on macOS (verified via [[[task-22](../work/task-22.task.md)]])
 - [ ] System-wide listener enumeration no longer spawns one process per PID
-- [ ] `DEVENV_TUNNEL` env detection is reliable (not truncated by `ps`)
+- [ ] `PORT_ZERO` env detection is reliable (not truncated by `ps`)
 - [ ] No Linux-path behaviour change

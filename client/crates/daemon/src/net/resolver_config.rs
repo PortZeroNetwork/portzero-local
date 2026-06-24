@@ -95,7 +95,7 @@ fn uninstall_impl(_link_name: &str) -> Result<()> {
 /// The `port` line is needed when the server listens on a non-standard port.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn macos_resolver_file_content(dns_addr: SocketAddr) -> String {
-    let mut out = String::from("# Managed by devenv-tunnel — do not edit by hand.\n");
+    let mut out = String::from("# Managed by port-zero — do not edit by hand.\n");
     out.push_str(&format!("nameserver {}\n", dns_addr.ip()));
     if dns_addr.port() != 53 {
         out.push_str(&format!("port {}\n", dns_addr.port()));
@@ -383,7 +383,7 @@ pub(crate) fn dnsmasq_snippet_path(nm: bool) -> std::path::PathBuf {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn dnsmasq_snippet_content(dns_addr: SocketAddr) -> String {
     format!(
-        "# Managed by devenv-tunnel — do not edit by hand.\n\
+        "# Managed by port-zero — do not edit by hand.\n\
          server=/{domain}/{ip}#{port}\n",
         domain = SCOPED_DOMAIN,
         ip = dns_addr.ip(),
@@ -510,7 +510,7 @@ pub(crate) fn powershell_add_nrpt_script(dns_addr: SocketAddr) -> String {
     format!(
         r#"
 Get-DnsClientNrptRule | Where-Object {{ $_.Namespace -eq '.devenv.local' }} | Remove-DnsClientNrptRule -Force -ErrorAction SilentlyContinue
-Add-DnsClientNrptRule -Namespace '.devenv.local' -NameServers '{ip}' -Comment 'devenv-tunnel managed'
+Add-DnsClientNrptRule -Namespace '.devenv.local' -NameServers '{ip}' -Comment 'port-zero managed'
 "#,
         ip = dns_addr.ip()
     )
@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn macos_content_comment() {
         let content = macos_resolver_file_content(addr("127.0.0.1", 5300));
-        assert!(content.contains("devenv-tunnel"), "should have management comment");
+        assert!(content.contains("port-zero"), "should have management comment");
     }
 
     // --- Linux ---
@@ -820,7 +820,7 @@ mod tests {
             !content.lines().any(|l| l.trim() == "server=127.0.0.1#5300"),
             "must not add an unscoped server line"
         );
-        assert!(content.contains("devenv-tunnel"), "management comment");
+        assert!(content.contains("port-zero"), "management comment");
     }
 
     #[cfg(target_os = "linux")]

@@ -38,13 +38,13 @@ impl AuthConfig {
     pub fn load() -> Result<Self> {
         let path = Self::path()?;
         if !path.exists() {
-            anyhow::bail!("Not logged in. Run `devenv tunnel login` to authenticate.");
+            anyhow::bail!("Not logged in. Run `port zero login` to authenticate.");
         }
 
         let content = std::fs::read_to_string(&path).with_context(|| {
             format!(
                 "Failed to read auth config at {}.\n\n\
-                 The file may be corrupted. Try `devenv tunnel logout` then `devenv tunnel login`.",
+                 The file may be corrupted. Try `port zero logout` then `port zero login`.",
                 path.display()
             )
         })?;
@@ -52,7 +52,7 @@ impl AuthConfig {
         let config: AuthConfig = serde_json::from_str(&content).with_context(|| {
             format!(
                 "Failed to parse auth config at {}.\n\n\
-                 The file may be corrupted. Try `devenv tunnel logout` then `devenv tunnel login`.",
+                 The file may be corrupted. Try `port zero logout` then `port zero login`.",
                 path.display()
             )
         })?;
@@ -147,15 +147,15 @@ struct CallbackPayload {
 
 /// Derive the dashboard URL from the API URL.
 ///
-/// - If `DEVENV_TOOLS_DASHBOARD_URL` is set, use it directly.
-/// - If `DEVENV_TOOLS_API_URL` looks like `localhost:3001`, use `localhost:3003`.
-/// - Otherwise default to `https://app.devenv.tools`.
+/// - If `PORT_ZERO_DASHBOARD_URL` is set, use it directly.
+/// - If `PORT_ZERO_API_URL` looks like `localhost:3001`, use `localhost:3003`.
+/// - Otherwise default to `https://app.portzero.cloud`.
 fn dashboard_url() -> String {
-    if let Ok(url) = std::env::var("DEVENV_TOOLS_DASHBOARD_URL") {
+    if let Ok(url) = std::env::var("PORT_ZERO_DASHBOARD_URL") {
         return url;
     }
 
-    let api_url = std::env::var("DEVENV_TOOLS_API_URL")
+    let api_url = std::env::var("PORT_ZERO_API_URL")
         .unwrap_or_else(|_| crate::api_client::DEFAULT_API_URL.to_string());
 
     dashboard_url_from_api_url(&api_url)
@@ -170,7 +170,7 @@ fn dashboard_url_from_api_url(api_url: &str) -> String {
         }
     }
 
-    "https://app.devenv.tools".to_string()
+    "https://app.portzero.cloud".to_string()
 }
 
 /// Generate a random session code for the browser login flow.
@@ -234,11 +234,11 @@ async fn login_browser() -> Result<()> {
                 "Login timed out after 2 minutes.\n\n\
                  The browser login was not completed in time. Try again with:\n\
                  \n\
-                   devenv tunnel login\n\
+                   port zero login\n\
                  \n\
                  If you are on a headless server without a browser, use:\n\
                  \n\
-                   devenv tunnel login --interactive"
+                   port zero login --interactive"
             );
         }
     }
@@ -426,15 +426,15 @@ async fn login_interactive(email: Option<String>) -> Result<()> {
             "Failed to send verification code (HTTP {status}).\n\n\
              Server response: {body}\n\n\
              If you believe this is an error, visit {}/support for help.",
-            std::env::var("DEVENV_TOOLS_WEB_URL")
-                .unwrap_or_else(|_| "https://devenv.tools".to_string())
+            std::env::var("PORT_ZERO_WEB_URL")
+                .unwrap_or_else(|_| "https://portzero.cloud".to_string())
         );
     }
 
     let login_resp: LoginResponse = resp.json().await.with_context(|| {
         "Received an unexpected response from the server.\n\n\
          This may indicate an API version mismatch. Try updating devenv:\n\
-         curl -fsSL https://devenv.tools/install.sh | sh"
+         curl -fsSL https://portzero.cloud/install.sh | sh"
     })?;
 
     println!("{}", login_resp.message);
@@ -467,7 +467,7 @@ async fn login_interactive(email: Option<String>) -> Result<()> {
         anyhow::bail!(
             "Verification failed (HTTP {status}).\n\n\
              Server response: {body}\n\n\
-             The code may have expired. Run `devenv tunnel login --interactive` to try again."
+             The code may have expired. Run `port zero login --interactive` to try again."
         );
     }
 
@@ -538,7 +538,7 @@ pub async fn whoami() -> Result<()> {
         if status.as_u16() == 401 {
             anyhow::bail!(
                 "Authentication expired or invalid.\n\n\
-                 Run `devenv tunnel logout` then `devenv tunnel login` to re-authenticate."
+                 Run `port zero logout` then `port zero login` to re-authenticate."
             );
         }
         let body = resp.text().await.unwrap_or_default();
@@ -571,8 +571,8 @@ mod tests {
     #[test]
     fn dashboard_url_tracks_the_app_domain_for_the_production_api() {
         assert_eq!(
-            dashboard_url_from_api_url("https://app.devenv.tools/api"),
-            "https://app.devenv.tools",
+            dashboard_url_from_api_url("https://app.portzero.cloud/api"),
+            "https://app.portzero.cloud",
         );
     }
 

@@ -2,14 +2,14 @@ default:
     @just --list
 
 # Install the daemon and CLI from source.
-# Installs to ~/.cargo/bin, then copies to the active `devenv-tunnel` location
+# Installs to ~/.cargo/bin, then copies to the active `port-zero` location
 # on PATH (e.g. ~/.local/bin) so a restart picks up the new binary immediately.
 install:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo install --path client/crates/cli
-    active="$(command -v devenv-tunnel 2>/dev/null || true)"
-    cargo_bin="$HOME/.cargo/bin/devenv-tunnel"
+    active="$(command -v port-zero 2>/dev/null || true)"
+    cargo_bin="$HOME/.cargo/bin/port-zero"
     if [ -n "$active" ] && [ "$active" != "$cargo_bin" ]; then
         echo "Copying $cargo_bin -> $active"
         rm -f "$active" && cp "$cargo_bin" "$active"
@@ -24,4 +24,4 @@ test:
 # Requires root/CAP_NET_ADMIN to create the TUN device, so it runs under sudo.
 # Without root the test skips cleanly; use `just test` for everyday work.
 e2e:
-    sudo -E cargo test -p devenv-tunnel-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+    sudo -E cargo test -p port-zero-daemon --test overlay_e2e real_tun_overlay -- --nocapture

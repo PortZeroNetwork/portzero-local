@@ -37,10 +37,10 @@ manifest_path.write_text(manifest)
 
 lock = lock_path.read_text()
 package_re = re.compile(
-    r'(\[\[package\]\]\nname = "devenv-tunnel-cli"\nversion = ")([^"]+)(")'
+    r'(\[\[package\]\]\nname = "port-zero-cli"\nversion = ")([^"]+)(")'
 )
 lock, lock_count = package_re.subn(rf"\g<1>{version}\3", lock, count=1)
 if lock_count != 1:
-    raise SystemExit("missing devenv-tunnel-cli package in Cargo.lock")
+    raise SystemExit("missing port-zero-cli package in Cargo.lock")
 lock_path.write_text(lock)
 PY

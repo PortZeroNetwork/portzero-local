@@ -1,4 +1,4 @@
-//! Shared protocol types for the devenv-tools tunnel.
+//! Shared protocol types for the port-zero tunnel.
 //!
 //! These types define the wire format between the tunnel client (running on the
 //! developer's machine) and the edge server (running in the cloud).
@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn roundtrip_register_route() {
         let msg = ClientMessage::RegisterRoute {
-            domain: "myapp.tunnel.devenv.tools".into(),
+            domain: "myapp.tunnel.portzero.cloud".into(),
             local_port: 3000,
             protocol: RouteProtocol::Http,
         };
@@ -160,7 +160,7 @@ mod tests {
                 local_port,
                 protocol,
             } => {
-                assert_eq!(domain, "myapp.tunnel.devenv.tools");
+                assert_eq!(domain, "myapp.tunnel.portzero.cloud");
                 assert_eq!(local_port, 3000);
                 assert_eq!(protocol, RouteProtocol::Http);
             }
@@ -171,13 +171,13 @@ mod tests {
     #[test]
     fn roundtrip_unregister_route() {
         let msg = ClientMessage::UnregisterRoute {
-            domain: "myapp.tunnel.devenv.tools".into(),
+            domain: "myapp.tunnel.portzero.cloud".into(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ClientMessage = serde_json::from_str(&json).unwrap();
         match decoded {
             ClientMessage::UnregisterRoute { domain } => {
-                assert_eq!(domain, "myapp.tunnel.devenv.tools");
+                assert_eq!(domain, "myapp.tunnel.portzero.cloud");
             }
             _ => panic!("wrong variant"),
         }
@@ -251,10 +251,10 @@ mod tests {
     #[test]
     fn roundtrip_route_ack() {
         let msg = ServerMessage::RouteAck {
-            domain: "myapp.tunnel.devenv.tools".into(),
+            domain: "myapp.tunnel.portzero.cloud".into(),
             success: true,
             error: None,
-            url: Some("https://myapp.tunnel.devenv.tools".into()),
+            url: Some("https://myapp.tunnel.portzero.cloud".into()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
@@ -265,10 +265,10 @@ mod tests {
                 error,
                 url,
             } => {
-                assert_eq!(domain, "myapp.tunnel.devenv.tools");
+                assert_eq!(domain, "myapp.tunnel.portzero.cloud");
                 assert!(success);
                 assert!(error.is_none());
-                assert_eq!(url.unwrap(), "https://myapp.tunnel.devenv.tools");
+                assert_eq!(url.unwrap(), "https://myapp.tunnel.portzero.cloud");
             }
             _ => panic!("wrong variant"),
         }
@@ -280,7 +280,7 @@ mod tests {
             request_id: 42,
             method: "GET".into(),
             path: "/api/health".into(),
-            host: "api.myapp.tunnel.devenv.tools".into(),
+            host: "api.myapp.tunnel.portzero.cloud".into(),
             headers: vec![("Accept".into(), "application/json".into())],
             body: vec![],
         };
@@ -323,14 +323,14 @@ mod tests {
     #[test]
     fn roundtrip_route_expired() {
         let msg = ServerMessage::RouteExpired {
-            domain: "myapp.tunnel.devenv.tools".into(),
+            domain: "myapp.tunnel.portzero.cloud".into(),
             reason: "idle timeout".into(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
         match decoded {
             ServerMessage::RouteExpired { domain, reason } => {
-                assert_eq!(domain, "myapp.tunnel.devenv.tools");
+                assert_eq!(domain, "myapp.tunnel.portzero.cloud");
                 assert_eq!(reason, "idle timeout");
             }
             _ => panic!("wrong variant"),

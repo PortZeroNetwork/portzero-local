@@ -1,11 +1,11 @@
-# devenv-tunnel documentation
+# port-zero documentation
 
 These documents describe how the local virtual overlay network works and how to
 operate it.
 
 - [Architecture overview](architecture.md) — the overlay data path: discovery →
   VIP allocation → scoped DNS → TUN → smoltcp user-space proxy.
-- [`DEVENV_TUNNEL` semantics](devenv-tunnel.md) — the full-domain rule, how the
+- [`PORT_ZERO` semantics](port-zero.md) — the full-domain rule, how the
   suffix selects cloud vs. local, and the `{branch}` / `{worktree}` templates.
 - [Platform privileges](privileges.md) — what needs root / `CAP_NET_ADMIN`, and
   what degrades gracefully without it.

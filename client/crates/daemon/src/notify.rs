@@ -8,7 +8,7 @@
 //!
 //! 1. **Detection** — pure logic over the already-scanned overlay services.
 //! 2. **Persisted state** — `issues.json` in the daemon state dir, following the
-//!    same pattern as `cloud_state.json`, so `devenv tunnel status` can surface
+//!    same pattern as `cloud_state.json`, so `port zero status` can surface
 //!    problems even though it runs in a separate process from the daemon.
 //! 3. **Notifications** — shell-out to the platform's native mechanism
 //!    (`osascript` / `notify-send` / PowerShell toast). No GUI crates. Always
@@ -34,8 +34,8 @@ pub enum Issue {
         claimants: Vec<String>,
     },
     /// A process is listening on a "common" dev port (or on a port a known
-    /// overlay service uses) but is *not* going through devenv-tunnel (no
-    /// `DEVENV_TUNNEL` set). This is the classic "I'm still hitting localhost
+    /// overlay service uses) but is *not* going through port-zero (no
+    /// `PORT_ZERO` set). This is the classic "I'm still hitting localhost
     /// directly" footgun; we surface migration guidance.
     LegacyListener {
         /// The TCP port the legacy process is listening on.
@@ -68,7 +68,7 @@ impl Issue {
                 claimants.join(", ")
             ),
             Issue::LegacyListener { port, pid, context } => format!(
-                "Port {} is served directly (not via devenv-tunnel) by pid {} {}",
+                "Port {} is served directly (not via port-zero) by pid {} {}",
                 port, pid, context
             ),
             Issue::DockerPortConflict { port, container } => format!(
@@ -82,19 +82,19 @@ impl Issue {
     pub fn fix_hint(&self) -> String {
         match self {
             Issue::DuplicateName { name, .. } => format!(
-                "Give each worktree a unique DEVENV_TUNNEL name — e.g. use a template \
+                "Give each worktree a unique PORT_ZERO name — e.g. use a template \
                  like \"{name}-{{branch}}.devenv.local\" or \"{name}-{{worktree}}.devenv.local\" \
                  so the resolved name differs per checkout."
             ),
             Issue::LegacyListener { port, .. } => format!(
-                "Set DEVENV_TUNNEL on this process (e.g. \
-                 DEVENV_TUNNEL=my-svc.devenv.local for the local overlay, or \
-                 my-svc.<user>.tunnel.devenv.tools for a cloud tunnel) and reach it by name \
+                "Set PORT_ZERO on this process (e.g. \
+                 PORT_ZERO=my-svc.devenv.local for the local overlay, or \
+                 my-svc.<user>.tunnel.portzero.cloud for a cloud tunnel) and reach it by name \
                  instead of localhost:{port}. Until then this service bypasses the tunnel."
             ),
             Issue::DockerPortConflict { port, .. } => format!(
                 "Free host port {port} (stop whatever is bound to it) or remap the container's \
-                 published port. To route the container through the tunnel, set DEVENV_TUNNEL in \
+                 published port. To route the container through the tunnel, set PORT_ZERO in \
                  its environment instead of publishing a fixed host port."
             ),
         }
@@ -292,7 +292,7 @@ pub fn build_notify_command(title: &str, body: &str) -> NotifyCommand {
             program: "notify-send".to_string(),
             args: vec![
                 "--urgency=critical".to_string(),
-                "--app-name=devenv-tunnel".to_string(),
+                "--app-name=port-zero".to_string(),
                 title.to_string(),
                 body.to_string(),
             ],
@@ -463,7 +463,7 @@ mod tests {
         let legacy = &state.issues[0];
         assert!(legacy.summary().contains("5432"));
         assert!(legacy.summary().contains("4321"));
-        assert!(legacy.fix_hint().contains("DEVENV_TUNNEL"));
+        assert!(legacy.fix_hint().contains("PORT_ZERO"));
 
         let docker = &state.issues[1];
         assert!(docker.summary().contains("web-1"));

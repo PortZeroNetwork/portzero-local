@@ -1,16 +1,16 @@
-//! Service discovery: scan processes and Docker containers for DEVENV_TUNNEL.
+//! Service discovery: scan processes and Docker containers for PORT_ZERO.
 //!
-//! The value of DEVENV_TUNNEL must be a full domain name (after template
+//! The value of PORT_ZERO must be a full domain name (after template
 //! substitution). No implicit suffixes are added.
 //!
 //! - If it ends with `.devenv.local` (or `.local`) → local virtual overlay.
-//! - Otherwise it must be a valid tunnel domain ending in `.tunnel.devenv.tools`
+//! - Otherwise it must be a valid tunnel domain ending in `.tunnel.portzero.cloud`
 //!   (or the configured base, supporting namespacing like `api.alice.tunnel...`).
 //!
 //! Examples (full names required):
-//!   DEVENV_TUNNEL=my-api.alice.tunnel.devenv.tools
-//!   DEVENV_TUNNEL=my-db-{branch}.devenv.local
-//!   DEVENV_TUNNEL=web-{branch}.tunnel.devenv.tools
+//!   PORT_ZERO=my-api.alice.tunnel.portzero.cloud
+//!   PORT_ZERO=my-db-{branch}.devenv.local
+//!   PORT_ZERO=web-{branch}.tunnel.portzero.cloud
 //!
 //! Cross-platform support:
 //! - Linux: full (reads /proc/<pid>/environ and /proc/<pid>/fd for inode-based port scoping)
@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use devenv_tunnel_domain::{split_tunnel_port, validate_tunnel_domain, DomainContext};
+use port_zero_domain::{split_tunnel_port, validate_tunnel_domain, DomainContext};
 use sysinfo::System;
 
 use crate::protocol_detect;
@@ -29,25 +29,25 @@ use crate::protocol_detect;
 ///
 /// The value (after substitution) must be a full domain name:
 /// - `*.devenv.local` → local overlay
-/// - `*.(username.)tunnel.devenv.tools` (or configured base) → cloud tunnel
+/// - `*.(username.)tunnel.portzero.cloud` (or configured base) → cloud tunnel
 ///
 /// No implicit suffix is ever appended.
-const ENV_VAR_NAME: &str = "DEVENV_TUNNEL";
+const ENV_VAR_NAME: &str = "PORT_ZERO";
 
 /// Selects which HTTP port to forward. Defaults to CHOOSE_LOWEST if unset.
-const ENV_HTTP_PORT_VAR: &str = "DEVENV_TUNNEL_HTTP_PORT";
+const ENV_HTTP_PORT_VAR: &str = "PORT_ZERO_HTTP_PORT";
 
 /// Additional raw port mappings: `local:tunnel[;local:tunnel...]`
-const ENV_PORTS_VAR: &str = "DEVENV_TUNNEL_PORTS";
+const ENV_PORTS_VAR: &str = "PORT_ZERO_PORTS";
 
 /// Opt-out for active protocol probing (task-17). When set on the target
 /// process (or on the daemon's own env) probing is skipped entirely.
-const ENV_NO_PROBE_VAR: &str = "DEVENV_TUNNEL_NO_PROBE";
+const ENV_NO_PROBE_VAR: &str = "PORT_ZERO_NO_PROBE";
 
 /// Returns true if the (full) resolved name indicates the local virtual overlay
 /// (must end with .devenv.local or .local).
 ///
-/// The value in DEVENV_TUNNEL must be the complete name; no suffix is added.
+/// The value in PORT_ZERO must be the complete name; no suffix is added.
 pub fn is_local_overlay_domain(name: &str) -> bool {
     let n = name.trim().to_ascii_lowercase();
     n.ends_with(".devenv.local") || n == "devenv.local" || n.ends_with(".local")
@@ -72,11 +72,11 @@ pub fn extract_local_label(name: &str) -> String {
 /// A discovered service with its domain, port, and origin.
 #[derive(Debug, Clone)]
 pub struct DiscoveredService {
-    /// Resolved full DEVENV_TUNNEL value (must be a complete domain name).
+    /// Resolved full PORT_ZERO value (must be a complete domain name).
     pub domain: String,
     /// Selected HTTP port (0 if not determinable).
     pub port: u16,
-    /// Additional port mappings from DEVENV_TUNNEL_PORTS.
+    /// Additional port mappings from PORT_ZERO_PORTS.
     pub extra_ports: Vec<PortMapping>,
     /// Process ID that owns the service.
     pub pid: u32,
@@ -153,7 +153,7 @@ struct ListeningPort {
     bind: BindAddr,
 }
 
-/// How the HTTP port is chosen when DEVENV_TUNNEL_HTTP_PORT is set.
+/// How the HTTP port is chosen when PORT_ZERO_HTTP_PORT is set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum HttpPortSelection {
     /// Use this exact port number.
@@ -180,7 +180,7 @@ enum SelectedPort {
 // Unified scanner
 // ---------------------------------------------------------------------------
 
-/// Scan all processes and Docker containers for DEVENV_TUNNEL.
+/// Scan all processes and Docker containers for PORT_ZERO.
 pub async fn scan_all(account_id: Option<&str>, username: Option<&str>) -> Vec<DiscoveredService> {
     let mut services = Vec::new();
     // `scan_processes` does a full sysinfo refresh and shells out (`ps`/`lsof`)
@@ -232,7 +232,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
             tracing::debug!(
                 pid = pid_u32,
                 domain,
-                "DEVENV_TUNNEL value ends in .local — routing to overlay path"
+                "PORT_ZERO value ends in .local — routing to overlay path"
             );
             continue;
         }
@@ -243,8 +243,8 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                 pid = pid_u32,
                 domain,
                 error = %e,
-                "DEVENV_TUNNEL value is not a valid full tunnel domain (and not .local). \
-                 Provide the full name including suffix, e.g. my-api.alice.tunnel.devenv.tools"
+                "PORT_ZERO value is not a valid full tunnel domain (and not .local). \
+                 Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
             );
             continue;
         }
@@ -265,17 +265,17 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                 tracing::warn!(
                     pid = pid_u32,
                     requested_port = requested,
-                    "DEVENV_TUNNEL_HTTP_PORT specifies a port not owned by this process; ignoring"
+                    "PORT_ZERO_HTTP_PORT specifies a port not owned by this process; ignoring"
                 );
                 continue;
             }
             // No listening ports on this process. This is expected when a
-            // parent shell or launcher sets DEVENV_TUNNEL so that a child
+            // parent shell or launcher sets PORT_ZERO so that a child
             // process inherits it — the parent itself has nothing to forward.
             SelectedPort::NoneListening => {
                 tracing::debug!(
                     pid = pid_u32,
-                    "skipping process with DEVENV_TUNNEL but no listening ports \
+                    "skipping process with PORT_ZERO but no listening ports \
                      (likely a parent process passing the variable to its child)"
                 );
                 continue;
@@ -293,7 +293,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                     tracing::warn!(
                         pid = pid_u32,
                         local_port = m.local_port,
-                        "DEVENV_TUNNEL_PORTS entry references a port not owned by this process; skipping"
+                        "PORT_ZERO_PORTS entry references a port not owned by this process; skipping"
                     );
                     false
                 }
@@ -312,7 +312,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
     services
 }
 
-/// Emit a warning when a `DEVENV_TUNNEL` value had a trailing `:something` that
+/// Emit a warning when a `PORT_ZERO` value had a trailing `:something` that
 /// LOOKED like a canonical port but was rejected by [`split_tunnel_port`]
 /// (out of range or zero — i.e. an all-digit segment that is not `1..=65535`).
 ///
@@ -330,14 +330,14 @@ fn warn_if_port_like_rejected(raw: &str, canonical: Option<u16>, pid: u32) {
                 pid,
                 value = raw,
                 rejected_port = tail,
-                "DEVENV_TUNNEL has a trailing ':<port>' that is not a valid port \
+                "PORT_ZERO has a trailing ':<port>' that is not a valid port \
                  (must be 1..=65535); ignoring the port and using the whole value as the domain"
             );
         }
     }
 }
 
-/// Resolve template variables in a DEVENV_TUNNEL value.
+/// Resolve template variables in a PORT_ZERO value.
 fn resolve_tunnel_template(
     raw: &str,
     project_dir: Option<&Path>,
@@ -356,7 +356,7 @@ fn resolve_tunnel_template(
 // Port selection logic
 // ---------------------------------------------------------------------------
 
-/// Parse DEVENV_TUNNEL_HTTP_PORT into a selection strategy.
+/// Parse PORT_ZERO_HTTP_PORT into a selection strategy.
 fn parse_http_port_selection(val: &str) -> HttpPortSelection {
     match val.trim() {
         "" | "CHOOSE_LOWEST" => HttpPortSelection::ChooseLowest,
@@ -368,7 +368,7 @@ fn parse_http_port_selection(val: &str) -> HttpPortSelection {
     }
 }
 
-/// Parse DEVENV_TUNNEL_PORTS into a list of port mappings.
+/// Parse PORT_ZERO_PORTS into a list of port mappings.
 ///
 /// Format: `local:tunnel[;local:tunnel...]`  e.g. `9222:9222;9300:9300`
 fn parse_extra_ports(val: &str) -> Vec<PortMapping> {
@@ -601,8 +601,8 @@ fn parse_lsof_line(line: &str) -> Option<ListeningPort> {
 /// A TCP listener observed system-wide, attributed to its owning process.
 ///
 /// Used by the legacy-port monitor to find processes that serve a port directly
-/// (bypassing devenv-tunnel). Carries enough context (pid, cwd, whether
-/// `DEVENV_TUNNEL` is set) for the monitor's *pure* comparison logic to decide
+/// (bypassing port-zero). Carries enough context (pid, cwd, whether
+/// `PORT_ZERO` is set) for the monitor's *pure* comparison logic to decide
 /// whether the listener is "legacy".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemListener {
@@ -612,13 +612,13 @@ pub struct SystemListener {
     pub pid: u32,
     /// Working directory of the owning process, if discoverable.
     pub cwd: Option<PathBuf>,
-    /// Whether the owning process has `DEVENV_TUNNEL` set (i.e. it is already
+    /// Whether the owning process has `PORT_ZERO` set (i.e. it is already
     /// managed by us and must NOT be flagged as legacy).
-    pub has_devenv_tunnel: bool,
+    pub has_port_zero: bool,
 }
 
 /// Enumerate every process's listening TCP ports system-wide, attributed to the
-/// owning process (pid, cwd, whether `DEVENV_TUNNEL` is set).
+/// owning process (pid, cwd, whether `PORT_ZERO` is set).
 ///
 /// This is the single public entry point the legacy-port monitor uses; it
 /// reuses the existing per-OS [`discover_process_ports`] enumeration rather than
@@ -642,7 +642,7 @@ pub fn enumerate_system_listeners() -> Vec<SystemListener> {
         }
 
         let cwd = process.cwd().map(|p| p.to_path_buf());
-        let has_devenv_tunnel = scan_process_env(pid_u32, ENV_VAR_NAME)
+        let has_port_zero = scan_process_env(pid_u32, ENV_VAR_NAME)
             .map(|v| !v.is_empty())
             .unwrap_or(false);
 
@@ -651,7 +651,7 @@ pub fn enumerate_system_listeners() -> Vec<SystemListener> {
                 port: lp.port,
                 pid: pid_u32,
                 cwd: cwd.clone(),
-                has_devenv_tunnel,
+                has_port_zero,
             });
         }
     }
@@ -818,7 +818,7 @@ fn inspect_container(
 
     let raw = env_vars
         .iter()
-        .find_map(|e| e.strip_prefix("DEVENV_TUNNEL="))
+        .find_map(|e| e.strip_prefix("PORT_ZERO="))
         .map(|v| v.to_string());
 
     let raw = match raw {
@@ -827,7 +827,7 @@ fn inspect_container(
     };
 
     // Discover a host-side project directory for template resolution (branch, worktree, etc.)
-    // This makes DEVENV_TUNNEL=my-service-{branch} work for `docker run` (via bind mounts)
+    // This makes PORT_ZERO=my-service-{branch} work for `docker run` (via bind mounts)
     // and `docker compose` (via labels + mounts).
     let project_dir = find_host_project_dir_for_container(mounts_json, labels_json);
 
@@ -851,21 +851,21 @@ fn inspect_container(
             container = name,
             domain,
             error = %e,
-            "DEVENV_TUNNEL value on container is not a valid full tunnel domain (and not .local). \
-             Use a full name like web-mybranch.tunnel.devenv.tools"
+            "PORT_ZERO value on container is not a valid full tunnel domain (and not .local). \
+             Use a full name like web-mybranch.tunnel.portzero.cloud"
         );
         return Ok(None);
     }
 
     let http_selection = env_vars
         .iter()
-        .find_map(|e| e.strip_prefix("DEVENV_TUNNEL_HTTP_PORT="))
+        .find_map(|e| e.strip_prefix("PORT_ZERO_HTTP_PORT="))
         .map(parse_http_port_selection)
         .unwrap_or(HttpPortSelection::ChooseLowest);
 
     let extra_ports = env_vars
         .iter()
-        .find_map(|e| e.strip_prefix("DEVENV_TUNNEL_PORTS="))
+        .find_map(|e| e.strip_prefix("PORT_ZERO_PORTS="))
         .map(parse_extra_ports)
         .unwrap_or_default();
 
@@ -920,9 +920,9 @@ fn parse_docker_ports(ports_json: &str, selection: &HttpPortSelection) -> u16 {
 
 /// Try to recover a host-side git project directory from a container's mounts
 /// and labels. This enables correct `{branch}` / `{worktree}` resolution for
-/// `DEVENV_TUNNEL` when using plain `docker run -v ...` or `docker compose`.
+/// `PORT_ZERO` when using plain `docker run -v ...` or `docker compose`.
 fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> Option<PathBuf> {
-    use devenv_tunnel_domain::find_git_project_dir;
+    use port_zero_domain::find_git_project_dir;
 
     let mut candidates: Vec<PathBuf> = Vec::new();
 
@@ -960,13 +960,13 @@ fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> 
 }
 
 // ---------------------------------------------------------------------------
-// Overlay network discovery (DEVENV_TUNNEL=*.devenv.local + port 0 support)
+// Overlay network discovery (PORT_ZERO=*.devenv.local + port 0 support)
 // ---------------------------------------------------------------------------
 
 /// A service discovered for the local virtual overlay network.
 #[derive(Debug, Clone)]
 pub struct DiscoveredNetworkService {
-    /// The label extracted from the DEVENV_TUNNEL value (e.g. "my-db"
+    /// The label extracted from the PORT_ZERO value (e.g. "my-db"
     /// from "my-db.devenv.local").
     pub name: String,
     /// The actual host address we must proxy to (usually 127.0.0.1:random).
@@ -982,13 +982,13 @@ pub struct DiscoveredNetworkService {
 
 /// Scan for services that should participate in the virtual overlay.
 ///
-/// Only `DEVENV_TUNNEL` values whose resolved name ends with `.devenv.local`
+/// Only `PORT_ZERO` values whose resolved name ends with `.devenv.local`
 /// (or `.local`) are accepted. The full name must be provided (no implicit
 /// suffix).
 ///
 /// Supports templating, e.g.:
-///   DEVENV_TUNNEL=my-db-{branch}.devenv.local
-///   DEVENV_TUNNEL={service}-{worktree}.devenv.local
+///   PORT_ZERO=my-db-{branch}.devenv.local
+///   PORT_ZERO={service}-{worktree}.devenv.local
 ///
 /// The label (left part) gets a stable virtual IP under .devenv.local.
 /// The daemon should surface loud errors if the same name is claimed by
@@ -1027,7 +1027,7 @@ async fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
         let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
 
         // For the overlay we require an explicit .local suffix.
-        // Bare names under DEVENV_TUNNEL go to the tunnel path.
+        // Bare names under PORT_ZERO go to the tunnel path.
         if !is_local_overlay_domain(&resolved) {
             continue;
         }
@@ -1161,11 +1161,11 @@ async fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkS
             Err(_) => continue,
         };
 
-        // Only DEVENV_TUNNEL is used. Overlay participation requires the value
+        // Only PORT_ZERO is used. Overlay participation requires the value
         // to end with .devenv.local (pure suffix-based detection).
         let raw_name = envs
             .iter()
-            .find_map(|e| e.strip_prefix("DEVENV_TUNNEL="))
+            .find_map(|e| e.strip_prefix("PORT_ZERO="))
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty());
 

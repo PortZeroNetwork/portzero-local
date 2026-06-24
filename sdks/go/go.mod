@@ -1,3 +1,3 @@
-module github.com/devenv-tools/devenv-tunnel/sdks/go
+module github.com/port-zero/port-zero/sdks/go
 
 go 1.21

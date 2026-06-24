@@ -1,4 +1,4 @@
-//! devenv-tunnel CLI: manage the local tunnel daemon and cloud integration.
+//! port-zero CLI: manage the local tunnel daemon and cloud integration.
 
 use clap::{Parser, Subcommand};
 
@@ -12,9 +12,9 @@ mod update;
 
 #[derive(Parser)]
 #[command(
-    name = "devenv-tunnel",
+    name = "port-zero",
     version,
-    about = "Expose local services via devenv.tools tunnels"
+    about = "Expose local services via portzero.cloud tunnels"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -36,7 +36,7 @@ enum Command {
     /// Show daemon and tunnel status.
     Status,
 
-    /// Log in to devenv.tools (opens browser by default).
+    /// Log in to portzero.cloud (opens browser by default).
     Login {
         /// Use interactive terminal prompts instead of browser login.
         /// Useful on headless servers without a browser.

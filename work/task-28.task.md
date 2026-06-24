@@ -43,7 +43,7 @@ Bring Windows from "compiles" to "works", mirroring the macOS effort:
 Done when:
 
 - [ ] `wintun`-backed overlay carries traffic for `<svc>.devenv.local`
-- [ ] Windows process/port + `DEVENV_TUNNEL` discovery implemented
+- [ ] Windows process/port + `PORT_ZERO` discovery implemented
 - [ ] NRPT scoped DNS verified + reversible
 - [ ] Autostart runs elevated and brings the overlay up
 - [ ] Windows added to the CI matrix

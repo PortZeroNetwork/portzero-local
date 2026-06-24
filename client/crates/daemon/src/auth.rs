@@ -12,7 +12,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 
 /// Default base URL for cloud API calls.
-const DEFAULT_API_URL: &str = "https://app.devenv.tools/api";
+const DEFAULT_API_URL: &str = "https://app.portzero.cloud/api";
 
 /// Stored authentication configuration (written by the CLI after login).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,7 +123,7 @@ impl AuthConfig {
             .ok_or_else(|| anyhow::anyhow!("No token to refresh"))?;
 
         let api_url =
-            std::env::var("DEVENV_TOOLS_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+            std::env::var("PORT_ZERO_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
 
         let client = reqwest::Client::new();
         let resp = client
@@ -281,6 +281,6 @@ mod tests {
 
     #[test]
     fn test_default_api_url_matches_the_dashboard_api() {
-        assert_eq!(DEFAULT_API_URL, "https://app.devenv.tools/api");
+        assert_eq!(DEFAULT_API_URL, "https://app.portzero.cloud/api");
     }
 }

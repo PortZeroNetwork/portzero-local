@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn validate_send_register_route_only_when_ready() {
         let reg = ClientMessage::RegisterRoute {
-            domain: "test.devenv.tools".into(),
+            domain: "test.portzero.cloud".into(),
             local_port: 3000,
             protocol: RouteProtocol::Http,
         };
@@ -297,7 +297,7 @@ mod tests {
             request_id: 1,
             method: "GET".into(),
             path: "/".into(),
-            host: "test.devenv.tools".into(),
+            host: "test.portzero.cloud".into(),
             headers: vec![],
             body: vec![],
         };

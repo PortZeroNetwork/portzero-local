@@ -13,13 +13,13 @@ updated_at: 2026-06-23T14:55:21.364176Z
 
 Observed during the [[[task-22](../work/task-22.task.md)]] / [[[task-31](../work/task-31.task.md)]] macOS bring-up runs: a daemon
 started in the foreground as root does **not** stop on Ctrl-C — it has to be
-killed with `sudo pkill -f devenv-tunnel`. This hurts the dev loop and matters
+killed with `sudo pkill -f port-zero`. This hurts the dev loop and matters
 for the [[[task-23](../work/task-23.task.md)]] LaunchDaemon story (clean stop/teardown).
 
 Repro:
 
 ```
-sudo -E RUST_LOG=info ./target/debug/devenv-tunnel start --foreground
+sudo -E RUST_LOG=info ./target/debug/port-zero start --foreground
 # ^C  -> no effect; process keeps logging / has to be pkill'd
 ```
 

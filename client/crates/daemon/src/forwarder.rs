@@ -5,7 +5,7 @@
 //! collects the response to send back.
 
 use anyhow::{Context, Result};
-use devenv_tunnel_proto::ClientMessage;
+use port_zero_proto::ClientMessage;
 use tracing::{debug, warn};
 
 /// Forward an HTTP request from the edge to a local service.
@@ -112,7 +112,7 @@ mod tests {
             1,
             "GET",
             "/health",
-            "api.test.devenv.tools",
+            "api.test.portzero.cloud",
             &[],
             &[],
             19999, // unlikely to be in use
@@ -143,7 +143,7 @@ mod tests {
             42,
             "POST",
             "/api/data",
-            "api.test.devenv.tools",
+            "api.test.portzero.cloud",
             &[("Content-Type".to_string(), "application/json".to_string())],
             b"{}",
             19998,

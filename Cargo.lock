@@ -335,14 +335,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 
 [[package]]
-name = "devenv-tunnel-cli"
+name = "port-zero-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "devenv-tunnel-daemon",
- "devenv-tunnel-domain",
- "devenv-tunnel-proto",
+ "port-zero-daemon",
+ "port-zero-domain",
+ "port-zero-proto",
  "dirs",
  "hex",
  "rand 0.8.6",
@@ -355,20 +355,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "devenv-tunnel-client"
+name = "port-zero-client"
 version = "0.1.0"
 
 [[package]]
-name = "devenv-tunnel-daemon"
+name = "port-zero-daemon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
  "bytes",
  "chrono",
- "devenv-tunnel-client",
- "devenv-tunnel-domain",
- "devenv-tunnel-proto",
+ "port-zero-client",
+ "port-zero-domain",
+ "port-zero-proto",
  "dirs",
  "futures-util",
  "hickory-proto",
@@ -390,14 +390,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "devenv-tunnel-domain"
+name = "port-zero-domain"
 version = "0.1.0"
 dependencies = [
  "hostname",
 ]
 
 [[package]]
-name = "devenv-tunnel-proto"
+name = "port-zero-proto"
 version = "0.1.0"
 dependencies = [
  "serde",

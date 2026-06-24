@@ -4,11 +4,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
-use devenv_tunnel_daemon::discovery_loop::{
+use port_zero_daemon::discovery_loop::{
     read_cloud_connected, read_cloud_error, read_daemon_pid, DaemonConfig,
 };
-use devenv_tunnel_daemon::notify::read_issues;
-use devenv_tunnel_daemon::route_table::{OverlayState, RouteTable};
+use port_zero_daemon::notify::read_issues;
+use port_zero_daemon::route_table::{OverlayState, RouteTable};
 
 use crate::auth::AuthConfig;
 
@@ -38,8 +38,8 @@ pub fn start() -> Result<()> {
     // but since the skeleton uses `run_discovery_loop` directly, we spawn the
     // current binary with an internal flag.
     let exe = std::env::current_exe().with_context(|| {
-        "Could not determine the path to the devenv-tunnel binary.\n\n\
-         Try running with an absolute path, e.g. /usr/local/bin/devenv-tunnel start"
+        "Could not determine the path to the port-zero binary.\n\n\
+         Try running with an absolute path, e.g. /usr/local/bin/port-zero start"
     })?;
 
     let log_path = config.log_path();
@@ -70,7 +70,7 @@ pub fn start() -> Result<()> {
         .with_context(|| {
             format!(
                 "Failed to spawn daemon process from: {}\n\n\
-                 Is the devenv-tunnel binary executable?",
+                 Is the port-zero binary executable?",
                 exe.display()
             )
         })?;
@@ -91,7 +91,7 @@ pub fn start() -> Result<()> {
         let auth_status = if AuthConfig::load().is_ok() {
             "authenticated (tunnel will connect to cloud)"
         } else {
-            "not authenticated (local-only mode, run `devenv tunnel login` for cloud tunnels)"
+            "not authenticated (local-only mode, run `port zero login` for cloud tunnels)"
         };
 
         println!("Daemon started (PID {child_pid}).");
@@ -111,13 +111,13 @@ pub fn start() -> Result<()> {
 /// Run the daemon in the foreground (called internally by `start --foreground`).
 pub async fn start_foreground() -> Result<()> {
     let config = DaemonConfig::default();
-    devenv_tunnel_daemon::discovery_loop::run_discovery_loop(&config).await
+    port_zero_daemon::discovery_loop::run_discovery_loop(&config).await
 }
 
 /// Stop the daemon.
 pub fn stop() -> Result<()> {
     let config = DaemonConfig::default();
-    devenv_tunnel_daemon::discovery_loop::stop_daemon(&config)?;
+    port_zero_daemon::discovery_loop::stop_daemon(&config)?;
     println!("Daemon stopped.");
     Ok(())
 }
@@ -132,7 +132,7 @@ pub async fn status() -> Result<()> {
         }
         None => {
             println!("Daemon: stopped");
-            println!("\nRun `devenv tunnel start` to begin discovering services.");
+            println!("\nRun `port zero start` to begin discovering services.");
             return Ok(());
         }
     }
@@ -149,7 +149,7 @@ pub async fn status() -> Result<()> {
                     println!("Auth:   logged in as {}", auth.email);
                 }
                 TokenStatus::Expired => {
-                    println!("Auth:   session expired — run `devenv tunnel login`");
+                    println!("Auth:   session expired — run `port zero login`");
                     println!("Tunnel: routes will return 502 until you re-authenticate");
                     print_routes(&config);
                     return Ok(());
@@ -161,8 +161,8 @@ pub async fn status() -> Result<()> {
                     );
                 }
             }
-            let edge_display = std::env::var("DEVENV_TOOLS_EDGE_URL")
-                .unwrap_or_else(|_| "wss://edge.devenv.tools/tunnel".to_string());
+            let edge_display = std::env::var("PORT_ZERO_EDGE_URL")
+                .unwrap_or_else(|_| "wss://edge.portzero.cloud/tunnel".to_string());
             let cloud_err = read_cloud_error(&config);
             let is_auth_err = cloud_err
                 .as_deref()
@@ -172,7 +172,7 @@ pub async fn status() -> Result<()> {
                 Some(true) => println!("Tunnel: connected to {edge_display}"),
                 Some(false) if is_auth_err => {
                     println!(
-                        "Tunnel: disconnected (auth token rejected — run `devenv tunnel login`)"
+                        "Tunnel: disconnected (auth token rejected — run `port zero login`)"
                     );
                 }
                 Some(false) => {
@@ -187,7 +187,7 @@ pub async fn status() -> Result<()> {
         }
         Err(_) => {
             println!("Auth:   not logged in");
-            println!("Tunnel: disabled (run `devenv tunnel login` for cloud tunnels)");
+            println!("Tunnel: disabled (run `port zero login` for cloud tunnels)");
         }
     }
 
@@ -223,7 +223,7 @@ fn print_routes(config: &DaemonConfig) {
 
     if table.is_empty() && overlay.is_empty() {
         println!("\nNo routes discovered yet.");
-        println!("Set DEVENV_TUNNEL on a process or Docker container to expose it.");
+        println!("Set PORT_ZERO on a process or Docker container to expose it.");
         return;
     }
 
@@ -317,8 +317,8 @@ fn print_routes(config: &DaemonConfig) {
         }
         println!();
         println!(
-            "  Fix: stop duplicate containers or give each a unique DEVENV_TUNNEL value,\n\
-             e.g. DEVENV_TUNNEL=web-{{branch}}.devenv.local"
+            "  Fix: stop duplicate containers or give each a unique PORT_ZERO value,\n\
+             e.g. PORT_ZERO=web-{{branch}}.devenv.local"
         );
     }
 
@@ -327,17 +327,17 @@ fn print_routes(config: &DaemonConfig) {
         println!(
             "Note: .devenv.local services are not reachable — the overlay network requires\n\
              CAP_NET_ADMIN and CAP_NET_BIND_SERVICE. Grant both capabilities:\n\
-             \n  sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $(which devenv-tunnel)"
+             \n  sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $(which port-zero)"
         );
     }
 }
 
-fn format_source(source: &devenv_tunnel_daemon::discovery::ServiceSource, pid: u32) -> String {
+fn format_source(source: &port_zero_daemon::discovery::ServiceSource, pid: u32) -> String {
     match source {
-        devenv_tunnel_daemon::discovery::ServiceSource::Process { .. } => {
+        port_zero_daemon::discovery::ServiceSource::Process { .. } => {
             format!("PID {pid}")
         }
-        devenv_tunnel_daemon::discovery::ServiceSource::Container { id, .. } => {
+        port_zero_daemon::discovery::ServiceSource::Container { id, .. } => {
             format!("container {}", &id[..id.len().min(12)])
         }
     }
@@ -376,7 +376,7 @@ pub fn restart() -> Result<()> {
 
     // Stop if running, ignore error if not.
     if read_daemon_pid(&config).is_some() {
-        devenv_tunnel_daemon::discovery_loop::stop_daemon(&config).ok();
+        port_zero_daemon::discovery_loop::stop_daemon(&config).ok();
         // Brief pause to let the process exit.
         std::thread::sleep(Duration::from_millis(500));
     }

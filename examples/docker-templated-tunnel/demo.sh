@@ -20,10 +20,10 @@ echo
 echo "Building image..."
 docker build -t devenv-templated-demo . >/dev/null
 
-echo "Starting container with templated DEVENV_TUNNEL=web-{branch}.tunnel.devenv.tools ..."
+echo "Starting container with templated PORT_ZERO=web-{branch}.tunnel.portzero.cloud ..."
 CONTAINER_ID=$(docker run -d \
   --name "devenv-demo-$$" \
-  -e DEVENV_TUNNEL="web-{branch}.tunnel.devenv.tools" \
+  -e PORT_ZERO="web-{branch}.tunnel.portzero.cloud" \
   -p 0:8080 \
   devenv-templated-demo)
 
@@ -34,14 +34,14 @@ echo
 sleep 1
 
 echo "Container env (inside):"
-docker exec "$CONTAINER_ID" env | grep DEVENV_TUNNEL || true
+docker exec "$CONTAINER_ID" env | grep PORT_ZERO || true
 echo
 
 echo "To see it discovered by the daemon, run in another terminal:"
-echo "    devenv-tunnel status"
-echo "    # or: cargo run -p devenv-tunnel-cli --bin devenv-tunnel -- status"
+echo "    port-zero status"
+echo "    # or: cargo run -p port-zero-cli --bin port-zero -- status"
 echo
-echo "Expected to see a domain containing: web-$SANITIZED_BRANCH.tunnel.devenv.tools"
+echo "Expected to see a domain containing: web-$SANITIZED_BRANCH.tunnel.portzero.cloud"
 echo "(The env var must contain the full domain with suffix.)"
 echo
 

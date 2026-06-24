@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-devenv-tunnel Python example — stdlib http.server (no pip install needed)
+port-zero Python example — stdlib http.server (no pip install needed)
 
 Usage:
-    DEVENV_TUNNEL=myapp-mybranch.devenv.local python3 examples/http_server.py
+    PORT_ZERO=myapp-mybranch.devenv.local python3 examples/http_server.py
 
-DEVENV_TUNNEL must be set BEFORE starting this process. Setting it at
-runtime (os.environ["DEVENV_TUNNEL"] = ...) does NOT work for daemon
+PORT_ZERO must be set BEFORE starting this process. Setting it at
+runtime (os.environ["PORT_ZERO"] = ...) does NOT work for daemon
 discovery — the daemon reads /proc/<pid>/environ which is frozen at
 execve() time.
 
 Recommended: use direnv (see sdks/direnv/README.md) or shell export.
 
 The daemon on the host resolves {branch}/{worktree} templates; this
-process just needs to bind port 0 and inherit DEVENV_TUNNEL.
+process just needs to bind port 0 and inherit PORT_ZERO.
 """
 
 from __future__ import annotations
@@ -26,17 +26,17 @@ import sys
 # Adjust if running from a different directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from devenv_tunnel import find_free_port  # noqa: E402
+from port_zero import find_free_port  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        tunnel = os.environ.get("DEVENV_TUNNEL", "(not set)")
+        tunnel = os.environ.get("PORT_ZERO", "(not set)")
         body = (
-            "devenv-tunnel Python example\n"
-            f"DEVENV_TUNNEL: {tunnel}\n"
+            "port-zero Python example\n"
+            f"PORT_ZERO: {tunnel}\n"
             f"Request: {self.command} {self.path}\n"
         ).encode()
         self.send_response(200)
@@ -50,7 +50,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    # DEVENV_TUNNEL must already be set in the environment before running.
+    # PORT_ZERO must already be set in the environment before running.
     sock, port = find_free_port(service_name="example-http")
 
     server = http.server.HTTPServer(("0.0.0.0", 0), Handler)
@@ -60,7 +60,7 @@ def main() -> None:
     server.server_address = sock.getsockname()
 
     print(f"[example] Listening on http://0.0.0.0:{port}")
-    print("[example] The devenv-tunnel daemon routes DEVENV_TUNNEL -> this port.")
+    print("[example] The port-zero daemon routes PORT_ZERO -> this port.")
 
     try:
         server.serve_forever()

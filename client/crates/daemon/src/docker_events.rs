@@ -1,7 +1,7 @@
 //! Robust Docker event monitoring + host-port-bind conflict detection.
 //!
 //! The discovery loop POLLS `docker ps`/`docker inspect` every couple of seconds
-//! to find containers with `DEVENV_TUNNEL` set (see [`crate::discovery`]). That
+//! to find containers with `PORT_ZERO` set (see [`crate::discovery`]). That
 //! is fine for steady-state route tracking, but it cannot see a container that
 //! *fails to start* because a published host port is already bound — by the time
 //! the next poll runs, the container is already gone, and its error message

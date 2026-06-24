@@ -1,5 +1,5 @@
 [package]
-name = "devenv-tunnel-proto"
+name = "port-zero-proto"
 version = "0.1.0"
 edition = "2021"
 

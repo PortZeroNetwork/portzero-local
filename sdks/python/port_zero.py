@@ -1,24 +1,24 @@
 """
-devenv_tunnel — thin Python helper for devenv-tunnel.
+port_zero — thin Python helper for port-zero.
 
 The universal mechanism (no real SDK needed):
-  1. Set DEVENV_TUNNEL to a full domain name BEFORE starting your process.
+  1. Set PORT_ZERO to a full domain name BEFORE starting your process.
      The suffix decides the route:
        - myapp-{branch}.devenv.local       → local virtual overlay
-       - myapp-{branch}.tunnel.devenv.tools → cloud tunnel
+       - myapp-{branch}.tunnel.portzero.cloud → cloud tunnel
      See sdks/direnv/README.md for the recommended direnv setup.
   2. Bind your server to port 0 — the OS assigns an ephemeral port.
-  3. The devenv-tunnel daemon discovers the process, reads DEVENV_TUNNEL,
+  3. The port-zero daemon discovers the process, reads PORT_ZERO,
      finds the real port, and routes traffic to it.
 
 IMPORTANT — environment visibility:
   The daemon reads each process's environment from OUTSIDE the process
   (/proc/<pid>/environ on Linux, sysctl KERN_PROCARGS2 on macOS). Both
   sources are frozen snapshots from execve() time. Setting
-  os.environ["DEVENV_TUNNEL"] at runtime updates only the in-process
+  os.environ["PORT_ZERO"] at runtime updates only the in-process
   libc copy and is NEVER visible to the daemon.
 
-  This module does NOT and CANNOT set DEVENV_TUNNEL for daemon discovery.
+  This module does NOT and CANNOT set PORT_ZERO for daemon discovery.
   Set it before starting your process (direnv / shell export / docker -e).
 
 This module is stdlib-only (no pip install needed).
@@ -75,13 +75,13 @@ def _resolve_template_for_display(template: str) -> str:
 
 
 def read_tunnel() -> Optional[str]:
-    """Read DEVENV_TUNNEL from the environment.
+    """Read PORT_ZERO from the environment.
 
     Returns the value, or None if unset.  Does NOT set the variable —
     the daemon reads /proc/<pid>/environ at launch time and cannot see
     runtime os.environ changes.
     """
-    return os.environ.get("DEVENV_TUNNEL")
+    return os.environ.get("PORT_ZERO")
 
 
 def find_free_port(
@@ -95,7 +95,7 @@ def find_free_port(
     The caller is responsible for closing the socket (or passing it to a
     framework that takes ownership of it).
 
-    DEVENV_TUNNEL must already be set in the environment before this
+    PORT_ZERO must already be set in the environment before this
     process was started.  If it is unset, a WARNING is logged with setup
     instructions.
 
@@ -106,7 +106,7 @@ def find_free_port(
     service_name:
         Label used in log output.
     log:
-        Emit an INFO log line (or WARNING when DEVENV_TUNNEL is unset).
+        Emit an INFO log line (or WARNING when PORT_ZERO is unset).
         Set to False to suppress output.
 
     Returns
@@ -131,7 +131,7 @@ def find_free_port(
                 else ""
             )
             logger.info(
-                "[devenv-tunnel] %s bound to %s:%d — tunnel domain: %s%s",
+                "[port-zero] %s bound to %s:%d — tunnel domain: %s%s",
                 service_name,
                 host,
                 port,
@@ -140,14 +140,14 @@ def find_free_port(
             )
         else:
             logger.warning(
-                "[devenv-tunnel] WARNING: %s bound to %s:%d — DEVENV_TUNNEL is not set.\n"
+                "[port-zero] WARNING: %s bound to %s:%d — PORT_ZERO is not set.\n"
                 "  The daemon reads the process environment at launch time and cannot see "
                 "runtime os.environ changes.\n"
-                "  Set DEVENV_TUNNEL before starting your process:\n"
-                "    direnv:  add export DEVENV_TUNNEL=myapp-$(git rev-parse --abbrev-ref HEAD)"
+                "  Set PORT_ZERO before starting your process:\n"
+                "    direnv:  add export PORT_ZERO=myapp-$(git rev-parse --abbrev-ref HEAD)"
                 ".devenv.local  to .envrc\n"
-                "    shell:   export DEVENV_TUNNEL=myapp-{branch}.devenv.local\n"
-                "    docker:  docker run -e DEVENV_TUNNEL=myapp-{branch}.devenv.local ...\n"
+                "    shell:   export PORT_ZERO=myapp-{branch}.devenv.local\n"
+                "    docker:  docker run -e PORT_ZERO=myapp-{branch}.devenv.local ...\n"
                 "  See sdks/direnv/README.md for the recommended setup.",
                 service_name,
                 host,

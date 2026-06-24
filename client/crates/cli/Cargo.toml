@@ -1,10 +1,10 @@
 [package]
-name = "devenv-tunnel-cli"
+name = "port-zero-cli"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "devenv-tunnel"
+name = "port-zero"
 path = "src/main.rs"
 
 [[bin]]
@@ -14,9 +14,9 @@ path = "src/bin/devenv.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-devenv-tunnel-daemon = { path = "../daemon" }
-devenv-tunnel-domain = { path = "../domain" }
-devenv-tunnel-proto = { path = "../../../proto" }
+port-zero-daemon = { path = "../daemon" }
+port-zero-domain = { path = "../domain" }
+port-zero-proto = { path = "../../../proto" }
 dirs = "6"
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

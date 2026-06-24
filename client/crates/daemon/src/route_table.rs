@@ -15,13 +15,13 @@ use crate::discovery::{DiscoveredService, PortMapping, ServiceSource};
 /// A single route entry: domain -> local endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Route {
-    /// The full DEVENV_TUNNEL value (e.g. "api-myapp-main-alice.tunnel.devenv.tools").
+    /// The full PORT_ZERO value (e.g. "api-myapp-main-alice.tunnel.portzero.cloud").
     pub domain: String,
     /// Host to forward to (usually "127.0.0.1").
     pub host: String,
     /// Port to forward to.
     pub port: u16,
-    /// Additional raw port mappings from DEVENV_TUNNEL_PORTS.
+    /// Additional raw port mappings from PORT_ZERO_PORTS.
     #[serde(default)]
     pub extra_ports: Vec<PortMapping>,
     /// How the service was discovered.
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn test_save_and_load() {
         let dir =
-            std::env::temp_dir().join(format!("devenv-tunnel-route-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("port-zero-route-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("routes.json");
 

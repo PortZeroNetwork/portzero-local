@@ -1,6 +1,6 @@
 //! Cloud connector: manages the WebSocket tunnel to the edge server.
 //!
-//! When authenticated, the daemon connects to `wss://edge.devenv.tools/tunnel`
+//! When authenticated, the daemon connects to `wss://edge.portzero.cloud/tunnel`
 //! and registers discovered routes so they become reachable from the internet.
 //! Incoming HTTP requests are forwarded to local services.
 
@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use devenv_tunnel_proto::{ClientMessage, ServerMessage};
-use devenv_tunnel_client::domain_router::DomainRouter;
+use port_zero_proto::{ClientMessage, ServerMessage};
+use port_zero_client::domain_router::DomainRouter;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -17,11 +17,11 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::forwarder;
 
 /// Default edge server WebSocket URL.
-const DEFAULT_EDGE_URL: &str = "wss://edge.devenv.tools/tunnel";
+const DEFAULT_EDGE_URL: &str = "wss://edge.portzero.cloud/tunnel";
 
 /// Resolve the edge server URL from the environment or fall back to the default.
 fn resolve_edge_url() -> String {
-    std::env::var("DEVENV_TOOLS_EDGE_URL").unwrap_or_else(|_| DEFAULT_EDGE_URL.to_string())
+    std::env::var("PORT_ZERO_EDGE_URL").unwrap_or_else(|_| DEFAULT_EDGE_URL.to_string())
 }
 
 /// Cloud connector state.
@@ -49,7 +49,7 @@ pub struct CloudConnector {
 impl CloudConnector {
     /// Create a new cloud connector.
     ///
-    /// Reads the edge server URL from `DEVENV_TOOLS_EDGE_URL` (useful for
+    /// Reads the edge server URL from `PORT_ZERO_EDGE_URL` (useful for
     /// local development) or falls back to the default production URL.
     pub fn new(auth_token: String) -> Self {
         let machine_id = generate_machine_id();
@@ -106,7 +106,7 @@ impl CloudConnector {
 
         // Send Hello
         let hello = ClientMessage::Hello {
-            protocol_version: devenv_tunnel_proto::PROTOCOL_VERSION,
+            protocol_version: port_zero_proto::PROTOCOL_VERSION,
             auth_token: self.auth_token.clone(),
             client_version: env!("CARGO_PKG_VERSION").to_string(),
             machine_id: self.machine_id.clone(),
@@ -179,7 +179,7 @@ impl CloudConnector {
                     } else {
                         tracing::error!("Edge server error ({:?}): {}", code, message);
                     }
-                    if *code == devenv_tunnel_proto::ErrorCode::AuthFailed {
+                    if *code == port_zero_proto::ErrorCode::AuthFailed {
                         auth_failed.store(true, Ordering::Relaxed);
                         inbound_alive.store(false, Ordering::Relaxed);
                         break;
@@ -218,7 +218,7 @@ impl CloudConnector {
         let msg = ClientMessage::RegisterRoute {
             domain: domain.to_string(),
             local_port,
-            protocol: devenv_tunnel_proto::RouteProtocol::Http,
+            protocol: port_zero_proto::RouteProtocol::Http,
         };
 
         tx.send(msg)
@@ -410,10 +410,10 @@ mod tests {
     async fn test_handle_incoming_route_ack_success() {
         let router = DomainRouter::new();
         let msg = ServerMessage::RouteAck {
-            domain: "api-test.tunnel.devenv.tools".to_string(),
+            domain: "api-test.tunnel.portzero.cloud".to_string(),
             success: true,
             error: None,
-            url: Some("https://api-test.tunnel.devenv.tools".to_string()),
+            url: Some("https://api-test.tunnel.portzero.cloud".to_string()),
         };
         let result = handle_incoming(msg, &router).await.unwrap();
         assert!(result.is_none());
@@ -423,7 +423,7 @@ mod tests {
     async fn test_handle_incoming_route_ack_failure() {
         let router = DomainRouter::new();
         let msg = ServerMessage::RouteAck {
-            domain: "api-test.tunnel.devenv.tools".to_string(),
+            domain: "api-test.tunnel.portzero.cloud".to_string(),
             success: false,
             error: Some("domain not authorized".to_string()),
             url: None,
@@ -436,7 +436,7 @@ mod tests {
     async fn test_handle_incoming_error() {
         let router = DomainRouter::new();
         let msg = ServerMessage::Error {
-            code: devenv_tunnel_proto::ErrorCode::InternalError,
+            code: port_zero_proto::ErrorCode::InternalError,
             message: "service unavailable".to_string(),
         };
         let result = handle_incoming(msg, &router).await.unwrap();
@@ -450,7 +450,7 @@ mod tests {
             request_id: 1,
             method: "GET".to_string(),
             path: "/".to_string(),
-            host: "unknown-svc.tunnel.devenv.tools".to_string(),
+            host: "unknown-svc.tunnel.portzero.cloud".to_string(),
             headers: vec![],
             body: vec![],
         };
@@ -462,7 +462,7 @@ mod tests {
     async fn test_register_route_not_connected() {
         let conn = CloudConnector::new("tok_test".to_string());
         let result = conn
-            .register_route("api-test.tunnel.devenv.tools", 8080)
+            .register_route("api-test.tunnel.portzero.cloud", 8080)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Not connected"));
@@ -471,7 +471,7 @@ mod tests {
     #[tokio::test]
     async fn test_unregister_route_not_connected() {
         let conn = CloudConnector::new("tok_test".to_string());
-        let result = conn.unregister_route("api-test.tunnel.devenv.tools").await;
+        let result = conn.unregister_route("api-test.tunnel.portzero.cloud").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Not connected"));
     }

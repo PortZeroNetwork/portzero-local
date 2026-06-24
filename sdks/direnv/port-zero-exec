@@ -1,17 +1,17 @@
 #!/bin/sh
-# devenv-tunnel-exec — set DEVENV_TUNNEL then exec a command
+# port-zero-exec — set PORT_ZERO then exec a command
 #
-# This is the ONLY programmatic way to set DEVENV_TUNNEL for daemon discovery
+# This is the ONLY programmatic way to set PORT_ZERO for daemon discovery
 # without direnv. It works because it sets the variable in the shell and then
 # uses exec to replace the shell with your process — so the variable is present
 # in the execve() call and visible in /proc/<pid>/environ.
 #
 # Usage:
-#   devenv-tunnel-exec myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local node server.js
-#   devenv-tunnel-exec myapp-main.devenv.local python3 app.py
-#   devenv-tunnel-exec myapp-feat.tunnel.devenv.tools ./my-server
+#   port-zero-exec myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local node server.js
+#   port-zero-exec myapp-main.devenv.local python3 app.py
+#   port-zero-exec myapp-feat.tunnel.portzero.cloud ./my-server
 #
-# The first argument is the full DEVENV_TUNNEL domain; remaining arguments are
+# The first argument is the full PORT_ZERO domain; remaining arguments are
 # the command and its arguments.
 #
 # Why this works when runtime env-setting does not:
@@ -27,13 +27,13 @@
 set -e
 
 if [ "$#" -lt 2 ]; then
-    echo "Usage: devenv-tunnel-exec <DEVENV_TUNNEL_DOMAIN> <command> [args...]" >&2
-    echo "Example: devenv-tunnel-exec myapp-main.devenv.local node server.js" >&2
+    echo "Usage: port-zero-exec <PORT_ZERO_DOMAIN> <command> [args...]" >&2
+    echo "Example: port-zero-exec myapp-main.devenv.local node server.js" >&2
     exit 1
 fi
 
-DEVENV_TUNNEL="$1"
-export DEVENV_TUNNEL
+PORT_ZERO="$1"
+export PORT_ZERO
 shift
 
 exec "$@"
