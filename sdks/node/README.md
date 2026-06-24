@@ -6,7 +6,7 @@ Thin convenience wrapper for Node.js / TypeScript projects.
 
 1. **Set `PORT_ZERO` BEFORE starting your process** to a full domain name
    (suffix decides the route):
-   - `myapp-{branch}.devenv.local` → local virtual overlay
+   - `myapp-{branch}.portzero.local` → local virtual overlay
    - `myapp-{branch}.tunnel.portzero.cloud` → cloud tunnel
 
    **This library does NOT and CANNOT set `PORT_ZERO` for daemon discovery.**
@@ -38,8 +38,8 @@ discovery with no error message.
 
 - **direnv** (recommended): add the export to `.envrc` — see
   [`sdks/direnv/README.md`](../direnv/README.md)
-- **shell**: `export PORT_ZERO=myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local`
-- **docker**: `docker run -e PORT_ZERO=myapp-{branch}.devenv.local ...`
+- **shell**: `export PORT_ZERO=myapp-$(git rev-parse --abbrev-ref HEAD).portzero.local`
+- **docker**: `docker run -e PORT_ZERO=myapp-{branch}.portzero.local ...`
 - **docker-compose**: add to `environment:` in `docker-compose.yml`
 
 ## Installation
@@ -102,7 +102,7 @@ See [`examples/express-app.js`](examples/express-app.js) for a working
 plain-`http` example (no extra dependencies). Run it as:
 
 ```bash
-PORT_ZERO=myapp-mybranch.devenv.local node examples/express-app.js
+PORT_ZERO=myapp-mybranch.portzero.local node examples/express-app.js
 ```
 
 ## Framework snippets
@@ -116,7 +116,7 @@ const { listenWithTunnel } = require("./index");
 const app = express();
 app.get("/", (req, res) => res.send("Hello!"));
 
-// Set PORT_ZERO before running: export PORT_ZERO=myapp-{branch}.devenv.local
+// Set PORT_ZERO before running: export PORT_ZERO=myapp-{branch}.portzero.local
 listenWithTunnel(app, {
   serviceName: "express-web",
 }).then((port) => console.log(`Express on port ${port}`));
@@ -130,7 +130,7 @@ const { listenWithTunnel } = require("./index");
 
 fastify.get("/", async () => "Hello!");
 
-// Set PORT_ZERO before running: export PORT_ZERO=myapp-{branch}.devenv.local
+// Set PORT_ZERO before running: export PORT_ZERO=myapp-{branch}.portzero.local
 // Fastify exposes server.listen — wrap the underlying server:
 listenWithTunnel(fastify.server, {
   serviceName: "fastify-web",

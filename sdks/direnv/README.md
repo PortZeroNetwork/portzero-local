@@ -35,7 +35,7 @@ set in the shell **before** you start your server — exactly what is needed.
 
    ```sh
    # Local virtual overlay — resolves branch in the shell before exec:
-   export PORT_ZERO="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).devenv.local"
+   export PORT_ZERO="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).portzero.local"
 
    # Cloud tunnel variant:
    # export PORT_ZERO="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).tunnel.portzero.cloud"
@@ -71,8 +71,8 @@ cp sdks/direnv/port-zero-exec ~/.local/bin/port-zero-exec
 chmod +x ~/.local/bin/port-zero-exec
 
 # Use it:
-port-zero-exec myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local node server.js
-port-zero-exec myapp-main.devenv.local python3 app.py
+port-zero-exec myapp-$(git rev-parse --abbrev-ref HEAD).portzero.local node server.js
+port-zero-exec myapp-main.portzero.local python3 app.py
 ```
 
 This works for the same reason direnv does: it sets the variable in the shell
@@ -89,13 +89,13 @@ For containers, pass the variable at container start time:
 
 ```bash
 # docker run
-docker run -e PORT_ZERO=myapp-{branch}.devenv.local -p 0:8080 myimage
+docker run -e PORT_ZERO=myapp-{branch}.portzero.local -p 0:8080 myimage
 
 # docker-compose.yml
 services:
   web:
     environment:
-      PORT_ZERO: "myapp-${BRANCH:-main}.devenv.local"
+      PORT_ZERO: "myapp-${BRANCH:-main}.portzero.local"
     ports:
       - "0:8080"
 ```

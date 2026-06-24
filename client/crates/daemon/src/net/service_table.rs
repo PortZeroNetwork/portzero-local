@@ -1,4 +1,4 @@
-//! Service table: maps overlay names (from full PORT_ZERO=*.devenv.local) to
+//! Service table: maps overlay names (from full PORT_ZERO=*.portzero.local) to
 //! their backing endpoints and virtual IPs.
 //!
 //! A "service" here is something like:
@@ -16,7 +16,7 @@ use smoltcp::wire::Ipv4Address;
 /// A discovered network service reachable via the overlay.
 #[derive(Debug, Clone)]
 pub struct NetworkService {
-    /// The label (e.g. "my-db" from the full "my-db.devenv.local" value).
+    /// The label (e.g. "my-db" from the full "my-db.portzero.local" value).
     pub name: String,
     /// Virtual IP assigned to this name.
     pub vip: Ipv4Address,

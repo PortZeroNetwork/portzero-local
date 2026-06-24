@@ -28,9 +28,9 @@ fn send_signal(pid: u32, signal: &str) {
 /// Spawn the foreground daemon, send `signal` after it has started, and assert
 /// it exits within `deadline`.
 fn assert_exits_on_signal(signal: &str) {
-    let bin = env!("CARGO_BIN_EXE_port-zero");
+    let bin = env!("CARGO_BIN_EXE_portzero");
     let tmp_home = std::env::temp_dir().join(format!(
-        "port-zero-sigtest-{}-{}",
+        "portzero-sigtest-{}-{}",
         signal,
         std::process::id()
     ));

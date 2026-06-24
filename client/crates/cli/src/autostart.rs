@@ -54,13 +54,13 @@ pub fn status() -> Result<()> {
 fn service_location() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
-        Some("/Library/LaunchDaemons/tools.devenv.daemon.plist (root LaunchDaemon)".to_string())
+        Some("/Library/LaunchDaemons/cloud.portzero.daemon.plist (root LaunchDaemon)".to_string())
     }
 
     #[cfg(target_os = "linux")]
     {
         dirs::home_dir().map(|home| {
-            home.join(".config/systemd/user/devenv-daemon.service")
+            home.join(".config/systemd/user/portzero-daemon.service")
                 .display()
                 .to_string()
         })
@@ -68,7 +68,7 @@ fn service_location() -> Option<String> {
 
     #[cfg(target_os = "windows")]
     {
-        Some("scheduled task \"tools.devenv.daemon\" (start at logon)".to_string())
+        Some("scheduled task \"cloud.portzero.daemon\" (start at logon)".to_string())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]

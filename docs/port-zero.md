@@ -9,7 +9,7 @@ The value **must be a full domain name, including its suffix**. Nothing is ever
 appended implicitly. The daemon takes the value verbatim.
 
 ```
-PORT_ZERO=hello.devenv.local            # valid (local overlay)
+PORT_ZERO=hello.portzero.local            # valid (local overlay)
 PORT_ZERO=web.tunnel.portzero.cloud       # valid (cloud tunnel)
 PORT_ZERO=hello                          # NOT valid — no suffix
 ```
@@ -20,10 +20,10 @@ The daemon routes a service based purely on the **suffix** of the full domain:
 
 | Suffix                                            | Target                  |
 |---------------------------------------------------|-------------------------|
-| `.devenv.local`                                   | Local virtual overlay   |
+| `.portzero.local`                                   | Local virtual overlay   |
 | `.tunnel.portzero.cloud` (incl. `foo.user.tunnel.portzero.cloud`) | Cloud tunnel |
 
-- `.devenv.local` → the service is given a virtual IP from `10.254.0.0/16`,
+- `.portzero.local` → the service is given a virtual IP from `10.254.0.0/16`,
   served by scoped DNS, and proxied through the TUN + user-space stack on this
   machine. See [architecture.md](architecture.md).
 - `.tunnel.portzero.cloud` → the service is exposed via the cloud edge (requires
@@ -48,16 +48,16 @@ Correct ways to set it before launch:
 
 ```bash
 # direnv (recommended): export in .envrc, then `direnv allow`
-export PORT_ZERO=hello.devenv.local
+export PORT_ZERO=hello.portzero.local
 
 # shell one-off
-export PORT_ZERO=hello.devenv.local && python3 server.py
+export PORT_ZERO=hello.portzero.local && python3 server.py
 
 # the exec launcher from the SDKs
-sdks/direnv/port-zero-exec hello.devenv.local python3 server.py
+sdks/direnv/port-zero-exec hello.portzero.local python3 server.py
 
 # docker (passed at container start)
-docker run -e PORT_ZERO=hello.devenv.local -p 0:8080 myimage
+docker run -e PORT_ZERO=hello.portzero.local -p 0:8080 myimage
 ```
 
 See [`../sdks/direnv/README.md`](../sdks/direnv/README.md) for details.
@@ -73,7 +73,7 @@ git context:
 | `{worktree}` | the basename of the git worktree / repo root        |
 
 ```
-PORT_ZERO=web-{branch}.devenv.local
+PORT_ZERO=web-{branch}.portzero.local
 PORT_ZERO=api-{worktree}.tunnel.portzero.cloud
 ```
 

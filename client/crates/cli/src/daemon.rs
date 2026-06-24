@@ -196,7 +196,7 @@ pub async fn status() -> Result<()> {
     Ok(())
 }
 
-/// Surface any current visibility issues (e.g. duplicate `.devenv.local` names
+/// Surface any current visibility issues (e.g. duplicate `.portzero.local` names
 /// claimed by multiple worktrees) recorded by the running daemon.
 fn print_issues(config: &DaemonConfig) {
     let state = read_issues(&config.issues_path());
@@ -301,7 +301,7 @@ fn print_routes(config: &DaemonConfig) {
     let conflict_domains: Vec<&str> = seen_conflict_domains.into_iter().collect();
     if !conflict_domains.is_empty() {
         println!();
-        println!("Conflicts detected — the following .devenv.local names are ambiguous:");
+        println!("Conflicts detected — the following .portzero.local names are ambiguous:");
         for domain in &conflict_domains {
             let claimants: Vec<String> = overlay
                 .routes
@@ -318,14 +318,14 @@ fn print_routes(config: &DaemonConfig) {
         println!();
         println!(
             "  Fix: stop duplicate containers or give each a unique PORT_ZERO value,\n\
-             e.g. PORT_ZERO=web-{{branch}}.devenv.local"
+             e.g. PORT_ZERO=web-{{branch}}.portzero.local"
         );
     }
 
     if !overlay.is_empty() && !overlay.overlay_active {
         println!();
         println!(
-            "Note: .devenv.local services are not reachable — the overlay network requires\n\
+            "Note: .portzero.local services are not reachable — the overlay network requires\n\
              CAP_NET_ADMIN and CAP_NET_BIND_SERVICE. Grant both capabilities:\n\
              \n  sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $(which port-zero)"
         );

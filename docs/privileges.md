@@ -1,6 +1,6 @@
 # Platform privilege requirements
 
-The local `.devenv.local` overlay manipulates kernel networking state, which
+The local `.portzero.local` overlay manipulates kernel networking state, which
 requires elevated privileges. This document explains exactly what needs them and
 what happens when they are missing.
 
@@ -15,7 +15,7 @@ The overlay performs three privileged operations when it starts
    the routing table needs root / `CAP_NET_ADMIN`. (This step is best-effort and
    non-fatal — a missing route is logged, not aborted.)
 3. **Install the scoped resolver** (`net/resolver_config.rs`) so
-   `*.devenv.local` queries go to the embedded DNS server. Writing OS resolver
+   `*.portzero.local` queries go to the embedded DNS server. Writing OS resolver
    config (`/etc/resolver`, systemd-resolved, etc.) needs root.
 
 ### Per platform
@@ -105,12 +105,12 @@ and keeps running. Concretely:
 Cloud tunnels (`.tunnel.portzero.cloud`) and process/container **discovery** still
 work without root; only the local overlay data path needs it.
 
-## Consequence: `.devenv.local` visibility
+## Consequence: `.portzero.local` visibility
 
-Because the overlay (TUN + scoped resolver) is what makes `.devenv.local` names
-resolvable and routable, **`.devenv.local` services are only visible once the
+Because the overlay (TUN + scoped resolver) is what makes `.portzero.local` names
+resolvable and routable, **`.portzero.local` services are only visible once the
 overlay is running — i.e. when the daemon was started with root.** If you run the
-daemon unprivileged, `curl http://hello.devenv.local/` will not resolve even
+daemon unprivileged, `curl http://hello.portzero.local/` will not resolve even
 though the service was discovered. See [troubleshooting.md](troubleshooting.md).
 
 ## Testing implications

@@ -6,7 +6,7 @@ Thin, stdlib-only convenience wrapper for Python projects.
 
 1. **Set `PORT_ZERO` BEFORE starting your process** to a full domain name
    (suffix decides the route):
-   - `myapp-{branch}.devenv.local` → local virtual overlay
+   - `myapp-{branch}.portzero.local` → local virtual overlay
    - `myapp-{branch}.tunnel.portzero.cloud` → cloud tunnel
 
    **This library does NOT and CANNOT set `PORT_ZERO` for daemon discovery.**
@@ -37,8 +37,8 @@ A runtime-set variable silently fails discovery with no error message.
 
 - **direnv** (recommended): add the export to `.envrc` — see
   [`sdks/direnv/README.md`](../direnv/README.md)
-- **shell**: `export PORT_ZERO=myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local`
-- **docker**: `docker run -e PORT_ZERO=myapp-{branch}.devenv.local ...`
+- **shell**: `export PORT_ZERO=myapp-$(git rev-parse --abbrev-ref HEAD).portzero.local`
+- **docker**: `docker run -e PORT_ZERO=myapp-{branch}.portzero.local ...`
 - **docker-compose**: add to `environment:` in `docker-compose.yml`
 
 ## Installation
@@ -100,7 +100,7 @@ See [`examples/http_server.py`](examples/http_server.py) for a runnable version.
 
 Run it as:
 ```bash
-PORT_ZERO=myapp-mybranch.devenv.local python3 examples/http_server.py
+PORT_ZERO=myapp-mybranch.portzero.local python3 examples/http_server.py
 ```
 
 ### Flask

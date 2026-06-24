@@ -31,12 +31,12 @@ struct VersionManifest {
 fn last_check_path() -> Result<PathBuf> {
     let home =
         dirs::home_dir().ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
-    Ok(home.join(".devenv").join(".last_update_check"))
+    Ok(home.join(".portzero").join(".last_update_check"))
 }
 
 /// Return true if enough time has elapsed since the last check.
 fn should_check() -> bool {
-    if std::env::var("DEVENV_NO_UPDATE_CHECK").is_ok() {
+    if std::env::var("PORT_ZERO_NO_UPDATE_CHECK").is_ok() {
         return false;
     }
 

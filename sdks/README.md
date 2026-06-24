@@ -14,7 +14,7 @@ the same two steps:
 
    ```
    # Local virtual overlay
-   PORT_ZERO=myapp-{branch}.devenv.local
+   PORT_ZERO=myapp-{branch}.portzero.local
 
    # Cloud tunnel
    PORT_ZERO=myapp-{branch}.tunnel.portzero.cloud
@@ -79,7 +79,7 @@ Each language helper is a thin convenience wrapper that:
 #    https://direnv.net/docs/installation.html
 
 # 2. Add to your project's .envrc:
-echo 'export PORT_ZERO="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).devenv.local"' >> .envrc
+echo 'export PORT_ZERO="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).portzero.local"' >> .envrc
 direnv allow
 
 # 3. Start your server — PORT_ZERO is already set

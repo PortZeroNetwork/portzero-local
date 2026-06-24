@@ -2,7 +2,7 @@
 //!
 //! Starts the TUN device, the smoltcp TCP stack, and the embedded DNS server.
 //! It receives service updates (from discovery) and keeps the virtual network
-//! in sync with services that set a full `*.devenv.local` name via PORT_ZERO.
+//! in sync with services that set a full `*.portzero.local` name via PORT_ZERO.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -40,7 +40,7 @@ const MACOS_DNS_LOOPBACK_PORT: u16 = 10053;
 /// the gateway IP, so a packet to `10.254.0.1:53` routes OUT the tunnel instead
 /// of reaching the local `UdpSocket` (queries time out — see task-33). macOS
 /// therefore binds to loopback (`127.0.0.1:<MACOS_DNS_LOOPBACK_PORT>`), which is
-/// always locally deliverable; the `/etc/resolver/devenv.local` file carries the
+/// always locally deliverable; the `/etc/resolver/portzero.local` file carries the
 /// matching `port` line so the system resolver finds it.
 fn default_dns_listen() -> SocketAddr {
     #[cfg(target_os = "macos")]
@@ -110,7 +110,7 @@ impl OverlayNetwork {
             }
         });
 
-        // Install scoped OS resolver — routes *.devenv.local to our DNS server.
+        // Install scoped OS resolver — routes *.portzero.local to our DNS server.
         // Attached to the TUN link (created above), so on Linux this works even
         // when systemd-networkd is absent. Log errors but do not abort startup;
         // the overlay still works for services that manually configure DNS.
@@ -173,7 +173,7 @@ mod tests {
         assert_ne!(addr.port(), 53, "must not use privileged port 53 on macOS");
     }
 
-    /// The scoped `/etc/resolver/devenv.local` file written from the macOS
+    /// The scoped `/etc/resolver/portzero.local` file written from the macOS
     /// default must point the system resolver at that same loopback address,
     /// including the matching `port` line.
     #[cfg(target_os = "macos")]

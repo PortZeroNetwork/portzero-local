@@ -53,8 +53,8 @@ impl AuthConfig {
     /// (token = None) if the file is missing or unreadable.
     pub fn load() -> Self {
         let config_dir = dirs::home_dir()
-            .map(|h| h.join(".devenv"))
-            .unwrap_or_else(|| PathBuf::from(".devenv"));
+            .map(|h| h.join(".portzero"))
+            .unwrap_or_else(|| PathBuf::from(".portzero"));
 
         Self::load_from(&config_dir)
     }

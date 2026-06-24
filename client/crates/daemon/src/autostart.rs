@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 /// Service label / unit name used across platforms.
 #[allow(dead_code)]
-const SERVICE_NAME: &str = "tools.devenv.daemon";
+const SERVICE_NAME: &str = "cloud.portzero.daemon";
 
 /// Install auto-start for the daemon.
 ///
@@ -91,19 +91,19 @@ fn find_daemon_binary() -> Result<PathBuf> {
     // If the current exe looks like port-zero, use it
     if let Some(name) = current_exe.file_name() {
         let name_str = name.to_string_lossy();
-        if name_str.starts_with("port-zero") {
+        if name_str.starts_with("portzero") {
             return Ok(current_exe);
         }
     }
 
     // Otherwise, search PATH
-    if let Ok(path) = which("port-zero") {
+    if let Ok(path) = which("portzero") {
         return Ok(path);
     }
 
     anyhow::bail!(
-        "Could not find port-zero binary.\n\n\
-         Ensure devenv is installed and on your PATH, then retry.\n\
+        "Could not find portzero binary.\n\n\
+         Ensure portzero is installed and on your PATH, then retry.\n\
          Install with: curl -fsSL https://portzero.cloud/install.sh | sh"
     )
 }
@@ -131,9 +131,9 @@ fn which(name: &str) -> Result<PathBuf> {
 const LAUNCHDAEMONS_DIR: &str = "/Library/LaunchDaemons";
 
 /// Root-writable log directory. A LaunchDaemon runs as root, whose home is not
-/// the installing user's, so logs cannot live under `~/.devenv`.
+/// the installing user's, so logs cannot live under `~/.portzero`.
 #[cfg(target_os = "macos")]
-const DAEMON_LOG_DIR: &str = "/Library/Logs/devenv";
+const DAEMON_LOG_DIR: &str = "/Library/Logs/portzero";
 
 #[cfg(target_os = "macos")]
 fn launchd_plist_path() -> PathBuf {
@@ -292,7 +292,7 @@ fn systemd_unit_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config/systemd/user")
-        .join("devenv-daemon.service")
+        .join("portzero-daemon.service")
 }
 
 #[cfg(target_os = "linux")]
@@ -305,7 +305,7 @@ fn install_systemd(binary: &std::path::Path) -> Result<()> {
 
     let unit = format!(
         r#"[Unit]
-Description=devenv discovery daemon
+Description=Port Zero discovery daemon
 Documentation=https://portzero.cloud/docs/daemon
 
 [Service]
@@ -330,7 +330,7 @@ WantedBy=default.target
         .status();
 
     let status = std::process::Command::new("systemctl")
-        .args(["--user", "enable", "--now", "devenv-daemon.service"])
+        .args(["--user", "enable", "--now", "portzero-daemon.service"])
         .status()
         .context("Failed to enable systemd unit")?;
 
@@ -348,7 +348,7 @@ fn uninstall_systemd() -> Result<()> {
 
     if unit_path.exists() {
         let _ = std::process::Command::new("systemctl")
-            .args(["--user", "disable", "--now", "devenv-daemon.service"])
+            .args(["--user", "disable", "--now", "portzero-daemon.service"])
             .status();
 
         std::fs::remove_file(&unit_path)
@@ -455,7 +455,7 @@ mod tests {
     fn test_systemd_unit_path() {
         let path = systemd_unit_path();
         assert!(path.to_string_lossy().contains("systemd/user"));
-        assert!(path.to_string_lossy().contains("devenv-daemon.service"));
+        assert!(path.to_string_lossy().contains("portzero-daemon.service"));
     }
 
     #[cfg(target_os = "macos")]
@@ -491,7 +491,7 @@ mod tests {
         assert!(plist.contains("<string>Background</string>"));
 
         // Logs go to a root-writable path, NOT the user's home.
-        assert!(plist.contains("/Library/Logs/devenv/daemon.log"));
+        assert!(plist.contains("/Library/Logs/portzero/daemon.log"));
         assert!(!plist.contains("/.devenv"));
     }
 }

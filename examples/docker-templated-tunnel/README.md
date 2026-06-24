@@ -7,7 +7,7 @@
 >
 > Examples:
 > - `web-{branch}.tunnel.portzero.cloud` → cloud tunnel
-> - `web-{branch}.devenv.local` → local virtual overlay
+> - `web-{branch}.portzero.local` → local virtual overlay
 
 See the notes below for how the two paths are distinguished.
 
@@ -24,7 +24,7 @@ cargo run -p port-zero-cli --bin port-zero -- start --foreground
 - It scans processes and Docker containers for `PORT_ZERO`.
 - The value **must be a full domain** (no implicit suffixes are added).
 - The suffix decides the target:
-  - ends with `.devenv.local` → local virtual overlay
+  - ends with `.portzero.local` → local virtual overlay
   - ends with `.tunnel.portzero.cloud` (or namespaced `... .username.tunnel...`) → cloud tunnel
 - The example below shows that the daemon can resolve `{branch}` / `{worktree}` templates for containers by inspecting bind mounts and compose labels on the **host**.
 
@@ -67,13 +67,13 @@ docker compose down
 `PORT_ZERO` must always contain a full domain name (the suffix is part of the value; nothing is appended implicitly).
 
 - `... .tunnel.portzero.cloud` (including namespaced `foo.username.tunnel.portzero.cloud`) → cloud tunnel route
-- `... .devenv.local` (or ending `.local`) → local virtual overlay
+- `... .portzero.local` (or ending `.local`) → local virtual overlay
 
 To use the local overlay path:
 
 ```bash
-PORT_ZERO=my-db.devenv.local
-PORT_ZERO=db-{branch}.devenv.local
+PORT_ZERO=my-db.portzero.local
+PORT_ZERO=db-{branch}.portzero.local
 ```
 
 This example focuses on templating + Docker discovery. You select the path by what full name you put in the variable.
@@ -107,7 +107,7 @@ docker rm -f devenv-demo-web
 ## How it works
 
 - The container is started with a full template including the suffix, e.g.
-  `PORT_ZERO=web-{branch}.tunnel.portzero.cloud` (or `.devenv.local` for overlay).
+  `PORT_ZERO=web-{branch}.tunnel.portzero.cloud` (or `.portzero.local` for overlay).
 - The daemon runs `docker inspect` (from the host) and extracts:
   - `com.docker.compose.project.working_dir` (when using compose)
   - Bind mount `Source` paths (for both compose and plain `docker run -v`)
@@ -115,7 +115,7 @@ docker rm -f devenv-demo-web
   using the same `DomainContext` logic used for native processes.
 - The resolved **full domain** is what gets used (no suffixes are added by the daemon).
 - For `.tunnel...` names: if logged in, this becomes a public URL at the edge.
-- For `.devenv.local` names: routed to the local overlay (when implemented).
+- For `.portzero.local` names: routed to the local overlay (when implemented).
 - `status` shows tunnel routes that were discovered.
 
 This approach works whether you use docker compose or raw `docker run`.
@@ -129,7 +129,7 @@ Docker discovery path. After running them you have visually confirmed:
 2. The host-side daemon resolved `{branch}` using git context from mounts/labels.
 3. The resolved full domain appears in `port-zero status`.
 
-The same `PORT_ZERO` mechanism with a `.devenv.local` suffix selects
+The same `PORT_ZERO` mechanism with a `.portzero.local` suffix selects
 the local overlay path instead of cloud tunnels.
 
 ## Troubleshooting

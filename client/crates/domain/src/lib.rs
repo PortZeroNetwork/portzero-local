@@ -127,7 +127,7 @@ impl DomainContext {
 ///
 /// The canonical-port feature lets a developer declare the port the overlay
 /// should expose a service on by appending `:<port>` to the value, e.g.
-/// `db.devenv.local:5432` or `web-{branch}.devenv.local:8080`.
+/// `db.portzero.local:5432` or `web-{branch}.portzero.local:8080`.
 ///
 /// This helper is PURE: it only splits the value; it does NOT resolve
 /// templates or validate the domain. The returned domain part is what the
@@ -141,7 +141,7 @@ impl DomainContext {
 ///   domain and `None` is returned. This is a graceful fallback — discovery
 ///   must never break on a malformed port.
 /// - Templates are preserved in the domain part (the helper does not touch
-///   `{...}`); `web-{branch}.devenv.local:8080` → (`web-{branch}.devenv.local`,
+///   `{...}`); `web-{branch}.portzero.local:8080` → (`web-{branch}.portzero.local`,
 ///   `Some(8080)`).
 pub fn split_tunnel_port(value: &str) -> (&str, Option<u16>) {
     match value.rsplit_once(':') {
@@ -636,22 +636,22 @@ mod tests {
     #[test]
     fn test_split_tunnel_port_no_port() {
         assert_eq!(
-            split_tunnel_port("db.devenv.local"),
-            ("db.devenv.local", None)
+            split_tunnel_port("db.portzero.local"),
+            ("db.portzero.local", None)
         );
     }
 
     #[test]
     fn test_split_tunnel_port_valid() {
         assert_eq!(
-            split_tunnel_port("db.devenv.local:5432"),
-            ("db.devenv.local", Some(5432))
+            split_tunnel_port("db.portzero.local:5432"),
+            ("db.portzero.local", Some(5432))
         );
         // Lowest and highest valid ports.
-        assert_eq!(split_tunnel_port("x.devenv.local:1"), ("x.devenv.local", Some(1)));
+        assert_eq!(split_tunnel_port("x.portzero.local:1"), ("x.portzero.local", Some(1)));
         assert_eq!(
-            split_tunnel_port("x.devenv.local:65535"),
-            ("x.devenv.local", Some(65535))
+            split_tunnel_port("x.portzero.local:65535"),
+            ("x.portzero.local", Some(65535))
         );
     }
 
@@ -659,8 +659,8 @@ mod tests {
     fn test_split_tunnel_port_templated_name() {
         // The template is preserved in the domain part; only the port is split.
         assert_eq!(
-            split_tunnel_port("web-{branch}.devenv.local:8080"),
-            ("web-{branch}.devenv.local", Some(8080))
+            split_tunnel_port("web-{branch}.portzero.local:8080"),
+            ("web-{branch}.portzero.local", Some(8080))
         );
     }
 
@@ -676,8 +676,8 @@ mod tests {
     fn test_split_tunnel_port_out_of_range() {
         // 70000 > u16::MAX -> not a valid port; whole value is the domain.
         assert_eq!(
-            split_tunnel_port("db.devenv.local:70000"),
-            ("db.devenv.local:70000", None)
+            split_tunnel_port("db.portzero.local:70000"),
+            ("db.portzero.local:70000", None)
         );
     }
 
@@ -685,24 +685,24 @@ mod tests {
     fn test_split_tunnel_port_zero_rejected() {
         // Port 0 is not addressable for a canonical VIP listen port.
         assert_eq!(
-            split_tunnel_port("db.devenv.local:0"),
-            ("db.devenv.local:0", None)
+            split_tunnel_port("db.portzero.local:0"),
+            ("db.portzero.local:0", None)
         );
     }
 
     #[test]
     fn test_split_tunnel_port_non_numeric() {
         assert_eq!(
-            split_tunnel_port("db.devenv.local:abc"),
-            ("db.devenv.local:abc", None)
+            split_tunnel_port("db.portzero.local:abc"),
+            ("db.portzero.local:abc", None)
         );
     }
 
     #[test]
     fn test_split_tunnel_port_empty_after_colon() {
         assert_eq!(
-            split_tunnel_port("db.devenv.local:"),
-            ("db.devenv.local:", None)
+            split_tunnel_port("db.portzero.local:"),
+            ("db.portzero.local:", None)
         );
     }
 
@@ -715,8 +715,8 @@ mod tests {
     fn test_split_tunnel_port_uses_last_colon() {
         // Only the final segment is considered the port.
         assert_eq!(
-            split_tunnel_port("a:b.devenv.local:5432"),
-            ("a:b.devenv.local", Some(5432))
+            split_tunnel_port("a:b.portzero.local:5432"),
+            ("a:b.portzero.local", Some(5432))
         );
     }
 }

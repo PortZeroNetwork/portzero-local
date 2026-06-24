@@ -1,6 +1,6 @@
 //! Embedded authoritative DNS server for the overlay.
 //!
-//! Serves only A records for `<name>.devenv.local` -> virtual IP.
+//! Serves only A records for `<name>.portzero.local` -> virtual IP.
 //! The server listens on 127.0.0.1:53 (or a configurable port) and is reached
 //! via scoped OS configuration, never by hijacking the whole system resolver.
 //!
@@ -98,7 +98,7 @@ impl OverlayDnsServer {
                     out.add_answer(rec);
                     out.set_response_code(ResponseCode::NoError);
                 } else {
-                    // We are authoritative for *.devenv.local — return NXDOMAIN for unknowns in our zone.
+                    // We are authoritative for *.portzero.local — return NXDOMAIN for unknowns in our zone.
                     if is_devenv_local(&name) {
                         out.set_response_code(ResponseCode::NXDomain);
                     }
@@ -117,10 +117,10 @@ impl OverlayDnsServer {
 
 fn is_devenv_local(name: &Name) -> bool {
     let s = name.to_ascii();
-    s.ends_with(".devenv.local") || s == "devenv.local"
+    s.ends_with(".portzero.local") || s == "portzero.local"
 }
 
-/// Given a DNS name like "my-db.devenv.local", look up the corresponding VIP.
+/// Given a DNS name like "my-db.portzero.local", look up the corresponding VIP.
 fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<std::net::Ipv4Addr> {
     let labels: Vec<_> = name
         .iter()
@@ -135,7 +135,7 @@ fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<std::net:
     // The left-most label is our service name.
     let candidate = labels[0];
 
-    // Must be under devenv.local
+    // Must be under portzero.local
     if labels.len() >= 3 && labels[labels.len() - 2] == "devenv" && labels[labels.len() - 1] == "local" {
         return services.get(candidate).map(|svc| {
             // smoltcp Ipv4Address can be converted via its Display or as_bytes in 0.11

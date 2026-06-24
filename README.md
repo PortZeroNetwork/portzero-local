@@ -17,7 +17,7 @@ Repository: https://github.com/LoumTechnologies/port-zero
 - [`docs/`](docs/) — architecture overview, `PORT_ZERO` semantics, privilege
   requirements, and troubleshooting.
 - [`examples/local-overlay/`](examples/local-overlay/) — a runnable end-to-end
-  `.devenv.local` virtual overlay example.
+  `.portzero.local` virtual overlay example.
 - [`sdks/`](sdks/) — thin language helpers (direnv, Node, Python, Go).
 
 ## License

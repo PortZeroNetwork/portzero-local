@@ -3,13 +3,13 @@
 //! The value of PORT_ZERO must be a full domain name (after template
 //! substitution). No implicit suffixes are added.
 //!
-//! - If it ends with `.devenv.local` (or `.local`) → local virtual overlay.
+//! - If it ends with `.portzero.local` (or `.local`) → local virtual overlay.
 //! - Otherwise it must be a valid tunnel domain ending in `.tunnel.portzero.cloud`
 //!   (or the configured base, supporting namespacing like `api.alice.tunnel...`).
 //!
 //! Examples (full names required):
 //!   PORT_ZERO=my-api.alice.tunnel.portzero.cloud
-//!   PORT_ZERO=my-db-{branch}.devenv.local
+//!   PORT_ZERO=my-db-{branch}.portzero.local
 //!   PORT_ZERO=web-{branch}.tunnel.portzero.cloud
 //!
 //! Cross-platform support:
@@ -28,7 +28,7 @@ use crate::protocol_detect;
 /// The single environment variable used to tag services.
 ///
 /// The value (after substitution) must be a full domain name:
-/// - `*.devenv.local` → local overlay
+/// - `*.portzero.local` → local overlay
 /// - `*.(username.)tunnel.portzero.cloud` (or configured base) → cloud tunnel
 ///
 /// No implicit suffix is ever appended.
@@ -45,20 +45,20 @@ const ENV_PORTS_VAR: &str = "PORT_ZERO_PORTS";
 const ENV_NO_PROBE_VAR: &str = "PORT_ZERO_NO_PROBE";
 
 /// Returns true if the (full) resolved name indicates the local virtual overlay
-/// (must end with .devenv.local or .local).
+/// (must end with .portzero.local or .local).
 ///
 /// The value in PORT_ZERO must be the complete name; no suffix is added.
 pub fn is_local_overlay_domain(name: &str) -> bool {
     let n = name.trim().to_ascii_lowercase();
-    n.ends_with(".devenv.local") || n == "devenv.local" || n.ends_with(".local")
+    n.ends_with(".portzero.local") || n == "portzero.local" || n.ends_with(".local")
 }
 
-/// Extract the label for the overlay from a full name like "my-db.devenv.local".
+/// Extract the label for the overlay from a full name like "my-db.portzero.local".
 /// The input must already be a full domain (no implicit suffix added by us).
 pub fn extract_local_label(name: &str) -> String {
     let n = name.trim().to_ascii_lowercase();
     let core = n
-        .strip_suffix(".devenv.local")
+        .strip_suffix(".portzero.local")
         .or_else(|| n.strip_suffix(".local"))
         .unwrap_or(&n);
     let label = core.split('.').next().unwrap_or(core);
@@ -960,14 +960,14 @@ fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> 
 }
 
 // ---------------------------------------------------------------------------
-// Overlay network discovery (PORT_ZERO=*.devenv.local + port 0 support)
+// Overlay network discovery (PORT_ZERO=*.portzero.local + port 0 support)
 // ---------------------------------------------------------------------------
 
 /// A service discovered for the local virtual overlay network.
 #[derive(Debug, Clone)]
 pub struct DiscoveredNetworkService {
     /// The label extracted from the PORT_ZERO value (e.g. "my-db"
-    /// from "my-db.devenv.local").
+    /// from "my-db.portzero.local").
     pub name: String,
     /// The actual host address we must proxy to (usually 127.0.0.1:random).
     pub real_addr: std::net::SocketAddr,
@@ -982,15 +982,15 @@ pub struct DiscoveredNetworkService {
 
 /// Scan for services that should participate in the virtual overlay.
 ///
-/// Only `PORT_ZERO` values whose resolved name ends with `.devenv.local`
+/// Only `PORT_ZERO` values whose resolved name ends with `.portzero.local`
 /// (or `.local`) are accepted. The full name must be provided (no implicit
 /// suffix).
 ///
 /// Supports templating, e.g.:
-///   PORT_ZERO=my-db-{branch}.devenv.local
-///   PORT_ZERO={service}-{worktree}.devenv.local
+///   PORT_ZERO=my-db-{branch}.portzero.local
+///   PORT_ZERO={service}-{worktree}.portzero.local
 ///
-/// The label (left part) gets a stable virtual IP under .devenv.local.
+/// The label (left part) gets a stable virtual IP under .portzero.local.
 /// The daemon should surface loud errors if the same name is claimed by
 /// multiple distinct worktrees.
 pub async fn scan_network_services() -> Vec<DiscoveredNetworkService> {
@@ -1000,13 +1000,24 @@ pub async fn scan_network_services() -> Vec<DiscoveredNetworkService> {
     out
 }
 
-async fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
+struct NetProcessCandidate {
+    label: String,
+    real_addr: std::net::SocketAddr,
+    port: u16,
+    needs_probe: bool,
+    pid: u32,
+    cwd: Option<PathBuf>,
+}
+
+// Blocking half: sysinfo refresh + per-process ps/lsof calls. Must not .await.
+fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
     use std::net::{IpAddr, SocketAddr};
 
     let mut sys = System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
-    let mut results = Vec::new();
+    let daemon_no_probe = std::env::var(ENV_NO_PROBE_VAR).ok();
+    let mut candidates = Vec::new();
 
     for (pid, process) in sys.processes() {
         let pid_u32 = pid.as_u32();
@@ -1020,14 +1031,10 @@ async fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
         };
 
         let process_cwd = process.cwd().map(|p| p.to_path_buf());
-        // Strip an optional canonical `:port` (the VIP listen port) before
-        // template resolution + suffix classification.
         let (raw_domain, canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
         let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
 
-        // For the overlay we require an explicit .local suffix.
-        // Bare names under PORT_ZERO go to the tunnel path.
         if !is_local_overlay_domain(&resolved) {
             continue;
         }
@@ -1042,7 +1049,6 @@ async fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
             continue;
         }
 
-        // Pick a reasonable real port. Prefer a public one.
         let chosen = listening
             .iter()
             .find(|lp| lp.bind == BindAddr::Public)
@@ -1055,38 +1061,57 @@ async fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
 
         let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
 
-        // Precedence (task-16 + task-17):
-        //   explicit `:port`  >  detected canonical (HTTP→80 / TLS→443)  >  ephemeral.
-        //
-        // An explicit canonical port ALWAYS wins and skips probing entirely.
-        // Otherwise, when probing is enabled, actively probe the real backend
-        // to detect its protocol and expose it on the standard port. Detection
-        // is best-effort: any failure yields `None` and we fall back to the
-        // ephemeral port (today's behavior). Results are cached per
-        // (pid, real_port) so we do not re-probe every scan.
-        let service_port = match canonical_port {
-            Some(explicit) => explicit,
+        let (port, needs_probe) = match canonical_port {
+            Some(explicit) => (explicit, false),
             None => {
                 let per_process = scan_process_env(pid_u32, ENV_NO_PROBE_VAR);
-                let daemon_env = std::env::var(ENV_NO_PROBE_VAR).ok();
-                if protocol_detect::probing_disabled(per_process.as_deref(), daemon_env.as_deref()) {
-                    port
-                } else {
-                    protocol_detect::detect_cached(real_addr, (pid_u32, port))
-                        .await
-                        .unwrap_or(port)
-                }
+                let no_probe = protocol_detect::probing_disabled(
+                    per_process.as_deref(),
+                    daemon_no_probe.as_deref(),
+                );
+                (port, !no_probe)
             }
         };
 
-        results.push(DiscoveredNetworkService {
-            name: label,
+        candidates.push(NetProcessCandidate {
+            label,
             real_addr,
-            service_port,
+            port,
+            needs_probe,
             pid: pid_u32,
-            source: ServiceSource::Process {
-                cwd: process_cwd,
-            },
+            cwd: process_cwd,
+        });
+    }
+
+    candidates
+}
+
+async fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
+    // Run the blocking scan (sysinfo + per-process ps/lsof) on the blocking
+    // thread pool so the async executor is free to handle shutdown signals and
+    // other tasks while the scan runs.
+    let candidates = tokio::task::spawn_blocking(scan_network_processes_sync)
+        .await
+        .unwrap_or_default();
+
+    let mut results = Vec::new();
+    for c in candidates {
+        // Precedence (task-16 + task-17):
+        //   explicit `:port`  >  detected canonical (HTTP→80 / TLS→443)  >  ephemeral.
+        let service_port = if c.needs_probe {
+            protocol_detect::detect_cached(c.real_addr, (c.pid, c.port))
+                .await
+                .unwrap_or(c.port)
+        } else {
+            c.port
+        };
+
+        results.push(DiscoveredNetworkService {
+            name: c.label,
+            real_addr: c.real_addr,
+            service_port,
+            pid: c.pid,
+            source: ServiceSource::Process { cwd: c.cwd },
         });
     }
 
@@ -1162,7 +1187,7 @@ async fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkS
         };
 
         // Only PORT_ZERO is used. Overlay participation requires the value
-        // to end with .devenv.local (pure suffix-based detection).
+        // to end with .portzero.local (pure suffix-based detection).
         let raw_name = envs
             .iter()
             .find_map(|e| e.strip_prefix("PORT_ZERO="))

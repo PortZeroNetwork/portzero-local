@@ -1,7 +1,7 @@
 //! Visibility layer: duplicate-name detection, persisted "issues" state, and
 //! best-effort native notifications.
 //!
-//! When the same `*.devenv.local` overlay name is claimed by two different
+//! When the same `*.portzero.local` overlay name is claimed by two different
 //! process contexts (different PID *and* different working directory — i.e.
 //! two worktrees), routing is ambiguous and the user almost certainly meant to
 //! give the worktrees distinct names. This module makes that situation loud:
@@ -25,7 +25,7 @@ use crate::discovery::{DiscoveredNetworkService, ServiceSource};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Issue {
-    /// The same `.devenv.local` name is claimed by more than one distinct
+    /// The same `.portzero.local` name is claimed by more than one distinct
     /// process context (different worktrees / cwds).
     DuplicateName {
         /// The overlay name (label) in conflict, e.g. "my-db".
@@ -62,7 +62,7 @@ impl Issue {
     pub fn summary(&self) -> String {
         match self {
             Issue::DuplicateName { name, claimants } => format!(
-                "Duplicate .devenv.local name \"{}\" claimed by {} contexts: {}",
+                "Duplicate .portzero.local name \"{}\" claimed by {} contexts: {}",
                 name,
                 claimants.len(),
                 claimants.join(", ")
@@ -83,12 +83,12 @@ impl Issue {
         match self {
             Issue::DuplicateName { name, .. } => format!(
                 "Give each worktree a unique PORT_ZERO name — e.g. use a template \
-                 like \"{name}-{{branch}}.devenv.local\" or \"{name}-{{worktree}}.devenv.local\" \
+                 like \"{name}-{{branch}}.portzero.local\" or \"{name}-{{worktree}}.portzero.local\" \
                  so the resolved name differs per checkout."
             ),
             Issue::LegacyListener { port, .. } => format!(
                 "Set PORT_ZERO on this process (e.g. \
-                 PORT_ZERO=my-svc.devenv.local for the local overlay, or \
+                 PORT_ZERO=my-svc.portzero.local for the local overlay, or \
                  my-svc.<user>.tunnel.portzero.cloud for a cloud tunnel) and reach it by name \
                  instead of localhost:{port}. Until then this service bypasses the tunnel."
             ),

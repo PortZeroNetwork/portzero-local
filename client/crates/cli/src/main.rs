@@ -12,7 +12,7 @@ mod update;
 
 #[derive(Parser)]
 #[command(
-    name = "port-zero",
+    name = "portzero",
     version,
     about = "Expose local services via portzero.cloud tunnels"
 )]

@@ -12,8 +12,8 @@ All overlay code lives in `client/crates/daemon/src/net/`:
 |----------------------|---------------------------------------------------------------------|
 | `virtual_ip.rs`      | Allocates stable virtual IPs from `10.254.0.0/16` per name.          |
 | `service_table.rs`   | Maps `name` ⇄ `VIP` ⇄ real ephemeral `SocketAddr` + service port.    |
-| `dns.rs`             | Embedded authoritative DNS server for `*.devenv.local` → VIP.        |
-| `resolver_config.rs` | Installs a *scoped* OS resolver so only `.devenv.local` is sent to it. |
+| `dns.rs`             | Embedded authoritative DNS server for `*.portzero.local` → VIP.        |
+| `resolver_config.rs` | Installs a *scoped* OS resolver so only `.portzero.local` is sent to it. |
 | `tun_device.rs`      | Creates the TUN interface and routes `10.254.0.0/16` into it.         |
 | `stack.rs`           | User-space TCP stack (smoltcp) that proxies VIP:port → real backend.  |
 | `overlay.rs`         | `OverlayNetwork`: orchestrates TUN + stack + DNS + resolver.          |
@@ -23,19 +23,19 @@ All overlay code lives in `client/crates/daemon/src/net/`:
 ```
 service (port 0)        daemon                              client (curl)
       |                   |                                     |
-  [1] |  set PORT_ZERO=hello.devenv.local before exec       |
+  [1] |  set PORT_ZERO=hello.portzero.local before exec       |
       |                   |                                     |
   [2] |<--- discovery reads /proc/<pid>/environ ----------------|
-      |     suffix .devenv.local => local overlay               |
+      |     suffix .portzero.local => local overlay               |
       |     real ephemeral port found                           |
       |                   |                                     |
   [3] |     ServiceTable.register("hello", real_addr, port)     |
       |     VirtualIpAllocator.assign("hello") => 10.254.0.N    |
       |                   |                                     |
-  [4] |     DNS server now answers hello.devenv.local => VIP    |
-      |     scoped resolver routes *.devenv.local to it         |
+  [4] |     DNS server now answers hello.portzero.local => VIP    |
+      |     scoped resolver routes *.portzero.local to it         |
       |                   |                                     |
-  [5] |                   |   curl http://hello.devenv.local/   |
+  [5] |                   |   curl http://hello.portzero.local/   |
       |                   |<--- resolves to 10.254.0.N ---------|
       |                   |<--- TCP SYN to 10.254.0.N:80 -------|
       |                   |     (kernel routes /16 into TUN)    |
@@ -52,7 +52,7 @@ A service sets `PORT_ZERO` to a **full domain** and binds **port 0**. The
 long-running daemon (`port-zero start [--foreground]`) reads each process's
 environment from the outside: `/proc/<pid>/environ` on Linux,
 `sysctl KERN_PROCARGS2` on macOS. Both are **frozen at `execve()` time**, which
-is why the variable must be set before launch. The `.devenv.local` suffix routes
+is why the variable must be set before launch. The `.portzero.local` suffix routes
 the service to the overlay; the daemon discovers the real ephemeral host port.
 
 ### 3. VIP allocation
@@ -66,10 +66,10 @@ across service restarts. The `ServiceTable` keys both `name → service` and
 ### 4. Scoped DNS
 
 `OverlayDnsServer` (`net/dns.rs`) is a small authoritative UDP DNS server that
-answers **A records only**, for `<name>.devenv.local → VIP`, and returns
+answers **A records only**, for `<name>.portzero.local → VIP`, and returns
 `NXDOMAIN` for unknown names inside its own zone. It defaults to listening on
 `127.0.0.1:5300`. `resolver_config.rs` then installs a **scoped** OS resolver so
-that only `*.devenv.local` queries are directed at it — the system resolver is
+that only `*.portzero.local` queries are directed at it — the system resolver is
 never hijacked.
 
 ### 5–7. TUN + smoltcp proxy

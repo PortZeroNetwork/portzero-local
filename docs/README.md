@@ -14,7 +14,7 @@ operate it.
 See also:
 
 - [`../examples/local-overlay/`](../examples/local-overlay/) — a runnable
-  `.devenv.local` end-to-end example.
+  `.portzero.local` end-to-end example.
 - [`../examples/docker-templated-tunnel/`](../examples/docker-templated-tunnel/) —
   templated names + Docker discovery.
 - [`../sdks/`](../sdks/) — thin language helpers (direnv, Node, Python, Go).

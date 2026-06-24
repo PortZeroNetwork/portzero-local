@@ -1,6 +1,6 @@
 //! Zero-config canonical port detection for overlay services (task-17).
 //!
-//! When a `.devenv.local` overlay service is discovered WITHOUT an explicit
+//! When a `.portzero.local` overlay service is discovered WITHOUT an explicit
 //! canonical `:port` (see task-16), we actively probe the real ephemeral
 //! backend to detect its protocol and expose it on the standard port:
 //!

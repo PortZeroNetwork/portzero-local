@@ -31,7 +31,7 @@ impl AuthConfig {
                  Set the HOME environment variable and try again."
             )
         })?;
-        Ok(home.join(".devenv").join("auth.json"))
+        Ok(home.join(".portzero").join("auth.json"))
     }
 
     /// Load auth config from disk.

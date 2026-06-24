@@ -1,8 +1,8 @@
 # Troubleshooting
 
-## `curl: (6) Could not resolve host: <name>.devenv.local`
+## `curl: (6) Could not resolve host: <name>.portzero.local`
 
-The overlay is not active. `.devenv.local` names are **only visible once the
+The overlay is not active. `.portzero.local` names are **only visible once the
 overlay is running**, which requires the daemon to be started with **root /
 `CAP_NET_ADMIN`**. Start it with `sudo`:
 
@@ -24,7 +24,7 @@ reads the frozen `execve()` environment (`/proc/<pid>/environ` on Linux,
 - Verify before launching: `echo $PORT_ZERO`.
 - Use direnv or `port-zero-exec` so it is exported before exec.
 - Confirm the value is a **full domain** with a recognized suffix
-  (`.devenv.local` or `.tunnel.portzero.cloud`); nothing is appended implicitly.
+  (`.portzero.local` or `.tunnel.portzero.cloud`); nothing is appended implicitly.
 
 ## The literal `{branch}` appears in `status`
 
@@ -38,7 +38,7 @@ those fails the placeholder is left literal. See
 
 The **suffix** decides the target, not any flag:
 
-- `.devenv.local` → local overlay
+- `.portzero.local` → local overlay
 - `.tunnel.portzero.cloud` → cloud tunnel
 
 Double-check the suffix in your `PORT_ZERO` value.

@@ -1,10 +1,10 @@
-//! Scoped OS DNS resolver configuration for `*.devenv.local`.
+//! Scoped OS DNS resolver configuration for `*.portzero.local`.
 //!
-//! Points the OS at our embedded DNS server for ONLY the `devenv.local` domain,
+//! Points the OS at our embedded DNS server for ONLY the `portzero.local` domain,
 //! without hijacking the whole system resolver. Three platforms are supported:
 //!
-//! - **macOS**: writes `/etc/resolver/devenv.local` (requires privileges).
-//! - **Linux**: attaches scoped DNS + `~devenv.local` routing domain to the
+//! - **macOS**: writes `/etc/resolver/portzero.local` (requires privileges).
+//! - **Linux**: attaches scoped DNS + `~portzero.local` routing domain to the
 //!   overlay's own TUN link via systemd-resolved's `resolve1` D-Bus API
 //!   (`busctl`), with a dnsmasq-snippet fallback when resolved is absent. See
 //!   the Linux section for the per-environment strategy.
@@ -34,7 +34,7 @@ use tracing::warn;
 // Public entry points
 // ---------------------------------------------------------------------------
 
-/// Install the scoped resolver for `*.devenv.local`, routing queries to
+/// Install the scoped resolver for `*.portzero.local`, routing queries to
 /// `dns_addr` (our embedded DNS server).
 ///
 /// `link_name` is the name of the overlay's own TUN interface (e.g. `deven0`),
@@ -72,7 +72,7 @@ fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
     if !dir.exists() {
         fs::create_dir_all(dir).context("creating /etc/resolver")?;
     }
-    let path = dir.join("devenv.local");
+    let path = dir.join("portzero.local");
     let content = macos_resolver_file_content(dns_addr);
     fs::write(&path, content)
         .with_context(|| format!("writing {}", path.display()))?;
@@ -83,15 +83,15 @@ fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
 #[cfg(target_os = "macos")]
 fn uninstall_impl(_link_name: &str) -> Result<()> {
     use std::path::Path;
-    let path = Path::new("/etc/resolver/devenv.local");
+    let path = Path::new("/etc/resolver/portzero.local");
     if path.exists() {
-        std::fs::remove_file(path).context("removing /etc/resolver/devenv.local")?;
-        info!("macOS: removed scoped resolver /etc/resolver/devenv.local");
+        std::fs::remove_file(path).context("removing /etc/resolver/portzero.local")?;
+        info!("macOS: removed scoped resolver /etc/resolver/portzero.local");
     }
     Ok(())
 }
 
-/// Generate the content of `/etc/resolver/devenv.local`.
+/// Generate the content of `/etc/resolver/portzero.local`.
 /// The `port` line is needed when the server listens on a non-standard port.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn macos_resolver_file_content(dns_addr: SocketAddr) -> String {
@@ -140,7 +140,7 @@ pub(crate) fn macos_resolver_file_content(dns_addr: SocketAddr) -> String {
 
 /// The routing domain we scope to. The leading-`~`/`true` "routing domain only"
 /// semantics ensure general hostname resolution is never affected.
-const SCOPED_DOMAIN: &str = "devenv.local";
+const SCOPED_DOMAIN: &str = "portzero.local";
 
 /// Which resolver mechanism is wired up on this host. Detected at install time;
 /// the matching teardown is selected the same way at uninstall time.
@@ -151,7 +151,7 @@ enum LinuxResolver {
     /// resolve1 D-Bus API (`busctl`).
     SystemdResolved,
     /// systemd-resolved absent but a dnsmasq-based resolver owns resolv.conf:
-    /// drop a scoped `server=/devenv.local/…` snippet.
+    /// drop a scoped `server=/portzero.local/…` snippet.
     Dnsmasq,
     /// Nothing we can configure automatically.
     None,
@@ -301,11 +301,11 @@ pub(crate) fn busctl_set_link_dns_args(ifindex: u32, dns_addr: SocketAddr) -> Ve
 }
 
 /// Build `busctl call … SetLinkDomains` args restricting `ifindex` to the
-/// `devenv.local` ROUTING domain.
+/// `portzero.local` ROUTING domain.
 ///
 /// resolve1 `SetLinkDomains` signature: `ia(sb)` = link ifindex, then an array
 /// of (domain, routing-only?) pairs. `routing-only = true` is the D-Bus
-/// equivalent of resolvectl's `~devenv.local`: queries for this domain are
+/// equivalent of resolvectl's `~portzero.local`: queries for this domain are
 /// routed to this link's DNS but it is never used as a search domain.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn busctl_set_link_domains_args(ifindex: u32) -> Vec<String> {
@@ -350,12 +350,12 @@ pub(crate) fn resolvectl_dns_args(link: &str, dns_addr: SocketAddr) -> Vec<Strin
     vec!["dns".to_string(), link.to_string(), addr_str]
 }
 
-/// Returns the resolvectl args to restrict a link to the devenv.local domain.
+/// Returns the resolvectl args to restrict a link to the portzero.local domain.
 /// Kept as the alternative mechanism to the busctl/resolve1 path; see
 /// [`resolvectl_dns_args`].
 #[allow(dead_code)]
 pub(crate) fn resolvectl_domain_args(link: &str) -> Vec<String> {
-    // ~devenv.local means "routing domain only" — queries for devenv.local go
+    // ~portzero.local means "routing domain only" — queries for portzero.local go
     // here but it is not used as a search domain.
     vec![
         "domain".to_string(),
@@ -372,14 +372,14 @@ pub(crate) fn resolvectl_domain_args(link: &str) -> Vec<String> {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn dnsmasq_snippet_path(nm: bool) -> std::path::PathBuf {
     if nm {
-        std::path::PathBuf::from("/etc/NetworkManager/dnsmasq.d/devenv.conf")
+        std::path::PathBuf::from("/etc/NetworkManager/dnsmasq.d/portzero.conf")
     } else {
-        std::path::PathBuf::from("/etc/dnsmasq.d/devenv.conf")
+        std::path::PathBuf::from("/etc/dnsmasq.d/portzero.conf")
     }
 }
 
-/// Scoped dnsmasq snippet: route only `devenv.local` to our embedded DNS,
-/// preserving the port. `server=/devenv.local/<ip>#<port>`.
+/// Scoped dnsmasq snippet: route only `portzero.local` to our embedded DNS,
+/// preserving the port. `server=/portzero.local/<ip>#<port>`.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn dnsmasq_snippet_content(dns_addr: SocketAddr) -> String {
     format!(
@@ -490,7 +490,7 @@ const fn libc_af_inet6() -> i32 {
 fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
     let script = powershell_add_nrpt_script(dns_addr);
     run_powershell(&script).context("Add-DnsClientNrptRule")?;
-    info!("Windows: added NRPT rule for devenv.local -> {}", dns_addr);
+    info!("Windows: added NRPT rule for portzero.local -> {}", dns_addr);
     Ok(())
 }
 
@@ -498,7 +498,7 @@ fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
 fn uninstall_impl(_link_name: &str) -> Result<()> {
     let script = powershell_remove_nrpt_script();
     run_powershell(&script).context("Remove-DnsClientNrptRule")?;
-    info!("Windows: removed NRPT rule for devenv.local");
+    info!("Windows: removed NRPT rule for portzero.local");
     Ok(())
 }
 
@@ -509,8 +509,8 @@ pub(crate) fn powershell_add_nrpt_script(dns_addr: SocketAddr) -> String {
     // NRPT requires the namespace with a leading dot.
     format!(
         r#"
-Get-DnsClientNrptRule | Where-Object {{ $_.Namespace -eq '.devenv.local' }} | Remove-DnsClientNrptRule -Force -ErrorAction SilentlyContinue
-Add-DnsClientNrptRule -Namespace '.devenv.local' -NameServers '{ip}' -Comment 'port-zero managed'
+Get-DnsClientNrptRule | Where-Object {{ $_.Namespace -eq '.portzero.local' }} | Remove-DnsClientNrptRule -Force -ErrorAction SilentlyContinue
+Add-DnsClientNrptRule -Namespace '.portzero.local' -NameServers '{ip}' -Comment 'port-zero managed'
 "#,
         ip = dns_addr.ip()
     )
@@ -520,7 +520,7 @@ Add-DnsClientNrptRule -Namespace '.devenv.local' -NameServers '{ip}' -Comment 'p
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) fn powershell_remove_nrpt_script() -> String {
     r#"
-Get-DnsClientNrptRule | Where-Object { $_.Namespace -eq '.devenv.local' } | Remove-DnsClientNrptRule -Force -ErrorAction SilentlyContinue
+Get-DnsClientNrptRule | Where-Object { $_.Namespace -eq '.portzero.local' } | Remove-DnsClientNrptRule -Force -ErrorAction SilentlyContinue
 "#
     .to_string()
 }
@@ -545,7 +545,7 @@ fn run_powershell(script: &str) -> Result<()> {
 fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
     warn!(
         "scoped resolver not supported on this platform; \
-         configure your OS to send *.devenv.local queries to {}",
+         configure your OS to send *.portzero.local queries to {}",
         dns_addr
     );
     Ok(())
@@ -575,7 +575,7 @@ mod tests {
     fn macos_content_standard_port() {
         let content = macos_resolver_file_content(addr("127.0.0.1", 53));
         assert!(content.contains("nameserver 127.0.0.1\n"), "missing nameserver line");
-        assert!(!content.contains("port"), "should not emit port line for port 53");
+        assert!(!content.contains("\nport "), "should not emit port line for port 53");
     }
 
     #[test]
@@ -606,7 +606,7 @@ mod tests {
         let args = resolvectl_domain_args("lo");
         assert_eq!(args[0], "domain");
         assert_eq!(args[1], "lo");
-        assert_eq!(args[2], "~devenv.local", "must use routing-domain tilde prefix");
+        assert_eq!(args[2], "~portzero.local", "must use routing-domain tilde prefix");
     }
 
     #[test]
@@ -625,7 +625,7 @@ mod tests {
     #[test]
     fn powershell_add_script_contains_namespace() {
         let script = powershell_add_nrpt_script(addr("127.0.0.1", 5300));
-        assert!(script.contains(".devenv.local"), "must reference .devenv.local namespace");
+        assert!(script.contains(".portzero.local"), "must reference .portzero.local namespace");
         assert!(script.contains("127.0.0.1"), "must reference the DNS server IP");
         assert!(script.contains("Add-DnsClientNrptRule"), "must call Add-DnsClientNrptRule");
     }
@@ -643,11 +643,11 @@ mod tests {
     #[test]
     fn powershell_remove_script_targets_namespace() {
         let script = powershell_remove_nrpt_script();
-        assert!(script.contains(".devenv.local"));
+        assert!(script.contains(".portzero.local"));
         assert!(script.contains("Remove-DnsClientNrptRule"));
     }
 
-    // --- Scope guard: only devenv.local ---
+    // --- Scope guard: only portzero.local ---
 
     #[test]
     fn macos_does_not_mention_other_domains() {
@@ -662,9 +662,9 @@ mod tests {
     #[test]
     fn resolvectl_args_scope_only_devenv_local() {
         let domain_args = resolvectl_domain_args("lo");
-        // Only one domain listed, and it must be ~devenv.local.
-        assert_eq!(domain_args.len(), 3, "exactly [domain, link, ~devenv.local]");
-        assert_eq!(domain_args[2], "~devenv.local");
+        // Only one domain listed, and it must be ~portzero.local.
+        assert_eq!(domain_args.len(), 3, "exactly [domain, link, ~portzero.local]");
+        assert_eq!(domain_args[2], "~portzero.local");
     }
 
     // --- Linux: resolvectl on the TUN link (not lo) ---
@@ -718,7 +718,7 @@ mod tests {
         assert_eq!(args[5], "ia(sb)");
         assert_eq!(args[6], "7", "ifindex");
         assert_eq!(args[7], "1", "exactly one domain");
-        assert_eq!(args[8], "devenv.local");
+        assert_eq!(args[8], "portzero.local");
         assert_eq!(
             args[9], "true",
             "routing-domain only — must not be used as a search domain"
@@ -812,8 +812,8 @@ mod tests {
     fn dnsmasq_snippet_scopes_only_devenv_local() {
         let content = dnsmasq_snippet_content(addr("127.0.0.1", 5300));
         assert!(
-            content.contains("server=/devenv.local/127.0.0.1#5300"),
-            "must route only devenv.local to the embedded DNS with its port: {content}"
+            content.contains("server=/portzero.local/127.0.0.1#5300"),
+            "must route only portzero.local to the embedded DNS with its port: {content}"
         );
         // No catch-all server line that would hijack the whole resolver.
         assert!(
@@ -828,11 +828,11 @@ mod tests {
     fn dnsmasq_snippet_path_selection() {
         assert_eq!(
             dnsmasq_snippet_path(true),
-            std::path::PathBuf::from("/etc/NetworkManager/dnsmasq.d/devenv.conf")
+            std::path::PathBuf::from("/etc/NetworkManager/dnsmasq.d/portzero.conf")
         );
         assert_eq!(
             dnsmasq_snippet_path(false),
-            std::path::PathBuf::from("/etc/dnsmasq.d/devenv.conf")
+            std::path::PathBuf::from("/etc/dnsmasq.d/portzero.conf")
         );
     }
 }

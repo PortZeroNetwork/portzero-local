@@ -5,7 +5,7 @@
 //! * [`unprivileged_overlay_round_trip`] — runs in plain `cargo test` with NO
 //!   root. It exercises the overlay components that are reachable through the
 //!   daemon's public API: VIP allocation, the [`ServiceTable`], the embedded
-//!   authoritative DNS server (`name.devenv.local` -> VIP), and a real tokio
+//!   authoritative DNS server (`name.portzero.local` -> VIP), and a real tokio
 //!   backend that the overlay would proxy to. This asserts the *wiring*
 //!   (name -> VIP -> real backend).
 //!
@@ -117,7 +117,7 @@ async fn unprivileged_overlay_round_trip() {
         // 1. A real backend bound to an ephemeral ("port 0") address.
         let backend_addr = spawn_echo_backend().await;
 
-        // 2. Register a `*.devenv.local` service in the shared table the DNS
+        // 2. Register a `*.portzero.local` service in the shared table the DNS
         //    server reads from. The service is reachable on VIP:5432 and proxies
         //    to the real ephemeral backend.
         let services: Arc<RwLock<ServiceTable>> = Arc::new(RwLock::new(ServiceTable::new()));
@@ -155,7 +155,7 @@ async fn unprivileged_overlay_round_trip() {
         // Resolve the registered name; retry briefly while the server binds.
         let mut resolved = None;
         for _ in 0..50 {
-            if let Some(ip) = dns_query_a(server_addr, "my-db.devenv.local").await {
+            if let Some(ip) = dns_query_a(server_addr, "my-db.portzero.local").await {
                 resolved = Some(ip);
                 break;
             }
@@ -164,11 +164,11 @@ async fn unprivileged_overlay_round_trip() {
         assert_eq!(
             resolved,
             Some(vip),
-            "DNS did not resolve my-db.devenv.local to its VIP"
+            "DNS did not resolve my-db.portzero.local to its VIP"
         );
 
         // An unknown name under our zone must NOT resolve to an address.
-        let unknown = dns_query_a(server_addr, "nope.devenv.local").await;
+        let unknown = dns_query_a(server_addr, "nope.portzero.local").await;
         assert_eq!(unknown, None, "unknown name unexpectedly resolved");
 
         // 4. The real backend the overlay proxies to is reachable and echoes.
@@ -204,7 +204,7 @@ async fn unprivileged_vip_byte_proxy() {
         // 1. Start a real backend echo server (the "port 0" backend).
         let backend_addr = spawn_echo_backend().await;
 
-        // 2. Register a `*.devenv.local` service mapping VIP:5432 -> backend.
+        // 2. Register a `*.portzero.local` service mapping VIP:5432 -> backend.
         let mut table = ServiceTable::new();
         let svc = table.register("my-db".to_string(), backend_addr, 5432, 0);
         let vip = svc.vip;
@@ -313,7 +313,7 @@ async fn real_tun_overlay() {
         // Give the stack a moment to apply listeners, then resolve via the real
         // embedded DNS.
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let ip = dns_query_a("127.0.0.1:53000".parse().unwrap(), "rooted.devenv.local").await;
+        let ip = dns_query_a("127.0.0.1:53000".parse().unwrap(), "rooted.portzero.local").await;
         assert!(ip.is_some(), "real overlay DNS did not resolve service");
 
         overlay.shutdown().await;

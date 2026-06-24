@@ -83,8 +83,8 @@ pub struct DaemonConfig {
 impl Default for DaemonConfig {
     fn default() -> Self {
         let state_dir = dirs::home_dir()
-            .map(|h| h.join(".devenv").join("daemon"))
-            .unwrap_or_else(|| PathBuf::from(".devenv/daemon"));
+            .map(|h| h.join(".portzero").join("daemon"))
+            .unwrap_or_else(|| PathBuf::from(".portzero/daemon"));
 
         Self {
             state_dir,
@@ -262,8 +262,8 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     }
 
     // Start the virtual overlay network (TUN + smoltcp stack + scoped DNS) for
-    // services that use a full `*.devenv.local` name. This is independent of the
-    // cloud tunnel: the overlay handles `.devenv.local`, cloud handles everything
+    // services that use a full `*.portzero.local` name. This is independent of the
+    // cloud tunnel: the overlay handles `.portzero.local`, cloud handles everything
     // else, so the two never conflict.
     //
     // Starting is best-effort: creating the TUN device requires root/CAP_NET_ADMIN
@@ -294,7 +294,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     let overlay: Option<OverlayNetwork> = match OverlayNetwork::start(OverlayConfig::default()).await
     {
         Ok(ov) => {
-            tracing::info!("Virtual overlay network started (.devenv.local)");
+            tracing::info!("Virtual overlay network started (.portzero.local)");
             // Seed the overlay immediately so existing services are reachable
             // without waiting for the first scan cycle.
             let (overlay_issues, overlay_services) = refresh_overlay_services(&ov).await;
@@ -403,7 +403,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             }
         }
 
-        // Feed `.devenv.local` services into the virtual overlay. This is a
+        // Feed `.portzero.local` services into the virtual overlay. This is a
         // separate discovery pass from the cloud/route discovery above and does
         // not touch cloud route registration. No-op when the overlay failed to
         // start (unprivileged environment).
@@ -650,7 +650,7 @@ fn write_overlay_state(
     let routes = services
         .iter()
         .map(|s| OverlayRoute {
-            domain: format!("{}.devenv.local", s.name),
+            domain: format!("{}.portzero.local", s.name),
             service_port: s.service_port,
             real_addr: s.real_addr.to_string(),
             pid: s.pid,
@@ -667,7 +667,7 @@ fn write_overlay_state(
 }
 
 /// Build an overlay `ServiceTable` from the services discovered for the local
-/// virtual network (those whose `PORT_ZERO` value ends in `.devenv.local`).
+/// virtual network (those whose `PORT_ZERO` value ends in `.portzero.local`).
 ///
 /// This is pure (no TUN / no privileges required) so it can be unit-tested.
 fn build_overlay_table(services: &[DiscoveredNetworkService]) -> ServiceTable {
@@ -683,7 +683,7 @@ fn build_overlay_table(services: &[DiscoveredNetworkService]) -> ServiceTable {
     table
 }
 
-/// Best-effort: push the latest set of `.devenv.local` overlay services into the
+/// Best-effort: push the latest set of `.portzero.local` overlay services into the
 /// running overlay network. Logs and ignores errors so a transient stack issue
 /// never disrupts the (independent) cloud/local route flow.
 ///
@@ -707,7 +707,7 @@ async fn refresh_overlay_services(
 /// Gather all current issues from every source and publish them once.
 ///
 /// Sources:
-///  - duplicate `.devenv.local` names (from the overlay scan, when the overlay
+///  - duplicate `.portzero.local` names (from the overlay scan, when the overlay
 ///    is running),
 ///  - legacy listeners: processes serving common/managed ports directly,
 ///    bypassing port-zero.

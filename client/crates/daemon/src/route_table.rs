@@ -179,10 +179,10 @@ impl RouteTable {
     }
 }
 
-/// A route entry for a local overlay (`.devenv.local`) service.
+/// A route entry for a local overlay (`.portzero.local`) service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverlayRoute {
-    /// Full domain name (e.g. "web-main.devenv.local").
+    /// Full domain name (e.g. "web-main.portzero.local").
     pub domain: String,
     /// Port clients are expected to connect to on the virtual IP (e.g. 8080).
     pub service_port: u16,
