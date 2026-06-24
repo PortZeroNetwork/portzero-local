@@ -205,7 +205,7 @@ jobs:
       - name: Checkout tap repository
         uses: actions/checkout@v4
         with:
-          repository: PortZeroNetwork/homebrew-port-zero
+          repository: PortZeroNetwork/homebrew-portzero
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
 
