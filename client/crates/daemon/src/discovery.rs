@@ -729,7 +729,14 @@ async fn scan_docker_containers(
     account_id: Option<&str>,
     username: Option<&str>,
 ) -> Vec<DiscoveredService> {
-    match scan_docker_containers_impl(account_id, username).await {
+    let acct = account_id.map(str::to_owned);
+    let user = username.map(str::to_owned);
+    match tokio::task::spawn_blocking(move || {
+        scan_docker_containers_impl(acct.as_deref(), user.as_deref())
+    })
+    .await
+    .unwrap_or_else(|_| Err(anyhow::anyhow!("spawn_blocking panicked")))
+    {
         Ok(services) => services,
         Err(e) => {
             tracing::debug!(
@@ -741,7 +748,7 @@ async fn scan_docker_containers(
     }
 }
 
-async fn scan_docker_containers_impl(
+fn scan_docker_containers_impl(
     account_id: Option<&str>,
     username: Option<&str>,
 ) -> Result<Vec<DiscoveredService>> {
@@ -1119,7 +1126,10 @@ async fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
 }
 
 async fn scan_network_containers() -> Vec<DiscoveredNetworkService> {
-    match scan_network_containers_impl().await {
+    match tokio::task::spawn_blocking(scan_network_containers_impl)
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("spawn_blocking panicked")))
+    {
         Ok(v) => v,
         Err(e) => {
             tracing::debug!("Docker network scan failed: {}", e);
@@ -1128,7 +1138,7 @@ async fn scan_network_containers() -> Vec<DiscoveredNetworkService> {
     }
 }
 
-async fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService>> {
+fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService>> {
     use std::net::{IpAddr, SocketAddr};
     use std::process::Command;
 

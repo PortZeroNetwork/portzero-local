@@ -307,7 +307,8 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 &overlay_services,
                 docker_conflicts,
                 &mut notified_issues,
-            );
+            )
+            .await;
             Some(ov)
         }
         Err(e) => {
@@ -432,7 +433,8 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             &overlay_services,
             docker_conflicts,
             &mut notified_issues,
-        );
+        )
+        .await;
 
         // Prune grace tracker
         let active_domains: Vec<&String> = route_table.routes.keys().collect();
@@ -617,26 +619,19 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
 /// step wedges.
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Arm a safety net so shutdown can never wedge the process:
-///   * a SECOND Ctrl-C / SIGTERM forces an immediate exit, and
-///   * an overall deadline forces exit even if no second signal arrives.
+/// Arm a safety net so shutdown can never wedge the process.
 ///
-/// Either path calls `std::process::exit(0)` after logging. This runs as a
-/// detached task alongside the graceful teardown; in the normal case the
-/// process exits cleanly via the loop returning before this fires.
+/// A hard deadline (`GRACEFUL_SHUTDOWN_TIMEOUT`) forces `process::exit(0)` even
+/// if tokio's blocking-thread pool is still draining (e.g. an in-flight
+/// spawn_blocking scan). Uses a plain OS thread so it survives the tokio runtime
+/// being torn down when the `main()` future returns.
 fn spawn_shutdown_watchdog() {
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = wait_for_shutdown_signal() => {
-                tracing::warn!("Second shutdown signal received, forcing immediate exit");
-            }
-            _ = tokio::time::sleep(GRACEFUL_SHUTDOWN_TIMEOUT) => {
-                tracing::warn!(
-                    "Graceful shutdown exceeded {}s, forcing exit",
-                    GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
-                );
-            }
-        }
+    std::thread::spawn(|| {
+        std::thread::sleep(GRACEFUL_SHUTDOWN_TIMEOUT);
+        tracing::warn!(
+            "Graceful shutdown exceeded {}s, forcing exit",
+            GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
+        );
         std::process::exit(0);
     });
 }
@@ -714,7 +709,7 @@ async fn refresh_overlay_services(
 ///
 /// `overlay_issues` / `overlay_services` come from a prior overlay refresh (or
 /// are empty when the overlay isn't running). Best-effort and non-fatal.
-fn gather_and_publish_issues(
+async fn gather_and_publish_issues(
     config: &DaemonConfig,
     route_table: &RouteTable,
     overlay_issues: Vec<notify::Issue>,
@@ -723,8 +718,16 @@ fn gather_and_publish_issues(
     notified_issues: &mut IssuesState,
 ) {
     let managed = build_managed_context(route_table, overlay_services);
+    // enumerate_system_listeners() does a full /proc scan + per-pid fd reads —
+    // blocking. Run it on the spawn_blocking pool so the async executor stays
+    // free to handle shutdown signals and other tasks.
+    let legacy = tokio::task::spawn_blocking(move || {
+        crate::legacy_monitor::scan_legacy_listeners(&managed)
+    })
+    .await
+    .unwrap_or_default();
     let mut all = overlay_issues;
-    all.extend(crate::legacy_monitor::scan_legacy_listeners(&managed));
+    all.extend(legacy);
     // Real-time Docker port-bind conflicts caught by the event monitor (task-8).
     all.extend(docker_conflicts);
     publish_issues(all, config, notified_issues);
