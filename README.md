@@ -1,6 +1,6 @@
 # Port Zero
 
-We have all seen this kind of error:
+We developers have all seen port conflict errors like this one:
 
 ```
 Error: listen EADDRINUSE: address already in use :::3000
@@ -13,18 +13,18 @@ Port Zero is a developer tool that solves this problem once and for all. Port Ze
 
 Either way, you use Port Zero with your programs the same, whether they are a process or a Docker container. Configure all ports to 0 for any program you want Port Zero to manage; this tells the operating system to pick an available port at random. Then you start your programs with the `PZ_TUNNEL` environment variable. For example:
 
-- If you specify PZ_TUNNEL={branch}.mytodoapp.portzero.**local**:80 this tells Port Zero to use the free, open source, local path
+- If you specify PZ_TUNNEL={branch}.mytodoapp.portzero.**local**:80 this tells Port Zero to use the free, open source, local part
 - If you specify PZ_TUNNEL={branch}.mytodoapp.portzero.**cloud**:80 this tells Port Zero to use the paid, subscription service
 
 The `PZ_TUNNEL` setting tells PortZero the domain name and port that clients should use.
 
-With your program running, you can open http://master.mytodoapp.portzero.local:80 in your browser. You might also be running a different version of your program in a separate git worktree. Port Zero supports this; http://some-other-branch.mytodoapp.portzero.local:80 can be available at the same time without port conflicts. This doesn't just work for http; it works for any TCP protocol.
+With your program running, you can open http://master.mytodoapp.portzero.local:80 in your browser. You might also be running a different version of your program in a separate git worktree. Port Zero supports this; http://some-other-branch.mytodoapp.portzero.local:80 can be available at the same time without port conflicts. This doesn't just work for http; it works for *any* TCP protocol.
 
 ## How does this work?
 
-Port Zero runs a daemon on your local dev machine that scans for processes / containers with the special `PZ_TUNNEL` environment variable. If TZ_TUNNEL contains `portzero.cloud`, Port Zero works like a reverse proxy and opens a tunnel to `portzero.cloud`, a domain name we own that supports subdomains that forward to programs on your local machine. If on the other hand the TZ_TUNNEL contains `portzero.local`, Port Zero does four things:
+Port Zero runs a background service on your local dev machine that scans for processes / containers with the special `PZ_TUNNEL` environment variable. If PZ_TUNNEL contains `portzero.cloud`, Port Zero works like a reverse proxy and opens a tunnel to `portzero.cloud`, a domain name we own that supports subdomains that forward to programs on your local machine. If on the other hand the PZ_TUNNEL contains `portzero.local`, Port Zero does four things:
 
-1. Create a virtual NIC on your local machine if Port Zero has not already done so
+1. Create a virtual network interface card (NIC) on your local machine if Port Zero has not already done so
 2. Create a virtual IP address in this virtual NIC for that process
 3. Create a virtual DNS record for that virtual IP address, based on the template specified in `PZ_TUNNEL`
 4. Forward the port specified in `PZ_TUNNEL` on the virtual IP address to the randomly-assigned port on the actual process or container
