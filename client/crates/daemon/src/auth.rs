@@ -1,6 +1,6 @@
 //! Auth token management for cloud connectivity.
 //!
-//! The daemon reads an auth token from `~/.devenv/auth.json`. If no
+//! The daemon reads an auth token from `~/.portzero/auth.json`. If no
 //! token is present, the daemon runs in local-only mode: it still discovers
 //! routes and writes `routes.json`, but does not connect to the cloud edge.
 
@@ -32,7 +32,7 @@ pub struct AuthConfig {
     pub account_id: Option<String>,
     /// Cloud username — used for `{username}` template substitution.
     pub username: Option<String>,
-    /// Directory where auth.json lives (defaults to `~/.devenv/`).
+    /// Directory where auth.json lives (defaults to `~/.portzero/`).
     pub config_dir: PathBuf,
 }
 
@@ -49,7 +49,7 @@ fn decode_jwt_exp(token: &str) -> Option<u64> {
 impl AuthConfig {
     /// Load auth config from disk.
     ///
-    /// Reads `~/.devenv/auth.json`. Returns an unauthenticated config
+    /// Reads `~/.portzero/auth.json`. Returns an unauthenticated config
     /// (token = None) if the file is missing or unreadable.
     pub fn load() -> Self {
         let config_dir = dirs::home_dir()
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_load_valid_token() {
-        let dir = std::env::temp_dir().join(format!("devenv-auth-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("portzero-auth-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let auth_file = r#"{"token": "tok_test123"}"#;
         std::fs::write(dir.join("auth.json"), auth_file).unwrap();
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn test_load_empty_token() {
         let dir =
-            std::env::temp_dir().join(format!("devenv-auth-test-empty-{}", std::process::id()));
+            std::env::temp_dir().join(format!("portzero-auth-test-empty-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let auth_file = r#"{"token": ""}"#;
         std::fs::write(dir.join("auth.json"), auth_file).unwrap();
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn test_load_null_token() {
         let dir =
-            std::env::temp_dir().join(format!("devenv-auth-test-null-{}", std::process::id()));
+            std::env::temp_dir().join(format!("portzero-auth-test-null-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let auth_file = r#"{"token": null}"#;
         std::fs::write(dir.join("auth.json"), auth_file).unwrap();
@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn test_save_and_reload() {
         let dir =
-            std::env::temp_dir().join(format!("devenv-auth-test-save-{}", std::process::id()));
+            std::env::temp_dir().join(format!("portzero-auth-test-save-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         let mut config = AuthConfig {

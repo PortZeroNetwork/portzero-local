@@ -29,7 +29,7 @@ pub fn start() -> Result<()> {
     std::fs::create_dir_all(&config.state_dir).with_context(|| {
         format!(
             "Failed to create daemon state directory: {}\n\n\
-             Check that you have write permissions to ~/.devenv/",
+             Check that you have write permissions to ~/.portzero/",
             config.state_dir.display()
         )
     })?;
@@ -38,8 +38,8 @@ pub fn start() -> Result<()> {
     // but since the skeleton uses `run_discovery_loop` directly, we spawn the
     // current binary with an internal flag.
     let exe = std::env::current_exe().with_context(|| {
-        "Could not determine the path to the port-zero binary.\n\n\
-         Try running with an absolute path, e.g. /usr/local/bin/port-zero start"
+        "Could not determine the path to the portzero binary.\n\n\
+         Try running with an absolute path, e.g. /usr/local/bin/portzero start"
     })?;
 
     let log_path = config.log_path();
@@ -51,7 +51,7 @@ pub fn start() -> Result<()> {
         .with_context(|| {
             format!(
                 "Failed to open daemon log file: {}\n\n\
-                 Check permissions on ~/.devenv/daemon/",
+                 Check permissions on ~/.portzero/daemon/",
                 log_path.display()
             )
         })?;
@@ -70,7 +70,7 @@ pub fn start() -> Result<()> {
         .with_context(|| {
             format!(
                 "Failed to spawn daemon process from: {}\n\n\
-                 Is the port-zero binary executable?",
+                 Is the portzero binary executable?",
                 exe.display()
             )
         })?;
@@ -327,7 +327,7 @@ fn print_routes(config: &DaemonConfig) {
         println!(
             "Note: .portzero.local services are not reachable — the overlay network requires\n\
              CAP_NET_ADMIN and CAP_NET_BIND_SERVICE. Grant both capabilities:\n\
-             \n  sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $(which port-zero)"
+             \n  sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $(which portzero)"
         );
     }
 }

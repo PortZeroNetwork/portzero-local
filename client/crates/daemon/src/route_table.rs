@@ -1,7 +1,7 @@
 //! Routing table: maps domains to local endpoints.
 //!
 //! The route table is the output of discovery. It is persisted to
-//! `~/.devenv/daemon/routes.json` and consumed by the tunnel client.
+//! `~/.portzero/daemon/routes.json` and consumed by the tunnel client.
 
 use std::collections::HashMap;
 use std::path::Path;

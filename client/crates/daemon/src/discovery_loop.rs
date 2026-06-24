@@ -2,7 +2,7 @@
 //!
 //! The daemon runs as a background process, scanning every few seconds for
 //! processes and Docker containers with PORT_ZERO set. Changes are
-//! persisted to `~/.devenv/daemon/routes.json`.
+//! persisted to `~/.portzero/daemon/routes.json`.
 //!
 //! When authenticated, the daemon also connects to the cloud edge and
 //! registers/unregisters routes as they are discovered or removed.
@@ -175,7 +175,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     std::fs::create_dir_all(&config.state_dir).with_context(|| {
         format!(
             "Failed to create daemon state directory: {}\n\n\
-             Check that you have write permissions to ~/.devenv/",
+             Check that you have write permissions to ~/.portzero/",
             config.state_dir.display()
         )
     })?;

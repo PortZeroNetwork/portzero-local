@@ -12,7 +12,7 @@ use tokio::net::TcpListener;
 
 use crate::api_client::ApiClient;
 
-/// Stored auth credentials at ~/.devenv/auth.json.
+/// Stored auth credentials at ~/.portzero/auth.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
     pub email: String,
@@ -225,7 +225,7 @@ async fn login_browser() -> Result<()> {
             config.save()?;
             println!();
             println!("Logged in as {}.", config.email);
-            println!("Credentials saved to ~/.devenv/auth.json");
+            println!("Credentials saved to ~/.portzero/auth.json");
             Ok(())
         }
         Ok(Err(e)) => Err(e),
@@ -433,7 +433,7 @@ async fn login_interactive(email: Option<String>) -> Result<()> {
 
     let login_resp: LoginResponse = resp.json().await.with_context(|| {
         "Received an unexpected response from the server.\n\n\
-         This may indicate an API version mismatch. Try updating devenv:\n\
+         This may indicate an API version mismatch. Try updating portzero:\n\
          curl -fsSL https://portzero.cloud/install.sh | sh"
     })?;
 
@@ -485,7 +485,7 @@ async fn login_interactive(email: Option<String>) -> Result<()> {
     config.save()?;
 
     println!("Logged in as {}.", verified.email);
-    println!("Credentials saved to ~/.devenv/auth.json");
+    println!("Credentials saved to ~/.portzero/auth.json");
 
     Ok(())
 }

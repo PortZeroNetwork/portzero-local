@@ -180,9 +180,9 @@ pub async fn check_for_update() {
         if let Some(latest_version) = parse_semver(&latest) {
             if latest_version > current_version {
                 eprintln!(
-                    "\x1b[33mA new version of devenv is available: {current} -> {latest}\x1b[0m"
+                    "\x1b[33mA new version of portzero is available: {current} -> {latest}\x1b[0m"
                 );
-                eprintln!("\x1b[33mUpdate with: devenv update\x1b[0m");
+                eprintln!("\x1b[33mUpdate with: portzero update\x1b[0m");
             }
         }
     }

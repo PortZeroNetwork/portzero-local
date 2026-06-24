@@ -99,7 +99,7 @@ impl OverlayDnsServer {
                     out.set_response_code(ResponseCode::NoError);
                 } else {
                     // We are authoritative for *.portzero.local — return NXDOMAIN for unknowns in our zone.
-                    if is_devenv_local(&name) {
+                    if is_portzero_local(&name) {
                         out.set_response_code(ResponseCode::NXDomain);
                     }
                 }
@@ -115,7 +115,7 @@ impl OverlayDnsServer {
     }
 }
 
-fn is_devenv_local(name: &Name) -> bool {
+fn is_portzero_local(name: &Name) -> bool {
     let s = name.to_ascii();
     s.ends_with(".portzero.local") || s == "portzero.local"
 }
@@ -127,7 +127,7 @@ fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<std::net:
         .map(|l| std::str::from_utf8(l).unwrap_or(""))
         .collect();
 
-    // Expect something like ["my-db", "devenv", "local"]
+    // Expect something like ["my-db", "portzero", "local"]
     if labels.len() < 3 {
         return None;
     }
@@ -136,7 +136,7 @@ fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<std::net:
     let candidate = labels[0];
 
     // Must be under portzero.local
-    if labels.len() >= 3 && labels[labels.len() - 2] == "devenv" && labels[labels.len() - 1] == "local" {
+    if labels.len() >= 3 && labels[labels.len() - 2] == "portzero" && labels[labels.len() - 1] == "local" {
         return services.get(candidate).map(|svc| {
             // smoltcp Ipv4Address can be converted via its Display or as_bytes in 0.11
             let b: [u8; 4] = svc.vip.0;

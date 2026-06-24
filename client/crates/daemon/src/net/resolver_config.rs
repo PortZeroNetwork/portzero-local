@@ -660,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn resolvectl_args_scope_only_devenv_local() {
+    fn resolvectl_args_scope_only_portzero_local() {
         let domain_args = resolvectl_domain_args("lo");
         // Only one domain listed, and it must be ~portzero.local.
         assert_eq!(domain_args.len(), 3, "exactly [domain, link, ~portzero.local]");
@@ -809,7 +809,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn dnsmasq_snippet_scopes_only_devenv_local() {
+    fn dnsmasq_snippet_scopes_only_portzero_local() {
         let content = dnsmasq_snippet_content(addr("127.0.0.1", 5300));
         assert!(
             content.contains("server=/portzero.local/127.0.0.1#5300"),

@@ -82,13 +82,13 @@ pub fn is_autostart_installed() -> bool {
 // Binary location
 // ---------------------------------------------------------------------------
 
-/// Find the path to the port-zero binary.
+/// Find the path to the portzero binary.
 fn find_daemon_binary() -> Result<PathBuf> {
     // First: check if we're running as the binary ourselves
     let current_exe =
         std::env::current_exe().context("Failed to determine current executable path")?;
 
-    // If the current exe looks like port-zero, use it
+    // If the current exe looks like portzero, use it
     if let Some(name) = current_exe.file_name() {
         let name_str = name.to_string_lossy();
         if name_str.starts_with("portzero") {
@@ -186,7 +186,7 @@ fn require_root(action: &str) -> Result<()> {
             "Installing the port-zero autostart service as a root LaunchDaemon \
              requires administrator privileges to {action} {dir}.\n\n\
              Re-run this command with sudo, e.g.:\n    \
-             sudo port-zero autostart {verb}",
+             sudo portzero autostart {verb}",
             action = action,
             dir = LAUNCHDAEMONS_DIR,
             verb = if action.contains("remove") {
@@ -472,7 +472,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn test_render_launchd_plist_is_well_formed_root_daemon() {
-        let plist = render_launchd_plist("/usr/local/bin/port-zero", DAEMON_LOG_DIR);
+        let plist = render_launchd_plist("/usr/local/bin/portzero", DAEMON_LOG_DIR);
 
         // Valid plist scaffolding.
         assert!(plist.contains("<!DOCTYPE plist"));
@@ -481,7 +481,7 @@ mod tests {
 
         // Correct label + ProgramArguments [binary, "daemon"].
         assert!(plist.contains(&format!("<string>{SERVICE_NAME}</string>")));
-        assert!(plist.contains("<string>/usr/local/bin/port-zero</string>"));
+        assert!(plist.contains("<string>/usr/local/bin/portzero</string>"));
         assert!(plist.contains("<string>daemon</string>"));
 
         // Daemon keys.
