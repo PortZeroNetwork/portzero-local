@@ -18,14 +18,14 @@ echo "Sanitized for DNS:  $SANITIZED_BRANCH"
 echo
 
 echo "Building image..."
-docker build -t devenv-templated-demo . >/dev/null
+docker build -t portzero-templated-demo . >/dev/null
 
 echo "Starting container with templated PORT_ZERO=web-{branch}.tunnel.portzero.cloud ..."
 CONTAINER_ID=$(docker run -d \
-  --name "devenv-demo-$$" \
+  --name "portzero-demo-$$" \
   -e PORT_ZERO="web-{branch}.tunnel.portzero.cloud" \
   -p 0:8080 \
-  devenv-templated-demo)
+  portzero-templated-demo)
 
 echo "Container started: $CONTAINER_ID"
 echo

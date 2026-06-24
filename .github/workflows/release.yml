@@ -57,24 +57,24 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            bins: portzero,devenv
+            bins: portzero
             archive_ext: tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            bins: portzero,devenv
+            bins: portzero
             cross: true
             archive_ext: tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
-            bins: portzero,devenv
+            bins: portzero
             archive_ext: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
-            bins: portzero,devenv
+            bins: portzero
             archive_ext: tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            bins: portzero,devenv
+            bins: portzero
             archive_ext: zip
 
     steps:
@@ -158,9 +158,57 @@ jobs:
           name: sha256-${{ matrix.target }}
           path: port-zero-${{ matrix.target }}.sha256
 
+  package-linux:
+    name: Build Linux Packages
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set CLI package version
+        run: scripts/set-cli-version.sh "${{ needs.version.outputs.version }}"
+        shell: bash
+
+      - name: Download x86_64 Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: port-zero-x86_64-unknown-linux-gnu
+
+      - name: Extract binary into target/release
+        run: |
+          tar xzf port-zero-x86_64-unknown-linux-gnu.tar.gz
+          mkdir -p target/release
+          cp port-zero-x86_64-unknown-linux-gnu/portzero target/release/portzero
+          chmod +x target/release/portzero
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install packaging tools
+        run: cargo install cargo-deb cargo-generate-rpm --locked
+
+      - name: Build .deb package
+        run: cargo deb -p port-zero-cli --no-build
+
+      - name: Build .rpm package
+        run: cargo generate-rpm -p port-zero-cli
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: portzero-deb
+          path: target/debian/*.deb
+
+      - name: Upload .rpm
+        uses: actions/upload-artifact@v4
+        with:
+          name: portzero-rpm
+          path: target/generate-rpm/*.rpm
+
   release:
     name: Create Release
-    needs: [version, build]
+    needs: [version, build, package-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -172,6 +220,13 @@ jobs:
         with:
           path: artifacts
           pattern: port-zero-*
+          merge-multiple: true
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: portzero-*
           merge-multiple: true
 
       - name: Generate version manifest
@@ -187,6 +242,8 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/*.zip
+            artifacts/*.deb
+            artifacts/*.rpm
             artifacts/version.json
             scripts/install.sh
 

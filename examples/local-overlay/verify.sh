@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# verify.sh — automated end-to-end check for the LOCAL `.devenv.local` overlay.
+# verify.sh — automated end-to-end check for the LOCAL `.portzero.local` overlay.
 #
 # This is the "fuller check" referenced in the README and in docs/troubleshooting.md.
 # It is the manual counterpart to the root-gated `real_tun_overlay` integration test:
 # it proves the *whole* path on a real machine, including the part the in-process
-# test can't — that the system resolver actually routes `*.devenv.local` to the
+# test can't — that the system resolver actually routes `*.portzero.local` to the
 # overlay (this is exactly what task-15 fixes on systemd-resolved-without-networkd
 # / NetworkManager boxes).
 #
@@ -28,16 +28,16 @@
 #   sudo ./examples/local-overlay/verify.sh  # the check itself
 #
 # Optionally pass a custom name (with an optional canonical :port):
-#   sudo ./verify.sh db.devenv.local:5432
+#   sudo ./verify.sh db.portzero.local:5432
 #
 # Exit status is 0 only if every check passes.
 
 set -uo pipefail
 
-# PORT_ZERO value: a full `.devenv.local` domain plus a CANONICAL `:port`.
+# PORT_ZERO value: a full `.portzero.local` domain plus a CANONICAL `:port`.
 # The overlay exposes the service on VIP:<canonical-port> (here 8080) and proxies
 # to the real ephemeral backend, so clients use a clean, stable port.
-NAME="${1:-hello.devenv.local:8080}"
+NAME="${1:-hello.portzero.local:8080}"
 SCAN_WAIT_SECS="${SCAN_WAIT_SECS:-6}"
 
 # Split the optional trailing `:<port>` off the value. DOMAIN is what gets
@@ -72,8 +72,8 @@ if [[ ! -x "$BIN" ]]; then
   exit 2
 fi
 
-if [[ "$DOMAIN" != *.devenv.local ]]; then
-  red "Name must end in .devenv.local (the overlay path). Got: $DOMAIN"
+if [[ "$DOMAIN" != *.portzero.local ]]; then
+  red "Name must end in .portzero.local (the overlay path). Got: $DOMAIN"
   exit 2
 fi
 

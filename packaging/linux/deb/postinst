@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Grant CAP_NET_ADMIN so the daemon can create TUN devices and modify
+        # routing tables without running as root.
+        if command -v setcap >/dev/null 2>&1; then
+            setcap cap_net_admin+eip /usr/local/bin/portzero 2>/dev/null || true
+        fi
+        ;;
+esac
+
+# Reload systemd unit files (best-effort; no-op in containers / minimal installs).
+if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+fi

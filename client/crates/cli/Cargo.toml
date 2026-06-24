@@ -7,10 +7,6 @@ edition = "2021"
 name = "portzero"
 path = "src/main.rs"
 
-[[bin]]
-name = "devenv"
-path = "src/bin/devenv.rs"
-
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
@@ -26,3 +22,37 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 rand = "0.8"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[package.metadata.deb]
+name = "portzero"
+maintainer = "Port Zero Network <support@portzero.cloud>"
+copyright = "2024 Loum Technologies"
+extended-description = """Port Zero local development overlay.
+Eliminates port conflicts in local development by assigning stable
+virtual IPs and DNS names to your services."""
+depends = "$auto"
+recommends = "libcap2-bin"
+section = "net"
+priority = "optional"
+assets = [
+    ["../../../target/release/portzero", "usr/local/bin/portzero", "755"],
+    ["../../../packaging/linux/portzero-daemon.service", "usr/lib/systemd/user/portzero-daemon.service", "644"],
+]
+maintainer-scripts = "../../../packaging/linux/deb"
+
+[package.metadata.generate-rpm]
+name = "portzero"
+assets = [
+    { source = "../../../target/release/portzero", dest = "/usr/local/bin/portzero", mode = "0755" },
+    { source = "../../../packaging/linux/portzero-daemon.service", dest = "/usr/lib/systemd/user/portzero-daemon.service", mode = "0644" },
+]
+post_install_script = """
+if command -v setcap >/dev/null 2>&1; then
+    setcap cap_net_admin+eip /usr/local/bin/portzero 2>/dev/null || true
+fi
+systemctl daemon-reload 2>/dev/null || true
+"""
+pre_uninstall_script = """
+systemctl --user disable --now portzero-daemon 2>/dev/null || true
+systemctl daemon-reload 2>/dev/null || true
+"""

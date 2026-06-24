@@ -1,19 +1,18 @@
 #!/bin/sh
 set -e
 
-# devenv installer — the single source of truth.
+# portzero installer — the single source of truth.
 #
 # Usage: curl -fsSL https://portzero.cloud/install.sh | sh
 #   (portzero.cloud/install.sh redirects to this file, published as a GitHub
 #    Release asset at:
-#      https://github.com/LoumTechnologies/port-zero/releases/latest/download/install.sh)
+#      https://github.com/PortZeroNetwork/port-zero-local/releases/latest/download/install.sh)
 #
-# Downloads the latest `devenv` + `port-zero` binaries from this repo's
-# GitHub Releases. POSIX sh (runs under whatever `sh` the curl pipe uses).
+# Downloads the latest portzero binary from GitHub Releases. POSIX sh.
 #
-# Env: DEVENV_INSTALL_DIR overrides the install directory.
+# Env: PORTZERO_INSTALL_DIR overrides the install directory.
 
-REPO="LoumTechnologies/port-zero"
+REPO="PortZeroNetwork/port-zero-local"
 RELEASES_URL="https://github.com/${REPO}/releases"
 
 # --- Colors (only on a terminal) ---
@@ -44,7 +43,7 @@ case "$(uname -m)" in
     aarch64|arm64) arch="aarch64" ;;
     *)
         error "Unsupported architecture: $(uname -m)"
-        echo "devenv supports x86_64 and aarch64/arm64. See ${RELEASES_URL}" >&2
+        echo "portzero supports x86_64 and aarch64/arm64. See ${RELEASES_URL}" >&2
         exit 1
         ;;
 esac
@@ -52,15 +51,15 @@ target="${arch}-${os}"
 archive="port-zero-${target}.tar.gz"
 
 # --- Install directory ---
-if [ -n "${DEVENV_INSTALL_DIR:-}" ]; then
-    install_dir="$DEVENV_INSTALL_DIR"
+if [ -n "${PORTZERO_INSTALL_DIR:-}" ]; then
+    install_dir="$PORTZERO_INSTALL_DIR"
 elif [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
     install_dir="/usr/local/bin"
 else
     install_dir="${HOME}/.local/bin"
 fi
 
-printf "${BOLD}devenv installer${RESET}\n\n"
+printf "${BOLD}portzero installer${RESET}\n\n"
 info "Platform: ${target}"
 
 # --- Download ---
@@ -80,33 +79,75 @@ fi
 
 info "Extracting"
 tar xzf "$tmp/$archive" -C "$tmp"
-# Archive extracts to "port-zero-${target}/" with both binaries.
 src="$tmp/port-zero-${target}"
 
 mkdir -p "$install_dir"
-for bin in devenv portzero; do
-    if [ ! -f "$src/$bin" ]; then
-        error "Binary '$bin' missing from archive; please report at ${RELEASES_URL%/releases}/issues"
-        exit 1
+if ! install -m 0755 "$src/portzero" "$install_dir/portzero" 2>/dev/null; then
+    error "Cannot write to ${install_dir}"
+    echo "  Run with sudo, or set PORTZERO_INSTALL_DIR to a writable directory." >&2
+    exit 1
+fi
+info "Installed portzero to $install_dir/portzero"
+
+# --- Linux post-install: CAP_NET_ADMIN + systemd user unit ---
+if [ "$(uname -s)" = "Linux" ]; then
+    bin_path="$install_dir/portzero"
+
+    echo ""
+    info "Setting up Linux daemon capabilities..."
+
+    # Grant CAP_NET_ADMIN so the daemon can create TUN devices and modify
+    # routing tables without running as root.
+    if has_cmd setcap; then
+        if sudo setcap cap_net_admin+eip "$bin_path" 2>/dev/null; then
+            info "CAP_NET_ADMIN granted to $bin_path"
+        else
+            warn "Could not set capabilities (sudo failed or was denied)."
+            warn "The local overlay (TUN + routing) requires root or:"
+            warn "  sudo setcap cap_net_admin+eip $bin_path"
+        fi
+    else
+        warn "setcap not found — install libcap2-bin (Debian/Ubuntu) or libcap (Fedora/RHEL),"
+        warn "then run: sudo setcap cap_net_admin+eip $bin_path"
     fi
-    if ! install -m 0755 "$src/$bin" "$install_dir/$bin" 2>/dev/null; then
-        error "Cannot write to ${install_dir}"
-        echo "  Run with sudo, or set DEVENV_INSTALL_DIR to a writable directory." >&2
-        exit 1
+
+    # Install a systemd user service unit so 'portzero autostart enable' works
+    # and the service can be managed with 'systemctl --user'.
+    if has_cmd systemctl; then
+        unit_dir="${HOME}/.config/systemd/user"
+        unit_path="${unit_dir}/portzero-daemon.service"
+        mkdir -p "$unit_dir"
+        cat > "$unit_path" << UNIT
+[Unit]
+Description=Port Zero discovery daemon
+Documentation=https://portzero.cloud/docs/daemon
+
+[Service]
+Type=simple
+ExecStart=${bin_path} daemon
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
+UNIT
+        systemctl --user daemon-reload 2>/dev/null || true
+        info "Systemd user unit installed: $unit_path"
+        info "Enable at login: systemctl --user enable --now portzero-daemon"
     fi
-    info "Installed $bin to $install_dir/$bin"
-done
+fi
 
 echo ""
 case ":${PATH}:" in
     *":${install_dir}:"*)
-        success "devenv installed! ($("$install_dir/devenv" --version 2>/dev/null || echo ok))"
+        success "portzero installed! ($("$install_dir/portzero" --version 2>/dev/null || echo ok))"
         ;;
     *)
-        success "devenv installed to ${install_dir}!"
+        success "portzero installed to ${install_dir}!"
         warn "${install_dir} is not in your PATH — add: export PATH=\"${install_dir}:\$PATH\""
         ;;
 esac
 
 echo ""
-echo "Next: ${BOLD}port zero login${RESET}  then  ${BOLD}port zero start${RESET}"
+echo "Next: ${BOLD}portzero login${RESET}  then  ${BOLD}portzero start${RESET}"

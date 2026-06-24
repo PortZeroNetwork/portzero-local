@@ -18,7 +18,7 @@ port-zero-client = { path = "../tunnel-client" }
 dirs = "6"
 futures-util = "0.3"
 hostname = "0.4"
-# hickory-dns for embedded authoritative DNS server (scoped *.devenv.local)
+# hickory-dns for embedded authoritative DNS server (scoped *.portzero.local)
 hickory-proto = "0.24"
 hickory-server = "0.24"
 libc = "0.2"

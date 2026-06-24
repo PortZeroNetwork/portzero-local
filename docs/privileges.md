@@ -44,7 +44,7 @@ native mechanism for a privileged service:
 | Platform | Autostart mechanism                                                        |
 |----------|----------------------------------------------------------------------------|
 | macOS    | **Root LaunchDaemon** at `/Library/LaunchDaemons/tools.devenv.daemon.plist`. Runs as root, so utun + `/etc/resolver` + routes all succeed. |
-| Linux    | systemd **user** unit (`~/.config/systemd/user/devenv-daemon.service`); the binary itself carries `CAP_NET_ADMIN`, so the user-level service is sufficient. |
+| Linux    | systemd **user** unit (`~/.config/systemd/user/portzero-daemon.service`); the binary itself carries `CAP_NET_ADMIN`, so the user-level service is sufficient. |
 | Windows  | Scheduled task at logon (admin for adapter setup). |
 
 ### Enabling / disabling autostart

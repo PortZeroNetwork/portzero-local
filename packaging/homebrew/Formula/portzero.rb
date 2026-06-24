@@ -17,7 +17,6 @@ class Portzero < Formula
 
   def install
     bin.install "portzero"
-    bin.install "devenv"
   end
 
   test do

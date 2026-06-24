@@ -34,7 +34,7 @@ You do **not** install or run anything special from inside `examples/...`. The d
 
 - Docker installed
 - This repository checked out
-- The CLI built or installed: `cargo install --path client/crates/cli` (gives you `port-zero` and the `devenv` dispatcher)
+- The CLI built or installed: `cargo install --path client/crates/cli` (gives you `portzero`)
 
 ## Quick Demo (recommended)
 
@@ -88,20 +88,20 @@ git checkout -b another-demo
 
 cd examples/docker-templated-tunnel
 
-docker build -t devenv-demo .
+docker build -t portzero-demo .
 
 docker run -d \
-  --name devenv-demo-web \
+  --name portzero-demo-web \
   -e PORT_ZERO=plain-{branch}.tunnel.portzero.cloud \
   -p 0:8080 \
-  devenv-demo
+  portzero-demo
 
 # Check status again - look for "plain-yourbranch.tunnel.portzero.cloud"
 port-zero status   # or the long cargo run ... form
 
 # The PORT_ZERO value contained the full domain name.
 
-docker rm -f devenv-demo-web
+docker rm -f portzero-demo-web
 ```
 
 ## How it works
@@ -138,7 +138,7 @@ the local overlay path instead of cloud tunnels.
 - The daemon must be running while you start the container (`port-zero start` or the cargo invocation above).
 - If you see the literal `{branch}` in status, the mount/label discovery failed
   (open an issue with `docker inspect` output of the container).
-- To see the daemon's own logs: `~/.devenv/daemon/daemon.log`
+- To see the daemon's own logs: `~/.portzero/daemon/daemon.log`
 - Check daemon state: `port-zero status`
 
 ## Running the daemon (general)
@@ -159,4 +159,4 @@ port-zero status
 port-zero stop
 ```
 
-It writes state to `~/.devenv/daemon/`. On Linux it can discover native processes (via `/proc`) and containers without any special per-example setup.
+It writes state to `~/.portzero/daemon/`. On Linux it can discover native processes (via `/proc`) and containers without any special per-example setup.

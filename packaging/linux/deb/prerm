@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|purge)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl --user disable --now portzero-daemon.service 2>/dev/null || true
+        fi
+        ;;
+esac

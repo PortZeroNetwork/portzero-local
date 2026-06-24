@@ -58,7 +58,7 @@ service re-registers it on the same stable VIP.
 
 ## Seeing the daemon's own logs
 
-- `~/.devenv/daemon/daemon.log` (background mode).
+- `~/.portzero/daemon/daemon.log` (background mode).
 - Or run `--foreground` to see logs on the console.
 - `port-zero status` shows the current discovered services and routes.
 

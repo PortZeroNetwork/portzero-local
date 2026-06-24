@@ -943,7 +943,7 @@ fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> 
             candidates.push(wd);
         }
         // Also check other common labels users might set
-        if let Some(custom) = labels.get("dev.devenv.project_dir").and_then(|v| v.as_str()) {
+        if let Some(custom) = labels.get("dev.portzero.project_dir").and_then(|v| v.as_str()) {
             candidates.push(PathBuf::from(custom));
         }
     }
