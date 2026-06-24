@@ -84,7 +84,7 @@ tar xzf "$tmp/$archive" -C "$tmp"
 src="$tmp/port-zero-${target}"
 
 mkdir -p "$install_dir"
-for bin in devenv port-zero; do
+for bin in devenv portzero; do
     if [ ! -f "$src/$bin" ]; then
         error "Binary '$bin' missing from archive; please report at ${RELEASES_URL%/releases}/issues"
         exit 1

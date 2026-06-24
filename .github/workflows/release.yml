@@ -57,24 +57,24 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            bins: devenv,devenv-tunnel
+            bins: portzero,devenv
             archive_ext: tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            bins: devenv,devenv-tunnel
+            bins: portzero,devenv
             cross: true
             archive_ext: tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
-            bins: devenv,devenv-tunnel
+            bins: portzero,devenv
             archive_ext: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
-            bins: devenv,devenv-tunnel
+            bins: portzero,devenv
             archive_ext: tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            bins: devenv,devenv-tunnel
+            bins: portzero,devenv
             archive_ext: zip
 
     steps:
@@ -118,7 +118,7 @@ jobs:
       - name: Package (Unix)
         if: matrix.archive_ext == 'tar.gz'
         run: |
-          staging="devenv-tunnel-${{ matrix.target }}"
+          staging="port-zero-${{ matrix.target }}"
           mkdir -p "$staging"
 
           IFS=',' read -ra BINS <<< "${{ matrix.bins }}"
@@ -132,18 +132,31 @@ jobs:
         if: matrix.archive_ext == 'zip'
         shell: pwsh
         run: |
-          $staging = "devenv-tunnel-${{ matrix.target }}"
+          $staging = "port-zero-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path $staging | Out-Null
           foreach ($bin in "${{ matrix.bins }}".Split(",")) {
             Copy-Item "target\${{ matrix.target }}\release\$bin.exe" "$staging\"
           }
           Compress-Archive -Path "$staging\*" -DestinationPath "$staging.zip"
 
+      - name: Compute SHA256 (macOS)
+        if: contains(matrix.target, 'apple-darwin')
+        run: |
+          shasum -a 256 "port-zero-${{ matrix.target }}.tar.gz" | awk '{print $1}' \
+            > "port-zero-${{ matrix.target }}.sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: devenv-tunnel-${{ matrix.target }}
-          path: devenv-tunnel-${{ matrix.target }}.${{ matrix.archive_ext }}
+          name: port-zero-${{ matrix.target }}
+          path: port-zero-${{ matrix.target }}.${{ matrix.archive_ext }}
+
+      - name: Upload SHA256 (macOS)
+        if: contains(matrix.target, 'apple-darwin')
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256-${{ matrix.target }}
+          path: port-zero-${{ matrix.target }}.sha256
 
   release:
     name: Create Release
@@ -158,12 +171,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: devenv-tunnel-*
+          pattern: port-zero-*
           merge-multiple: true
 
       - name: Generate version manifest
         run: |
-          echo "{\"version\":\"${{ needs.version.outputs.version }}\",\"commit\":\"${GITHUB_SHA}\"}" > artifacts/version.json
+          echo "{\"version\":\"${{ needs.version.outputs.version }}\",\"commit\":\"${GITHUB_SHA}\"}" \
+            > artifacts/version.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -175,3 +189,44 @@ jobs:
             artifacts/*.zip
             artifacts/version.json
             scripts/install.sh
+
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+    steps:
+      - name: Download macOS SHA256 files
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sha256-*apple-darwin
+          merge-multiple: true
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: PortZeroNetwork/homebrew-port-zero
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update formula
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          AARCH64_SHA256=$(cat port-zero-aarch64-apple-darwin.sha256)
+          X86_64_SHA256=$(cat port-zero-x86_64-apple-darwin.sha256)
+
+          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" tap/Formula/port-zero.rb
+          sed -i "s/sha256 \"[^\"]*\" # arm64/sha256 \"${AARCH64_SHA256}\" # arm64/" tap/Formula/port-zero.rb
+          sed -i "s/sha256 \"[^\"]*\" # x86_64/sha256 \"${X86_64_SHA256}\" # x86_64/" tap/Formula/port-zero.rb
+
+      - name: Commit and push
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/port-zero.rb
+          git diff --staged --quiet || git commit -m "port-zero v${VERSION}"
+          git push
