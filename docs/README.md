@@ -11,6 +11,9 @@ operate it.
   what degrades gracefully without it.
 - [Troubleshooting](troubleshooting.md) — common failure modes and fixes.
 
+- [Windows signing runbook](windows-signing.md) - Azure Artifact Signing setup,
+  release signing order, and Defender false-positive follow-up.
+
 See also:
 
 - [`../examples/local-overlay/`](../examples/local-overlay/) — a runnable

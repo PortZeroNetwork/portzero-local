@@ -112,9 +112,12 @@ fn find_daemon_binary() -> Result<PathBuf> {
 
 /// Simple which(1) equivalent.
 fn which(name: &str) -> Result<PathBuf> {
-    let path_env = std::env::var("PATH").unwrap_or_default();
-    for dir in path_env.split(':') {
-        let candidate = PathBuf::from(dir).join(name);
+    let Some(path_env) = std::env::var_os("PATH") else {
+        anyhow::bail!("{name} not found in PATH");
+    };
+
+    for dir in std::env::split_paths(&path_env) {
+        let candidate = dir.join(name);
         if candidate.exists() {
             return Ok(candidate);
         }
@@ -382,9 +385,9 @@ fn install_windows_task(binary: &Path) -> Result<()> {
             "/TN",
             SERVICE_NAME,
             "/TR",
-            &format!("\"{}\" daemon", binary.display()),
+            &format!("\"{}\" start --foreground", binary.display()),
             "/RL",
-            "LIMITED",
+            "HIGHEST",
             "/F",
         ])
         .status()
