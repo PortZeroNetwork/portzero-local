@@ -44,6 +44,15 @@ pub struct LocalCa {
 }
 
 impl LocalCa {
+    /// Generate a fresh `LocalCa` in memory without writing anything to disk.
+    ///
+    /// Useful for tests and one-shot tooling where persistence is not wanted.
+    /// For the daemon's normal lifecycle use [`load_or_create`].
+    pub fn generate_ephemeral() -> Result<Self> {
+        let (ca, _expiry) = generate()?;
+        Ok(ca)
+    }
+
     /// Load cert material from disk, or generate and persist fresh material if
     /// the files are absent or within [`RENEW_WITHIN_DAYS`] of expiry.
     pub fn load_or_create() -> Result<Self> {
