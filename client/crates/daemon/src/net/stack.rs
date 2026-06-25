@@ -1035,7 +1035,7 @@ mod tests {
         assert_eq!(svc_a.service_port, svc_b.service_port);
 
         let (stack_dev, mut client_dev) = MockDevice::pair();
-        let stack = VirtualStack::spawn_with_device(stack_dev, table);
+        let stack = VirtualStack::spawn_with_device(stack_dev, table, None);
 
         let client_ip = Ipv4Address::new(10, 254, 9, 9);
         let mut client_iface = client_iface(&mut client_dev, client_ip);

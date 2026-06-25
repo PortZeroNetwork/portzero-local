@@ -108,15 +108,23 @@ fn install_system_ca(ca_cert_path: &Path, env: &LinuxTrustEnv) -> Result<()> {
             let dest = system_cert_dest_debian();
             std::fs::copy(ca_cert_path, &dest)
                 .with_context(|| format!("copy CA cert to {}", dest.display()))?;
-            run_command("update-ca-certificates", &[] as &[&str]).context("update-ca-certificates")?;
-            tracing::info!("Linux: installed CA cert to {} via update-ca-certificates", dest.display());
+            run_command("update-ca-certificates", &[] as &[&str])
+                .context("update-ca-certificates")?;
+            tracing::info!(
+                "Linux: installed CA cert to {} via update-ca-certificates",
+                dest.display()
+            );
         }
         LinuxCaTool::UpdateCaTrust => {
             let dest = system_cert_dest_rhel();
             std::fs::copy(ca_cert_path, &dest)
                 .with_context(|| format!("copy CA cert to {}", dest.display()))?;
-            run_command("update-ca-trust", &["extract"] as &[&str]).context("update-ca-trust extract")?;
-            tracing::info!("Linux: installed CA cert to {} via update-ca-trust", dest.display());
+            run_command("update-ca-trust", &["extract"] as &[&str])
+                .context("update-ca-trust extract")?;
+            tracing::info!(
+                "Linux: installed CA cert to {} via update-ca-trust",
+                dest.display()
+            );
         }
         LinuxCaTool::None => {
             tracing::warn!(
@@ -138,8 +146,12 @@ fn uninstall_system_ca(env: &LinuxTrustEnv) -> Result<()> {
             if dest.exists() {
                 std::fs::remove_file(&dest)
                     .with_context(|| format!("remove {}", dest.display()))?;
-                run_command("update-ca-certificates", &[] as &[&str]).context("update-ca-certificates")?;
-                tracing::info!("Linux: removed CA cert {} via update-ca-certificates", dest.display());
+                run_command("update-ca-certificates", &[] as &[&str])
+                    .context("update-ca-certificates")?;
+                tracing::info!(
+                    "Linux: removed CA cert {} via update-ca-certificates",
+                    dest.display()
+                );
             }
         }
         LinuxCaTool::UpdateCaTrust => {
@@ -147,8 +159,12 @@ fn uninstall_system_ca(env: &LinuxTrustEnv) -> Result<()> {
             if dest.exists() {
                 std::fs::remove_file(&dest)
                     .with_context(|| format!("remove {}", dest.display()))?;
-                run_command("update-ca-trust", &["extract"] as &[&str]).context("update-ca-trust extract")?;
-                tracing::info!("Linux: removed CA cert {} via update-ca-trust", dest.display());
+                run_command("update-ca-trust", &["extract"] as &[&str])
+                    .context("update-ca-trust extract")?;
+                tracing::info!(
+                    "Linux: removed CA cert {} via update-ca-trust",
+                    dest.display()
+                );
             }
         }
         LinuxCaTool::None => {}
@@ -172,7 +188,10 @@ fn install_nss_dbs(ca_cert_path: &Path, env: &LinuxTrustEnv) {
     for db_dir in &env.nss_db_dirs {
         let args = certutil_add_args(db_dir, ca_cert_path);
         if let Err(e) = run_command(certutil.to_str().unwrap_or("certutil"), &args) {
-            tracing::warn!("Linux: failed to add CA to NSS DB {}: {e:#}", db_dir.display());
+            tracing::warn!(
+                "Linux: failed to add CA to NSS DB {}: {e:#}",
+                db_dir.display()
+            );
         } else {
             tracing::info!("Linux: added CA to NSS DB {}", db_dir.display());
         }
@@ -187,7 +206,10 @@ fn uninstall_nss_dbs(env: &LinuxTrustEnv) {
     for db_dir in &env.nss_db_dirs {
         let args = certutil_delete_args(db_dir);
         if let Err(e) = run_command(certutil.to_str().unwrap_or("certutil"), &args) {
-            tracing::warn!("Linux: failed to remove CA from NSS DB {}: {e:#}", db_dir.display());
+            tracing::warn!(
+                "Linux: failed to remove CA from NSS DB {}: {e:#}",
+                db_dir.display()
+            );
         } else {
             tracing::info!("Linux: removed CA from NSS DB {}", db_dir.display());
         }
@@ -478,7 +500,10 @@ fn install_nss_dbs_macos(ca_cert_path: &Path, env: &MacosTrustEnv) {
     for db_dir in &env.nss_db_dirs {
         let args = certutil_add_args(db_dir, ca_cert_path);
         if let Err(e) = run_command(certutil.to_str().unwrap_or("certutil"), &args) {
-            tracing::warn!("macOS: failed to add CA to NSS DB {}: {e:#}", db_dir.display());
+            tracing::warn!(
+                "macOS: failed to add CA to NSS DB {}: {e:#}",
+                db_dir.display()
+            );
         } else {
             tracing::info!("macOS: added CA to NSS DB {}", db_dir.display());
         }
@@ -558,14 +583,311 @@ fn find_certutil_macos() -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "windows")]
-fn install_impl(_ca_cert_path: &Path) -> Result<()> {
-    tracing::warn!("Windows trust store installation not yet implemented");
+#[derive(Debug)]
+pub(crate) struct WindowsTrustEnv {
+    /// Absolute path to Mozilla NSS `certutil.exe`, if available.
+    ///
+    /// This intentionally excludes Windows' built-in `%SystemRoot%\System32\certutil.exe`.
+    pub(crate) certutil_path: Option<PathBuf>,
+    /// All NSS database directories found in the user's profile.
+    pub(crate) nss_db_dirs: Vec<PathBuf>,
+}
+
+#[cfg(target_os = "windows")]
+fn install_impl(ca_cert_path: &Path) -> Result<()> {
+    install_windows_root_store(ca_cert_path)?;
+    let env = detect_windows_trust_env();
+    install_nss_dbs_windows(ca_cert_path, &env);
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
 fn uninstall_impl() -> Result<()> {
+    uninstall_windows_root_store()?;
+    let env = detect_windows_trust_env();
+    uninstall_nss_dbs_windows(&env);
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn install_windows_root_store(ca_cert_path: &Path) -> Result<()> {
+    let der = read_first_pem_cert_der(ca_cert_path)?;
+    let store = WindowsCertStore::open_current_user_root()?;
+    store.add_encoded_cert(&der)?;
+    tracing::info!("Windows: installed CA cert to CurrentUser\\Root");
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn uninstall_windows_root_store() -> Result<()> {
+    let store = WindowsCertStore::open_current_user_root()?;
+    match store.delete_by_subject(CERT_NICKNAME) {
+        Ok(count) if count > 0 => {
+            tracing::info!("Windows: removed {count} CA cert(s) from CurrentUser\\Root")
+        }
+        Ok(_) => tracing::info!("Windows: CA cert was not present in CurrentUser\\Root"),
+        Err(e) => tracing::warn!("Windows: failed to remove CA from CurrentUser\\Root: {e:#}"),
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn install_nss_dbs_windows(ca_cert_path: &Path, env: &WindowsTrustEnv) {
+    let Some(ref certutil) = env.certutil_path else {
+        if !env.nss_db_dirs.is_empty() {
+            tracing::warn!(
+                "Windows: NSS databases found ({} location(s)) but Mozilla certutil.exe is not \
+                 installed or was not found on PATH. Firefox may not trust *.portzero.local. \
+                 Install NSS tools and ensure Mozilla's certutil.exe appears before \
+                 C:\\Windows\\System32\\certutil.exe on PATH.",
+                env.nss_db_dirs.len()
+            );
+        }
+        return;
+    };
+    for db_dir in &env.nss_db_dirs {
+        let args = certutil_add_args(db_dir, ca_cert_path);
+        if let Err(e) = run_command(certutil.to_str().unwrap_or("certutil"), &args) {
+            tracing::warn!(
+                "Windows: failed to add CA to NSS DB {}: {e:#}",
+                db_dir.display()
+            );
+        } else {
+            tracing::info!("Windows: added CA to NSS DB {}", db_dir.display());
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn uninstall_nss_dbs_windows(env: &WindowsTrustEnv) {
+    let Some(ref certutil) = env.certutil_path else {
+        return;
+    };
+    for db_dir in &env.nss_db_dirs {
+        let args = certutil_delete_args(db_dir);
+        if let Err(e) = run_command(certutil.to_str().unwrap_or("certutil"), &args) {
+            tracing::warn!(
+                "Windows: failed to remove CA from NSS DB {}: {e:#}",
+                db_dir.display()
+            );
+        } else {
+            tracing::info!("Windows: removed CA from NSS DB {}", db_dir.display());
+        }
+    }
+}
+
+/// Collect all NSS database directories found under Windows profile roots.
+///
+/// Checked locations:
+/// - `%APPDATA%\Mozilla\Firefox\Profiles\*`
+/// - `%APPDATA%\Mozilla\Firefox Developer Edition\Profiles\*`
+/// - `%APPDATA%\Mozilla\Firefox Nightly\Profiles\*`
+/// - `%APPDATA%\LibreWolf\Profiles\*`
+/// - `%USERPROFILE%\.pki\nssdb`
+///
+/// A directory is included only if it contains a `cert9.db` file.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn find_nss_dbs_windows(home: Option<&Path>, appdata: Option<&Path>) -> Vec<PathBuf> {
+    let mut dbs = Vec::new();
+
+    if let Some(appdata) = appdata {
+        let bases = [
+            appdata.join("Mozilla/Firefox/Profiles"),
+            appdata.join("Mozilla/Firefox Developer Edition/Profiles"),
+            appdata.join("Mozilla/Firefox Nightly/Profiles"),
+            appdata.join("LibreWolf/Profiles"),
+        ];
+        for base in &bases {
+            dbs.extend(nss_dbs_under(base));
+        }
+    }
+
+    if let Some(home) = home {
+        let pki = home.join(".pki/nssdb");
+        if pki.join("cert9.db").exists() {
+            dbs.push(pki);
+        }
+    }
+
+    dbs
+}
+
+#[cfg(target_os = "windows")]
+fn detect_windows_trust_env() -> WindowsTrustEnv {
+    let home = std::env::var_os("USERPROFILE").map(PathBuf::from);
+    let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
+    WindowsTrustEnv {
+        certutil_path: find_mozilla_certutil_windows(),
+        nss_db_dirs: find_nss_dbs_windows(home.as_deref(), appdata.as_deref()),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn find_mozilla_certutil_windows() -> Option<PathBuf> {
+    executable_candidates_on_path("certutil.exe")
+        .into_iter()
+        .find(|candidate| is_mozilla_certutil_windows(candidate))
+}
+
+#[cfg(target_os = "windows")]
+fn executable_candidates_on_path(name: &str) -> Vec<PathBuf> {
+    let Some(path) = std::env::var_os("PATH") else {
+        return vec![];
+    };
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .filter(|candidate| candidate.is_file())
+        .collect()
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn is_windows_system_certutil(path: &Path) -> bool {
+    let lower = path
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase();
+    lower.ends_with("\\windows\\system32\\certutil.exe")
+        || lower.ends_with("\\windows\\syswow64\\certutil.exe")
+}
+
+#[cfg(target_os = "windows")]
+fn is_mozilla_certutil_windows(path: &Path) -> bool {
+    if is_windows_system_certutil(path) {
+        return false;
+    }
+    let Ok(output) = std::process::Command::new(path).arg("-H").output() else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase()
+        + &String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    text.contains("nss") || text.contains("certificate database") || text.contains("-a add")
+}
+
+#[cfg(target_os = "windows")]
+fn read_first_pem_cert_der(path: &Path) -> Result<Vec<u8>> {
+    let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut reader = std::io::BufReader::new(file);
+    let cert = rustls_pemfile::certs(&mut reader)
+        .next()
+        .transpose()
+        .context("parse CA cert PEM")?
+        .ok_or_else(|| anyhow::anyhow!("no certificate found in {}", path.display()))?;
+    Ok(cert.as_ref().to_vec())
+}
+
+#[cfg(target_os = "windows")]
+fn run_command(program: &str, args: &[impl AsRef<std::ffi::OsStr>]) -> Result<()> {
+    let status = std::process::Command::new(program)
+        .args(args)
+        .status()
+        .with_context(|| format!("spawn {program}"))?;
+    if !status.success() {
+        anyhow::bail!("{program} exited with {status}");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsCertStore(windows_sys::Win32::Security::Cryptography::HCERTSTORE);
+
+#[cfg(target_os = "windows")]
+impl WindowsCertStore {
+    fn open_current_user_root() -> Result<Self> {
+        use windows_sys::Win32::Security::Cryptography::{
+            CertOpenStore, CERT_STORE_OPEN_EXISTING_FLAG, CERT_STORE_PROV_SYSTEM_A,
+            CERT_SYSTEM_STORE_CURRENT_USER, X509_ASN_ENCODING,
+        };
+
+        let store = unsafe {
+            CertOpenStore(
+                CERT_STORE_PROV_SYSTEM_A,
+                X509_ASN_ENCODING,
+                0,
+                CERT_SYSTEM_STORE_CURRENT_USER | CERT_STORE_OPEN_EXISTING_FLAG,
+                c"ROOT".as_ptr().cast(),
+            )
+        };
+        if store.is_null() {
+            return Err(std::io::Error::last_os_error()).context("open CurrentUser\\Root store");
+        }
+        Ok(Self(store))
+    }
+
+    fn add_encoded_cert(&self, der: &[u8]) -> Result<()> {
+        use windows_sys::Win32::Security::Cryptography::{
+            CertAddEncodedCertificateToStore, CertFreeCertificateContext,
+            CERT_STORE_ADD_REPLACE_EXISTING, PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
+        };
+
+        let mut added = std::ptr::null_mut();
+        let ok = unsafe {
+            CertAddEncodedCertificateToStore(
+                self.0,
+                X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                der.as_ptr(),
+                der.len()
+                    .try_into()
+                    .context("certificate DER is too large for Windows CryptoAPI")?,
+                CERT_STORE_ADD_REPLACE_EXISTING,
+                &mut added,
+            )
+        };
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("add CA cert to CurrentUser\\Root store");
+        }
+        if !added.is_null() {
+            unsafe {
+                CertFreeCertificateContext(added);
+            }
+        }
+        Ok(())
+    }
+
+    fn delete_by_subject(&self, subject: &str) -> Result<usize> {
+        use windows_sys::Win32::Security::Cryptography::{
+            CertDeleteCertificateFromStore, CertFindCertificateInStore, CERT_FIND_SUBJECT_STR_W,
+            PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
+        };
+
+        let subject_wide = wide_null(subject);
+        let mut deleted = 0;
+        loop {
+            let context = unsafe {
+                CertFindCertificateInStore(
+                    self.0,
+                    X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                    0,
+                    CERT_FIND_SUBJECT_STR_W,
+                    subject_wide.as_ptr().cast(),
+                    std::ptr::null(),
+                )
+            };
+            if context.is_null() {
+                return Ok(deleted);
+            }
+            let ok = unsafe { CertDeleteCertificateFromStore(context) };
+            if ok == 0 {
+                return Err(std::io::Error::last_os_error())
+                    .context("delete CA cert from CurrentUser\\Root store");
+            }
+            deleted += 1;
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsCertStore {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Security::Cryptography::CertCloseStore(self.0, 0);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -645,7 +967,10 @@ mod tests {
         let db = PathBuf::from("/home/user/.mozilla/firefox/abc123.default");
         let cert = PathBuf::from("/tmp/ca.crt");
         let args = certutil_add_args(&db, &cert);
-        assert!(args[2].starts_with("sql:"), "NSS SQL store requires sql: prefix");
+        assert!(
+            args[2].starts_with("sql:"),
+            "NSS SQL store requires sql: prefix"
+        );
     }
 
     // --- NSS DB discovery ---
@@ -671,7 +996,10 @@ mod tests {
         std::fs::write(profile.join("cert9.db"), b"").unwrap();
 
         let found = find_nss_dbs(home);
-        assert!(found.contains(&profile), "should find Firefox profile NSS DB");
+        assert!(
+            found.contains(&profile),
+            "should find Firefox profile NSS DB"
+        );
     }
 
     #[test]
@@ -711,12 +1039,16 @@ mod tests {
     fn find_nss_dbs_macos_picks_up_firefox_profiles() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
-        let profile = home.join("Library/Application Support/Firefox/Profiles/abc123.default-release");
+        let profile =
+            home.join("Library/Application Support/Firefox/Profiles/abc123.default-release");
         std::fs::create_dir_all(&profile).unwrap();
         std::fs::write(profile.join("cert9.db"), b"").unwrap();
 
         let found = find_nss_dbs_macos(home);
-        assert!(found.contains(&profile), "should find Firefox profile NSS DB");
+        assert!(
+            found.contains(&profile),
+            "should find Firefox profile NSS DB"
+        );
     }
 
     #[test]
@@ -729,7 +1061,10 @@ mod tests {
         std::fs::write(profile.join("cert9.db"), b"").unwrap();
 
         let found = find_nss_dbs_macos(home);
-        assert!(found.contains(&profile), "should find Firefox Dev Edition NSS DB");
+        assert!(
+            found.contains(&profile),
+            "should find Firefox Dev Edition NSS DB"
+        );
     }
 
     #[test]
@@ -742,7 +1077,10 @@ mod tests {
         std::fs::write(profile.join("cert9.db"), b"").unwrap();
 
         let found = find_nss_dbs_macos(home);
-        assert!(found.contains(&profile), "should find Firefox Nightly NSS DB");
+        assert!(
+            found.contains(&profile),
+            "should find Firefox Nightly NSS DB"
+        );
     }
 
     #[test]
@@ -760,6 +1098,56 @@ mod tests {
         // No cert9.db written.
 
         assert!(find_nss_dbs_macos(home).is_empty());
+    }
+
+    #[test]
+    fn find_nss_dbs_windows_picks_up_firefox_profiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let appdata = dir.path().join("AppData/Roaming");
+        let profile = appdata.join("Mozilla/Firefox/Profiles/abc123.default-release");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::write(profile.join("cert9.db"), b"").unwrap();
+
+        let found = find_nss_dbs_windows(None, Some(&appdata));
+        assert!(
+            found.contains(&profile),
+            "should find Windows Firefox NSS DB"
+        );
+    }
+
+    #[test]
+    fn find_nss_dbs_windows_picks_up_pki_nssdb() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let nssdb = home.join(".pki/nssdb");
+        std::fs::create_dir_all(&nssdb).unwrap();
+        std::fs::write(nssdb.join("cert9.db"), b"").unwrap();
+
+        let found = find_nss_dbs_windows(Some(home), None);
+        assert!(found.contains(&nssdb), "should find Windows ~/.pki/nssdb");
+    }
+
+    #[test]
+    fn find_nss_dbs_windows_ignores_profile_without_cert9_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let appdata = dir.path().join("AppData/Roaming");
+        let profile = appdata.join("Mozilla/Firefox/Profiles/no-cert.default");
+        std::fs::create_dir_all(&profile).unwrap();
+
+        assert!(find_nss_dbs_windows(None, Some(&appdata)).is_empty());
+    }
+
+    #[test]
+    fn windows_system_certutil_detection_matches_builtin_paths() {
+        assert!(is_windows_system_certutil(Path::new(
+            r"C:\Windows\System32\certutil.exe"
+        )));
+        assert!(is_windows_system_certutil(Path::new(
+            r"C:\Windows\SysWOW64\certutil.exe"
+        )));
+        assert!(!is_windows_system_certutil(Path::new(
+            r"C:\Program Files\NSS\bin\certutil.exe"
+        )));
     }
 
     #[cfg(target_os = "linux")]

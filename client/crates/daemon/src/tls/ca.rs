@@ -14,7 +14,6 @@
 //! store installer (see `tls::trust`).  The wildcard cert + key are consumed
 //! by the rustls ServerConfig in the overlay stack (see `tls::server_config`).
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -181,6 +180,7 @@ fn make_dn(common_name: &str, org: Option<&str>) -> DistinguishedName {
 fn write_private(path: &Path, content: &[u8]) -> Result<()> {
     #[cfg(unix)]
     {
+        use std::io::Write as _;
         use std::os::unix::fs::OpenOptionsExt;
         std::fs::OpenOptions::new()
             .write(true)
