@@ -17,10 +17,12 @@
 //!   `net::stack::tests::vip_connect_proxies_to_backend`) using the
 //!   `#[doc(hidden)]` test-support helpers exposed from `net::stack`.
 //!
-//! * [`real_tun_overlay`] — gated on `geteuid() == 0`. When not root it SKIPS
-//!   cleanly (prints a clear line and passes) so unprivileged `cargo test` never
-//!   fails or hangs. When root it stands up a real [`OverlayNetwork`] (TUN +
-//!   stack + DNS) and tears it down. Run it via `just e2e` (uses `sudo`).
+//! * [`real_tun_overlay`] — on Unix, gated on `geteuid() == 0`. When not root
+//!   it SKIPS cleanly (prints a clear line and passes) so unprivileged
+//!   `cargo test` never fails or hangs. When root it stands up a real
+//!   [`OverlayNetwork`] (TUN + stack + DNS) and tears it down. Run it via
+//!   `just e2e` (uses `sudo`). On non-Unix platforms it skips because this test
+//!   is specifically the Unix privileged-TUN path.
 //!
 //! Every wait is bounded by a timeout — there is no unbounded blocking.
 
@@ -276,6 +278,7 @@ async fn unprivileged_vip_byte_proxy() {
 
 /// Root-gated real-TUN e2e. SKIPS cleanly when not root so unprivileged
 /// `cargo test` passes; exercises the real overlay when run as root (`just e2e`).
+#[cfg(unix)]
 #[tokio::test]
 async fn real_tun_overlay() {
     // SAFETY: geteuid is always safe to call.
@@ -322,4 +325,13 @@ async fn real_tun_overlay() {
 
     result.expect("real_tun_overlay timed out");
     println!("real_tun_overlay: passed");
+}
+
+/// Non-Unix builds still compile and report this privileged Unix TUN scenario
+/// as skipped. Windows coverage for unprivileged overlay wiring and smoltcp
+/// byte-proxying lives in the tests above.
+#[cfg(not(unix))]
+#[tokio::test]
+async fn real_tun_overlay() {
+    println!("real_tun_overlay: skipped: privileged Unix TUN test");
 }

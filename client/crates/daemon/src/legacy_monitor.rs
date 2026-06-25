@@ -30,22 +30,22 @@ use crate::notify::Issue;
 /// port-zero), are worth surfacing migration guidance for. Kept small and
 /// opinionated: databases, caches, web/dev servers, message brokers.
 pub const COMMON_PORTS: &[u16] = &[
-    3000, // node / next / rails dev
-    3001, // common secondary dev server
-    4000, // phoenix / misc dev
-    5000, // flask / misc dev
-    5173, // vite
-    5432, // postgres
-    5672, // rabbitmq
-    6379, // redis
-    8000, // django / misc
-    8025, // mailhog
-    8080, // http alt / many dev servers
-    8081, // http alt
-    8443, // https alt
-    9000, // php-fpm / misc
-    9090, // prometheus / misc
-    9200, // elasticsearch
+    3000,  // node / next / rails dev
+    3001,  // common secondary dev server
+    4000,  // phoenix / misc dev
+    5000,  // flask / misc dev
+    5173,  // vite
+    5432,  // postgres
+    5672,  // rabbitmq
+    6379,  // redis
+    8000,  // django / misc
+    8025,  // mailhog
+    8080,  // http alt / many dev servers
+    8081,  // http alt
+    8443,  // https alt
+    9000,  // php-fpm / misc
+    9090,  // prometheus / misc
+    9200,  // elasticsearch
     27017, // mongodb
 ];
 
@@ -246,10 +246,19 @@ pub fn docker_conflict_issue(container: &str, port: u16) -> Issue {
 /// `port_zero_domain::find_git_root`. Never panics; on platforms without
 /// enumeration support it yields an empty list.
 pub fn scan_legacy_listeners(managed: &ManagedContext) -> Vec<Issue> {
-    let listeners = crate::discovery::enumerate_system_listeners();
-    detect_legacy_listeners(&listeners, managed, COMMON_PORTS, |cwd| {
-        port_zero_domain::find_git_root(cwd).map(|(_, root)| root)
-    })
+    #[cfg(target_os = "windows")]
+    {
+        let _ = managed;
+        return Vec::new();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let listeners = crate::discovery::enumerate_system_listeners();
+        detect_legacy_listeners(&listeners, managed, COMMON_PORTS, |cwd| {
+            port_zero_domain::find_git_root(cwd).map(|(_, root)| root)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -288,21 +297,24 @@ mod tests {
     #[test]
     fn test_tunneled_listener_is_not_legacy() {
         let listeners = vec![listener(5432, 100, Some("/work/db"), true)];
-        let issues = detect_legacy_listeners(&listeners, &ManagedContext::new(), COMMON_PORTS, no_git);
+        let issues =
+            detect_legacy_listeners(&listeners, &ManagedContext::new(), COMMON_PORTS, no_git);
         assert!(issues.is_empty(), "managed listeners must not be flagged");
     }
 
     #[test]
     fn test_uninteresting_port_is_not_legacy() {
         let listeners = vec![listener(54999, 100, Some("/work/db"), false)];
-        let issues = detect_legacy_listeners(&listeners, &ManagedContext::new(), COMMON_PORTS, no_git);
+        let issues =
+            detect_legacy_listeners(&listeners, &ManagedContext::new(), COMMON_PORTS, no_git);
         assert!(issues.is_empty());
     }
 
     #[test]
     fn test_common_port_direct_listener_is_legacy() {
         let listeners = vec![listener(5432, 4321, Some("/work/api"), false)];
-        let issues = detect_legacy_listeners(&listeners, &ManagedContext::new(), COMMON_PORTS, no_git);
+        let issues =
+            detect_legacy_listeners(&listeners, &ManagedContext::new(), COMMON_PORTS, no_git);
         assert_eq!(issues.len(), 1);
         match &issues[0] {
             Issue::LegacyListener { port, pid, context } => {
@@ -331,7 +343,8 @@ mod tests {
             listener(8080, 7, Some("/work/web"), false),
             listener(8080, 7, Some("/work/web"), false),
         ];
-        let issues = detect_legacy_listeners(&listeners, &ManagedContext::new(), COMMON_PORTS, no_git);
+        let issues =
+            detect_legacy_listeners(&listeners, &ManagedContext::new(), COMMON_PORTS, no_git);
         assert_eq!(issues.len(), 1);
     }
 
@@ -342,7 +355,8 @@ mod tests {
             listener(3000, 9, Some("/a"), false),
             listener(8080, 1, Some("/c"), false),
         ];
-        let issues = detect_legacy_listeners(&listeners, &ManagedContext::new(), COMMON_PORTS, no_git);
+        let issues =
+            detect_legacy_listeners(&listeners, &ManagedContext::new(), COMMON_PORTS, no_git);
         let keys: Vec<(u16, u32)> = issues.iter().map(issue_sort_key).collect();
         assert_eq!(keys, vec![(3000, 9), (8080, 1), (8080, 2)]);
     }

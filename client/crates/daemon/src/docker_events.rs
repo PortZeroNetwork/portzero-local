@@ -179,12 +179,12 @@ pub fn parse_inspect_state(out: &str) -> Option<InspectState> {
 ///
 /// Reuses the existing pure helpers in [`crate::legacy_monitor`] — this module
 /// does not reimplement parsing. Pure: operates only on the supplied strings.
-pub fn conflict_issue_from_inspect(
-    container_label: &str,
-    state: &InspectState,
-) -> Option<Issue> {
+pub fn conflict_issue_from_inspect(container_label: &str, state: &InspectState) -> Option<Issue> {
     let port = crate::legacy_monitor::parse_docker_port_conflict(&state.error)?;
-    Some(crate::legacy_monitor::docker_conflict_issue(container_label, port))
+    Some(crate::legacy_monitor::docker_conflict_issue(
+        container_label,
+        port,
+    ))
 }
 
 /// Compute the next backoff delay for restarting the events stream. Doubles each
@@ -254,6 +254,18 @@ pub async fn run_event_monitor(
 ) {
     let mut attempt: u32 = 0;
     loop {
+        if !command_on_path("docker") {
+            tracing::debug!("Docker event monitor: docker not on PATH; idle");
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+                _ = shutdown.notified() => {
+                    tracing::debug!("Docker event monitor: shutdown while docker is absent");
+                    return;
+                }
+            }
+            continue;
+        }
+
         // Attempt to (re)start the stream. On success, reset backoff.
         match stream_events_once(&conflicts, &rescan, &shutdown).await {
             StreamOutcome::Shutdown => {
@@ -318,7 +330,10 @@ async fn stream_events_once(
     {
         Ok(c) => c,
         Err(e) => {
-            tracing::debug!("Docker event monitor: could not spawn `docker events` ({})", e);
+            tracing::debug!(
+                "Docker event monitor: could not spawn `docker events` ({})",
+                e
+            );
             return StreamOutcome::SpawnFailed;
         }
     };
@@ -390,6 +405,10 @@ async fn handle_event(event: ContainerEvent, conflicts: &ConflictRegistry, resca
 async fn inspect_container_state(id: &str) -> Option<InspectState> {
     use tokio::process::Command;
 
+    if !command_on_path("docker") {
+        return None;
+    }
+
     let output = Command::new("docker")
         .args(["inspect", id, "--format", INSPECT_FORMAT])
         .stdin(std::process::Stdio::null())
@@ -401,6 +420,39 @@ async fn inspect_container_state(id: &str) -> Option<InspectState> {
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     parse_inspect_state(&stdout)
+}
+
+fn command_on_path(program: &str) -> bool {
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+
+    #[cfg(windows)]
+    let candidates: Vec<String> = {
+        let pathext = std::env::var_os("PATHEXT")
+            .and_then(|v| v.into_string().ok())
+            .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_string());
+        let has_ext = std::path::Path::new(program).extension().is_some();
+        if has_ext {
+            vec![program.to_string()]
+        } else {
+            pathext
+                .split(';')
+                .filter(|ext| !ext.is_empty())
+                .map(|ext| format!("{program}{ext}"))
+                .chain(std::iter::once(program.to_string()))
+                .collect()
+        }
+    };
+
+    #[cfg(not(windows))]
+    let candidates: Vec<String> = vec![program.to_string()];
+
+    std::env::split_paths(&paths).any(|dir| {
+        candidates
+            .iter()
+            .any(|candidate| dir.join(candidate).is_file())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -477,10 +529,8 @@ mod tests {
 
     #[test]
     fn test_parse_inspect_state_with_error() {
-        let s = parse_inspect_state(
-            "1|Bind for 0.0.0.0:8080 failed: port is already allocated",
-        )
-        .unwrap();
+        let s = parse_inspect_state("1|Bind for 0.0.0.0:8080 failed: port is already allocated")
+            .unwrap();
         assert_eq!(s.exit_code, 1);
         assert!(s.error.contains("8080"));
     }
@@ -556,8 +606,14 @@ mod tests {
         assert_eq!(events_backoff(2), Duration::from_secs(4));
         assert_eq!(events_backoff(3), Duration::from_secs(8));
         // Caps at the max regardless of how high the attempt climbs.
-        assert_eq!(events_backoff(20), Duration::from_secs(EVENTS_BACKOFF_MAX_SECS));
-        assert_eq!(events_backoff(u32::MAX), Duration::from_secs(EVENTS_BACKOFF_MAX_SECS));
+        assert_eq!(
+            events_backoff(20),
+            Duration::from_secs(EVENTS_BACKOFF_MAX_SECS)
+        );
+        assert_eq!(
+            events_backoff(u32::MAX),
+            Duration::from_secs(EVENTS_BACKOFF_MAX_SECS)
+        );
     }
 
     #[test]
@@ -602,10 +658,16 @@ mod tests {
     #[tokio::test]
     async fn test_conflict_registry_snapshot_is_sorted() {
         let reg = ConflictRegistry::new();
-        reg.record("zeta".to_string(), crate::legacy_monitor::docker_conflict_issue("zeta", 1))
-            .await;
-        reg.record("alpha".to_string(), crate::legacy_monitor::docker_conflict_issue("alpha", 2))
-            .await;
+        reg.record(
+            "zeta".to_string(),
+            crate::legacy_monitor::docker_conflict_issue("zeta", 1),
+        )
+        .await;
+        reg.record(
+            "alpha".to_string(),
+            crate::legacy_monitor::docker_conflict_issue("alpha", 2),
+        )
+        .await;
         let snap = reg.snapshot().await;
         // Keyed by label, sorted ascending → alpha before zeta.
         match (&snap[0], &snap[1]) {

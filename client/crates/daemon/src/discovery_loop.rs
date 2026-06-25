@@ -22,6 +22,7 @@ const AUTH_CHECK_INTERVAL_SECS: u64 = 30;
 const TOKEN_REFRESH_THRESHOLD_SECS: u64 = 3600;
 /// How often to check if the token needs refreshing.
 const TOKEN_REFRESH_CHECK_INTERVAL_SECS: u64 = 300;
+const OVERLAY_REFRESH_TIMEOUT: Duration = Duration::from_secs(3);
 
 struct ReconnectBackoff {
     next_attempt_at: Option<Instant>,
@@ -291,13 +292,23 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         docker_shutdown.clone(),
     ));
 
-    let overlay: Option<OverlayNetwork> = match OverlayNetwork::start(OverlayConfig::default()).await
+    let overlay: Option<OverlayNetwork> = match OverlayNetwork::start(OverlayConfig::default())
+        .await
     {
         Ok(ov) => {
             tracing::info!("Virtual overlay network started (.portzero.local)");
             // Seed the overlay immediately so existing services are reachable
             // without waiting for the first scan cycle.
-            let (overlay_issues, overlay_services) = refresh_overlay_services(&ov).await;
+            let (overlay_issues, overlay_services) =
+                match tokio::time::timeout(OVERLAY_REFRESH_TIMEOUT, refresh_overlay_services(&ov))
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
+                        tracing::warn!("Initial overlay service refresh timed out; continuing");
+                        (Vec::new(), Vec::new())
+                    }
+                };
             write_overlay_state(config, &overlay_services, true);
             let docker_conflicts = conflicts.snapshot().await;
             gather_and_publish_issues(
@@ -336,242 +347,270 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         // signal fires, this future is dropped at its next `.await` point and we
         // break out to teardown.
         let iteration = async {
-        // Check process liveness for existing routes
-        let routes_snapshot: Vec<(String, u32)> = route_table
-            .routes
-            .iter()
-            .map(|(d, r)| (d.clone(), r.pid))
-            .collect();
+            // Check process liveness for existing routes
+            let routes_snapshot: Vec<(String, u32)> = route_table
+                .routes
+                .iter()
+                .map(|(d, r)| (d.clone(), r.pid))
+                .collect();
 
-        for (domain, route_pid) in &routes_snapshot {
-            if is_process_alive(*route_pid) {
-                grace_tracker.process_alive(domain);
-            } else if grace_tracker.process_missing(domain) {
-                tracing::info!(
-                    "Process {} for route {} exited (grace period expired), removing route",
-                    route_pid,
-                    domain
-                );
-            }
-        }
-
-        // Discover services
-        let mut discovered = discovery::scan_all(account_id.as_deref(), username.as_deref()).await;
-
-        // Filter out services whose processes have exited and whose grace period
-        // hasn't expired yet — keep them in the discovered list to avoid premature
-        // removal.
-        let grace_domains: Vec<String> = route_table
-            .routes
-            .iter()
-            .filter(|(domain, route)| {
-                !is_process_alive(route.pid) && !grace_tracker.process_missing(domain)
-            })
-            .map(|(_, route)| route.clone())
-            .map(|route| route.domain.clone())
-            .collect();
-
-        // Re-inject grace-period routes into discovered set so they aren't
-        // removed yet
-        for domain in &grace_domains {
-            if let Some(route) = route_table.routes.get(domain) {
-                discovered.push(crate::discovery::DiscoveredService {
-                    domain: route.domain.clone(),
-                    port: route.port,
-                    extra_ports: route.extra_ports.clone(),
-                    pid: route.pid,
-                    source: route.source.clone(),
-                });
-            }
-        }
-
-        let count = discovered.len();
-        let changes = route_table.update(discovered);
-
-        if changes.has_changes() {
-            if let Err(e) = route_table.save(&config.routes_path()) {
-                tracing::error!("Failed to save route table: {}", e);
-            } else {
-                log_changes(&changes);
-            }
-
-            // Update domain router
-            update_domain_router(&domain_router, &changes);
-
-            // Sync with cloud
-            if let Some(ref connector) = cloud {
-                sync_cloud_routes(connector, &changes).await;
-            }
-        }
-
-        // Feed `.portzero.local` services into the virtual overlay. This is a
-        // separate discovery pass from the cloud/route discovery above and does
-        // not touch cloud route registration. No-op when the overlay failed to
-        // start (unprivileged environment).
-        //
-        // Also run the visibility checks (duplicate-name detection + legacy
-        // listener monitoring) and publish the combined issue set once per scan.
-        // Legacy monitoring runs regardless of whether the overlay started, so
-        // when the overlay is unavailable we still scan with empty overlay data.
-        let (overlay_issues, overlay_services) = if let Some(ref ov) = overlay {
-            let result = refresh_overlay_services(ov).await;
-            write_overlay_state(config, &result.1, true);
-            result
-        } else {
-            // Overlay TUN is not running (insufficient privileges), but still scan
-            // so that `port zero status` can surface discovered .local services.
-            let services = discovery::scan_network_services().await;
-            let issues = notify::detect_duplicate_names(&services);
-            write_overlay_state(config, &services, false);
-            (issues, services)
-        };
-        let docker_conflicts = conflicts.snapshot().await;
-        gather_and_publish_issues(
-            config,
-            &route_table,
-            overlay_issues,
-            &overlay_services,
-            docker_conflicts,
-            &mut notified_issues,
-        )
-        .await;
-
-        // Prune grace tracker
-        let active_domains: Vec<&String> = route_table.routes.keys().collect();
-        grace_tracker.prune(&active_domains);
-
-        tracing::trace!(
-            "Scan complete: {} services, {} routes",
-            count,
-            route_table.len()
-        );
-
-        // Periodic auth re-check: pick up login/logout without requiring a restart.
-        if Instant::now() >= next_auth_check {
-            next_auth_check = Instant::now() + Duration::from_secs(AUTH_CHECK_INTERVAL_SECS);
-            let new_auth = AuthConfig::load();
-            let new_token = new_auth.token.clone();
-            if new_token != current_token {
-                let had_cloud = cloud.is_some();
-                current_token = new_token;
-                account_id = new_auth.account_id.clone();
-                username = new_auth.username.clone();
-                auth_failed = false;
-                cloud = None; // drop the existing connection; connect block below will re-establish
-                reconnect_backoff = ReconnectBackoff::new();
-                match &current_token {
-                    Some(_) => tracing::info!("Auth token changed, will reconnect to cloud"),
-                    None if had_cloud => {
-                        tracing::info!("Logged out, disconnecting from cloud");
-                        write_cloud_state(config, false, None);
-                    }
-                    None => {}
-                }
-            }
-        }
-
-        // Periodic JWT token refresh: renew the token before it expires so
-        // long-running daemons don't silently lose cloud connectivity.
-        if Instant::now() >= next_token_refresh_check {
-            next_token_refresh_check =
-                Instant::now() + Duration::from_secs(TOKEN_REFRESH_CHECK_INTERVAL_SECS);
-            if current_token.is_some() {
-                // Re-load auth config so we get the freshest token state.
-                let current_auth = AuthConfig::load();
-                if let Some(true) = current_auth.is_token_near_expiry(TOKEN_REFRESH_THRESHOLD_SECS)
-                {
-                    tracing::info!("JWT token is near expiry, attempting auto-refresh");
-                    let mut refresh_auth = AuthConfig::load();
-                    match refresh_auth.refresh_token().await {
-                        Ok(()) => {
-                            current_token = refresh_auth.token.clone();
-                            if current_token.is_some() {
-                                tracing::info!("JWT token refreshed, will reconnect to cloud");
-                                cloud = None;
-                                reconnect_backoff = ReconnectBackoff::new();
-                                auth_failed = false;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to auto-refresh JWT token: {}", e);
-                            // Don't block future attempts; the token may still be valid.
-                        }
-                    }
-                }
-            }
-        }
-
-        // Detect when the server rejected our token (expired or revoked).
-        if let Some(ref connector) = cloud {
-            if connector.is_auth_failed() {
-                tracing::warn!(
-                    "Edge server rejected our token (expired or revoked). \
-                     Run `port zero login` to re-authenticate."
-                );
-                write_cloud_state(
-                    config,
-                    false,
-                    Some(
-                        "Authentication failed. Run `port zero login` to re-authenticate."
-                            .to_string(),
-                    ),
-                );
-                cloud = None;
-                auth_failed = true;
-            }
-        }
-
-        // Connect or reconnect whenever we have a token and are not blocked by an
-        // auth failure.  This handles: initial connect retries, reconnects after
-        // drops, and connecting after a fresh login while the daemon is running.
-        if let Some(ref token_ref) = current_token {
-            if !auth_failed {
-                let needs_connect = match &cloud {
-                    None => true,
-                    Some(c) => !c.is_connected(),
-                };
-                if needs_connect && reconnect_backoff.is_due() {
-                    let token = token_ref.clone();
-                    let is_reconnect = cloud.is_some();
-                    cloud = None; // drop any stale connector before creating the new one
+            for (domain, route_pid) in &routes_snapshot {
+                if is_process_alive(*route_pid) {
+                    grace_tracker.process_alive(domain);
+                } else if grace_tracker.process_missing(domain) {
                     tracing::info!(
-                        "{}connecting to cloud edge...",
-                        if is_reconnect { "Re" } else { "C" }
+                        "Process {} for route {} exited (grace period expired), removing route",
+                        route_pid,
+                        domain
                     );
-                    let mut connector = CloudConnector::new(token);
-                    match connector.connect(domain_router.clone()).await {
-                        Ok(()) => {
-                            reconnect_backoff.on_success();
-                            write_cloud_state(config, true, None);
-                            for (domain, route) in &route_table.routes {
-                                if let Err(e) = connector.register_route(domain, route.port).await {
-                                    tracing::warn!("Failed to re-register route {}: {}", domain, e);
+                }
+            }
+
+            // Discover services
+            let mut discovered =
+                discovery::scan_all(account_id.as_deref(), username.as_deref()).await;
+
+            // Filter out services whose processes have exited and whose grace period
+            // hasn't expired yet — keep them in the discovered list to avoid premature
+            // removal.
+            let grace_domains: Vec<String> = route_table
+                .routes
+                .iter()
+                .filter(|(domain, route)| {
+                    !is_process_alive(route.pid) && !grace_tracker.process_missing(domain)
+                })
+                .map(|(_, route)| route.clone())
+                .map(|route| route.domain.clone())
+                .collect();
+
+            // Re-inject grace-period routes into discovered set so they aren't
+            // removed yet
+            for domain in &grace_domains {
+                if let Some(route) = route_table.routes.get(domain) {
+                    discovered.push(crate::discovery::DiscoveredService {
+                        domain: route.domain.clone(),
+                        port: route.port,
+                        extra_ports: route.extra_ports.clone(),
+                        pid: route.pid,
+                        source: route.source.clone(),
+                    });
+                }
+            }
+
+            let count = discovered.len();
+            let changes = route_table.update(discovered);
+
+            if changes.has_changes() {
+                if let Err(e) = route_table.save(&config.routes_path()) {
+                    tracing::error!("Failed to save route table: {}", e);
+                } else {
+                    log_changes(&changes);
+                }
+
+                // Update domain router
+                update_domain_router(&domain_router, &changes);
+
+                // Sync with cloud
+                if let Some(ref connector) = cloud {
+                    sync_cloud_routes(connector, &changes).await;
+                }
+            }
+
+            // Feed `.portzero.local` services into the virtual overlay. This is a
+            // separate discovery pass from the cloud/route discovery above and does
+            // not touch cloud route registration. No-op when the overlay failed to
+            // start (unprivileged environment).
+            //
+            // Also run the visibility checks (duplicate-name detection + legacy
+            // listener monitoring) and publish the combined issue set once per scan.
+            // Legacy monitoring runs regardless of whether the overlay started, so
+            // when the overlay is unavailable we still scan with empty overlay data.
+            let (overlay_issues, overlay_services) = if let Some(ref ov) = overlay {
+                match tokio::time::timeout(OVERLAY_REFRESH_TIMEOUT, refresh_overlay_services(ov))
+                    .await
+                {
+                    Ok(result) => {
+                        write_overlay_state(config, &result.1, true);
+                        result
+                    }
+                    Err(_) => {
+                        tracing::warn!("Overlay service refresh timed out; keeping previous state");
+                        (Vec::new(), Vec::new())
+                    }
+                }
+            } else {
+                // Overlay TUN is not running (insufficient privileges), but still scan
+                // so that `port zero status` can surface discovered .local services.
+                let services = match tokio::time::timeout(
+                    OVERLAY_REFRESH_TIMEOUT,
+                    discovery::scan_network_services(),
+                )
+                .await
+                {
+                    Ok(services) => services,
+                    Err(_) => {
+                        tracing::warn!("Overlay service scan timed out; keeping previous state");
+                        Vec::new()
+                    }
+                };
+                let issues = notify::detect_duplicate_names(&services);
+                write_overlay_state(config, &services, false);
+                (issues, services)
+            };
+            let docker_conflicts = conflicts.snapshot().await;
+            gather_and_publish_issues(
+                config,
+                &route_table,
+                overlay_issues,
+                &overlay_services,
+                docker_conflicts,
+                &mut notified_issues,
+            )
+            .await;
+
+            // Prune grace tracker
+            let active_domains: Vec<&String> = route_table.routes.keys().collect();
+            grace_tracker.prune(&active_domains);
+
+            tracing::trace!(
+                "Scan complete: {} services, {} routes",
+                count,
+                route_table.len()
+            );
+
+            // Periodic auth re-check: pick up login/logout without requiring a restart.
+            if Instant::now() >= next_auth_check {
+                next_auth_check = Instant::now() + Duration::from_secs(AUTH_CHECK_INTERVAL_SECS);
+                let new_auth = AuthConfig::load();
+                let new_token = new_auth.token.clone();
+                if new_token != current_token {
+                    let had_cloud = cloud.is_some();
+                    current_token = new_token;
+                    account_id = new_auth.account_id.clone();
+                    username = new_auth.username.clone();
+                    auth_failed = false;
+                    cloud = None; // drop the existing connection; connect block below will re-establish
+                    reconnect_backoff = ReconnectBackoff::new();
+                    match &current_token {
+                        Some(_) => tracing::info!("Auth token changed, will reconnect to cloud"),
+                        None if had_cloud => {
+                            tracing::info!("Logged out, disconnecting from cloud");
+                            write_cloud_state(config, false, None);
+                        }
+                        None => {}
+                    }
+                }
+            }
+
+            // Periodic JWT token refresh: renew the token before it expires so
+            // long-running daemons don't silently lose cloud connectivity.
+            if Instant::now() >= next_token_refresh_check {
+                next_token_refresh_check =
+                    Instant::now() + Duration::from_secs(TOKEN_REFRESH_CHECK_INTERVAL_SECS);
+                if current_token.is_some() {
+                    // Re-load auth config so we get the freshest token state.
+                    let current_auth = AuthConfig::load();
+                    if let Some(true) =
+                        current_auth.is_token_near_expiry(TOKEN_REFRESH_THRESHOLD_SECS)
+                    {
+                        tracing::info!("JWT token is near expiry, attempting auto-refresh");
+                        let mut refresh_auth = AuthConfig::load();
+                        match refresh_auth.refresh_token().await {
+                            Ok(()) => {
+                                current_token = refresh_auth.token.clone();
+                                if current_token.is_some() {
+                                    tracing::info!("JWT token refreshed, will reconnect to cloud");
+                                    cloud = None;
+                                    reconnect_backoff = ReconnectBackoff::new();
+                                    auth_failed = false;
                                 }
                             }
-                            cloud = Some(connector);
-                        }
-                        Err(e) => {
-                            let err_msg = e.root_cause().to_string();
-                            tracing::warn!("Cloud connect failed: {}", e);
-                            reconnect_backoff.on_failure();
-                            write_cloud_state(config, false, Some(err_msg));
+                            Err(e) => {
+                                tracing::warn!("Failed to auto-refresh JWT token: {}", e);
+                                // Don't block future attempts; the token may still be valid.
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Sleep until the next scan, waking early when the Docker event monitor
-        // sees a relevant container start/die so a new (or vanished) container is
-        // reflected promptly instead of waiting the full poll interval. The
-        // shutdown signal is handled one level up (the top-level `select!`
-        // below), so it can interrupt this sleep AND any of the scan work above.
-        tokio::select! {
-            _ = tokio::time::sleep(interval) => {}
-            _ = docker_rescan.notified() => {
-                tracing::trace!("Docker event triggered an immediate rescan");
+            // Detect when the server rejected our token (expired or revoked).
+            if let Some(ref connector) = cloud {
+                if connector.is_auth_failed() {
+                    tracing::warn!(
+                        "Edge server rejected our token (expired or revoked). \
+                     Run `port zero login` to re-authenticate."
+                    );
+                    write_cloud_state(
+                        config,
+                        false,
+                        Some(
+                            "Authentication failed. Run `port zero login` to re-authenticate."
+                                .to_string(),
+                        ),
+                    );
+                    cloud = None;
+                    auth_failed = true;
+                }
             }
-        }
+
+            // Connect or reconnect whenever we have a token and are not blocked by an
+            // auth failure.  This handles: initial connect retries, reconnects after
+            // drops, and connecting after a fresh login while the daemon is running.
+            if let Some(ref token_ref) = current_token {
+                if !auth_failed {
+                    let needs_connect = match &cloud {
+                        None => true,
+                        Some(c) => !c.is_connected(),
+                    };
+                    if needs_connect && reconnect_backoff.is_due() {
+                        let token = token_ref.clone();
+                        let is_reconnect = cloud.is_some();
+                        cloud = None; // drop any stale connector before creating the new one
+                        tracing::info!(
+                            "{}connecting to cloud edge...",
+                            if is_reconnect { "Re" } else { "C" }
+                        );
+                        let mut connector = CloudConnector::new(token);
+                        match connector.connect(domain_router.clone()).await {
+                            Ok(()) => {
+                                reconnect_backoff.on_success();
+                                write_cloud_state(config, true, None);
+                                for (domain, route) in &route_table.routes {
+                                    if let Err(e) =
+                                        connector.register_route(domain, route.port).await
+                                    {
+                                        tracing::warn!(
+                                            "Failed to re-register route {}: {}",
+                                            domain,
+                                            e
+                                        );
+                                    }
+                                }
+                                cloud = Some(connector);
+                            }
+                            Err(e) => {
+                                let err_msg = e.root_cause().to_string();
+                                tracing::warn!("Cloud connect failed: {}", e);
+                                reconnect_backoff.on_failure();
+                                write_cloud_state(config, false, Some(err_msg));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Sleep until the next scan, waking early when the Docker event monitor
+            // sees a relevant container start/die so a new (or vanished) container is
+            // reflected promptly instead of waiting the full poll interval. The
+            // shutdown signal is handled one level up (the top-level `select!`
+            // below), so it can interrupt this sleep AND any of the scan work above.
+            tokio::select! {
+                _ = tokio::time::sleep(interval) => {}
+                _ = docker_rescan.notified() => {
+                    tracing::trace!("Docker event triggered an immediate rescan");
+                }
+            }
         }; // end of `iteration` async block
 
         tokio::select! {
@@ -668,12 +707,7 @@ fn write_overlay_state(
 fn build_overlay_table(services: &[DiscoveredNetworkService]) -> ServiceTable {
     let mut table = ServiceTable::new();
     for svc in services {
-        table.register(
-            svc.name.clone(),
-            svc.real_addr,
-            svc.service_port,
-            svc.pid,
-        );
+        table.register(svc.name.clone(), svc.real_addr, svc.service_port, svc.pid);
     }
     table
 }
@@ -721,11 +755,10 @@ async fn gather_and_publish_issues(
     // enumerate_system_listeners() does a full /proc scan + per-pid fd reads —
     // blocking. Run it on the spawn_blocking pool so the async executor stays
     // free to handle shutdown signals and other tasks.
-    let legacy = tokio::task::spawn_blocking(move || {
-        crate::legacy_monitor::scan_legacy_listeners(&managed)
-    })
-    .await
-    .unwrap_or_default();
+    let legacy =
+        tokio::task::spawn_blocking(move || crate::legacy_monitor::scan_legacy_listeners(&managed))
+            .await
+            .unwrap_or_default();
     let mut all = overlay_issues;
     all.extend(legacy);
     // Real-time Docker port-bind conflicts caught by the event monitor (task-8).
@@ -985,10 +1018,13 @@ pub fn stop_daemon(config: &DaemonConfig) -> Result<()> {
     #[cfg(windows)]
     {
         use std::process::Command;
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string()])
+        let status = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
             .status()
             .context("Failed to terminate daemon process")?;
+        if !status.success() {
+            anyhow::bail!("Failed to terminate daemon process {pid}");
+        }
     }
 
     remove_pid_file(config);

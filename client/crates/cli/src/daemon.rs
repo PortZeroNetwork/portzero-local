@@ -171,9 +171,7 @@ pub async fn status() -> Result<()> {
             match read_cloud_connected(&config) {
                 Some(true) => println!("Tunnel: connected to {edge_display}"),
                 Some(false) if is_auth_err => {
-                    println!(
-                        "Tunnel: disconnected (auth token rejected — run `port zero login`)"
-                    );
+                    println!("Tunnel: disconnected (auth token rejected — run `port zero login`)");
                 }
                 Some(false) => {
                     if let Some(err) = cloud_err {
@@ -223,7 +221,7 @@ fn print_routes(config: &DaemonConfig) {
 
     if table.is_empty() && overlay.is_empty() {
         println!("\nNo routes discovered yet.");
-        println!("Set PORT_ZERO on a process or Docker container to expose it.");
+        println!("Set PZ_TUNNEL on a process or Docker container to expose it.");
         return;
     }
 
@@ -317,18 +315,38 @@ fn print_routes(config: &DaemonConfig) {
         }
         println!();
         println!(
-            "  Fix: stop duplicate containers or give each a unique PORT_ZERO value,\n\
-             e.g. PORT_ZERO=web-{{branch}}.portzero.local"
+            "  Fix: stop duplicate containers or give each a unique PZ_TUNNEL value,\n\
+             e.g. PZ_TUNNEL=web-{{branch}}.portzero.local"
         );
     }
 
     if !overlay.is_empty() && !overlay.overlay_active {
         println!();
-        println!(
-            "Note: .portzero.local services are not reachable — the overlay network requires\n\
-             CAP_NET_ADMIN and CAP_NET_BIND_SERVICE. Grant both capabilities:\n\
-             \n  sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $(which portzero)"
-        );
+        println!("{}", overlay_inactive_hint());
+    }
+}
+
+fn overlay_inactive_hint() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "Note: .portzero.local services are not reachable — the overlay network requires\n\
+         Administrator privileges and wintun.dll next to portzero.exe or in PATH."
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "Note: .portzero.local services are not reachable — the overlay network requires\n\
+         CAP_NET_ADMIN and CAP_NET_BIND_SERVICE. Grant both capabilities:\n\
+         \n  sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $(which portzero)"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "Note: .portzero.local services are not reachable — the overlay network requires\n\
+         root privileges or the networking Network Extension entitlement."
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        "Note: .portzero.local services are not reachable — the overlay network requires\n\
+         platform-specific privileges to create a TUN device and configure DNS."
     }
 }
 

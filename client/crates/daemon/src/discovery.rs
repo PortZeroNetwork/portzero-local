@@ -1,6 +1,6 @@
-//! Service discovery: scan processes and Docker containers for PORT_ZERO.
+//! Service discovery: scan processes and Docker containers for PZ_TUNNEL.
 //!
-//! The value of PORT_ZERO must be a full domain name (after template
+//! The value of PZ_TUNNEL must be a full domain name (after template
 //! substitution). No implicit suffixes are added.
 //!
 //! - If it ends with `.portzero.local` (or `.local`) → local virtual overlay.
@@ -8,9 +8,9 @@
 //!   (or the configured base, supporting namespacing like `api.alice.tunnel...`).
 //!
 //! Examples (full names required):
-//!   PORT_ZERO=my-api.alice.tunnel.portzero.cloud
-//!   PORT_ZERO=my-db-{branch}.portzero.local
-//!   PORT_ZERO=web-{branch}.tunnel.portzero.cloud
+//!   PZ_TUNNEL=my-api.alice.tunnel.portzero.cloud
+//!   PZ_TUNNEL=my-db-{branch}.portzero.local
+//!   PZ_TUNNEL=web-{branch}.tunnel.portzero.cloud
 //!
 //! Cross-platform support:
 //! - Linux: full (reads /proc/<pid>/environ and /proc/<pid>/fd for inode-based port scoping)
@@ -33,7 +33,7 @@ use crate::protocol_detect;
 /// - `*.(username.)tunnel.portzero.cloud` (or configured base) → cloud tunnel
 ///
 /// No implicit suffix is ever appended.
-const ENV_VAR_NAME: &str = "PORT_ZERO";
+const ENV_VAR_NAME: &str = "PZ_TUNNEL";
 
 /// Selects which HTTP port to forward. Defaults to CHOOSE_LOWEST if unset.
 const ENV_HTTP_PORT_VAR: &str = "PORT_ZERO_HTTP_PORT";
@@ -191,12 +191,25 @@ pub async fn scan_all(account_id: Option<&str>, username: Option<&str>) -> Vec<D
     // shutdown-signal future never gets polled mid-scan.
     let acct = account_id.map(str::to_owned);
     let user = username.map(str::to_owned);
-    let process_services =
-        tokio::task::spawn_blocking(move || scan_processes(acct.as_deref(), user.as_deref()))
-            .await
-            .unwrap_or_default();
-    services.extend(process_services);
-    services.extend(scan_docker_containers(account_id, username).await);
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::task::spawn_blocking(move || scan_processes(acct.as_deref(), user.as_deref())),
+    )
+    .await
+    {
+        Ok(Ok(process_services)) => services.extend(process_services),
+        Ok(Err(_)) => tracing::debug!("process scan panicked"),
+        Err(_) => tracing::debug!("process scan timed out"),
+    }
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        scan_docker_containers(account_id, username),
+    )
+    .await
+    {
+        Ok(docker_services) => services.extend(docker_services),
+        Err(_) => tracing::debug!("Docker container scan timed out"),
+    }
     services
 }
 
@@ -205,14 +218,134 @@ pub async fn scan_all(account_id: Option<&str>, username: Option<&str>) -> Vec<D
 // ---------------------------------------------------------------------------
 
 fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<DiscoveredService> {
+    #[cfg(target_os = "windows")]
+    {
+        return scan_processes_windows(account_id, username);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut sys = System::new();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+        let mut services = Vec::new();
+
+        for (pid, process) in sys.processes() {
+            let pid_u32 = pid.as_u32();
+            if pid_u32 <= 1 {
+                continue;
+            }
+
+            let raw = match scan_process_env(pid_u32, ENV_VAR_NAME) {
+                Some(v) if !v.is_empty() => v,
+                _ => continue,
+            };
+
+            let cwd = process.cwd().map(|p| p.to_path_buf());
+            // Strip an optional canonical `:port` before classification/validation.
+            // On the cloud path the edge assigns the URL, so the port is ignored.
+            let (raw_domain, _canonical_port) = split_tunnel_port(&raw);
+            warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
+            let domain = resolve_tunnel_template(raw_domain, cwd.as_deref(), account_id, username);
+
+            if is_local_overlay_domain(&domain) {
+                tracing::debug!(
+                    pid = pid_u32,
+                    domain,
+                    "PORT_ZERO value ends in .local — routing to overlay path"
+                );
+                continue;
+            }
+
+            // For cloud tunnels we require a full domain name (no implicit suffix).
+            if let Err(e) = validate_tunnel_domain(&domain) {
+                tracing::warn!(
+                    pid = pid_u32,
+                    domain,
+                    error = %e,
+                    "PORT_ZERO value is not a valid full tunnel domain (and not .local). \
+                     Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
+                );
+                continue;
+            }
+
+            let http_selection = scan_process_env(pid_u32, ENV_HTTP_PORT_VAR)
+                .map(|v| parse_http_port_selection(&v))
+                .unwrap_or(HttpPortSelection::ChooseLowest);
+
+            let extra_ports = scan_process_env(pid_u32, ENV_PORTS_VAR)
+                .map(|v| parse_extra_ports(&v))
+                .unwrap_or_default();
+
+            let listening = discover_process_ports(pid_u32);
+
+            let port = match select_http_port(&listening, &http_selection) {
+                SelectedPort::Found(p) => p,
+                SelectedPort::ExplicitNotOwned(requested) => {
+                    tracing::warn!(
+                        pid = pid_u32,
+                        requested_port = requested,
+                        "PORT_ZERO_HTTP_PORT specifies a port not owned by this process; ignoring"
+                    );
+                    continue;
+                }
+                // No listening ports on this process. This is expected when a
+                // parent shell or launcher sets PORT_ZERO so that a child
+                // process inherits it — the parent itself has nothing to forward.
+                SelectedPort::NoneListening => {
+                    tracing::debug!(
+                        pid = pid_u32,
+                        "skipping process with PORT_ZERO but no listening ports \
+                     (likely a parent process passing the variable to its child)"
+                    );
+                    continue;
+                }
+            };
+
+            let owned_ports: std::collections::HashSet<u16> =
+                listening.iter().map(|lp| lp.port).collect();
+            let extra_ports: Vec<PortMapping> = extra_ports
+            .into_iter()
+            .filter(|m| {
+                if owned_ports.contains(&m.local_port) {
+                    true
+                } else {
+                    tracing::warn!(
+                        pid = pid_u32,
+                        local_port = m.local_port,
+                        "PORT_ZERO_PORTS entry references a port not owned by this process; skipping"
+                    );
+                    false
+                }
+            })
+            .collect();
+
+            services.push(DiscoveredService {
+                domain,
+                port,
+                extra_ports,
+                pid: pid_u32,
+                source: ServiceSource::Process { cwd },
+            });
+        }
+
+        services
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn scan_processes_windows(
+    account_id: Option<&str>,
+    username: Option<&str>,
+) -> Vec<DiscoveredService> {
     let mut sys = System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
+    let listening_by_pid = discover_all_ports_windows_by_pid();
     let mut services = Vec::new();
 
-    for (pid, process) in sys.processes() {
-        let pid_u32 = pid.as_u32();
-        if pid_u32 <= 1 {
+    for (pid_u32, listening) in listening_by_pid {
+        if pid_u32 <= 1 || listening.is_empty() {
             continue;
         }
 
@@ -221,9 +354,9 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
             _ => continue,
         };
 
-        let cwd = process.cwd().map(|p| p.to_path_buf());
-        // Strip an optional canonical `:port` before classification/validation.
-        // On the cloud path the edge assigns the URL, so the port is ignored.
+        let cwd = sys
+            .process(sysinfo::Pid::from_u32(pid_u32))
+            .and_then(|process| process.cwd().map(|p| p.to_path_buf()));
         let (raw_domain, _canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
         let domain = resolve_tunnel_template(raw_domain, cwd.as_deref(), account_id, username);
@@ -232,18 +365,17 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
             tracing::debug!(
                 pid = pid_u32,
                 domain,
-                "PORT_ZERO value ends in .local — routing to overlay path"
+                "PZ_TUNNEL value ends in .local — routing to overlay path"
             );
             continue;
         }
 
-        // For cloud tunnels we require a full domain name (no implicit suffix).
         if let Err(e) = validate_tunnel_domain(&domain) {
             tracing::warn!(
                 pid = pid_u32,
                 domain,
                 error = %e,
-                "PORT_ZERO value is not a valid full tunnel domain (and not .local). \
+                "PZ_TUNNEL value is not a valid full tunnel domain (and not .local). \
                  Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
             );
             continue;
@@ -257,8 +389,6 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
             .map(|v| parse_extra_ports(&v))
             .unwrap_or_default();
 
-        let listening = discover_process_ports(pid_u32);
-
         let port = match select_http_port(&listening, &http_selection) {
             SelectedPort::Found(p) => p,
             SelectedPort::ExplicitNotOwned(requested) => {
@@ -269,17 +399,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                 );
                 continue;
             }
-            // No listening ports on this process. This is expected when a
-            // parent shell or launcher sets PORT_ZERO so that a child
-            // process inherits it — the parent itself has nothing to forward.
-            SelectedPort::NoneListening => {
-                tracing::debug!(
-                    pid = pid_u32,
-                    "skipping process with PORT_ZERO but no listening ports \
-                     (likely a parent process passing the variable to its child)"
-                );
-                continue;
-            }
+            SelectedPort::NoneListening => continue,
         };
 
         let owned_ports: std::collections::HashSet<u16> =
@@ -620,11 +740,42 @@ Get-NetTCPConnection -State Listen -OwningProcess {pid} |
     };
 
     if !output.status.success() {
-        return Vec::new();
+        return discover_ports_windows_netstat(pid);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_windows_tcp_connection_stdout(&stdout)
+    let ports = parse_windows_tcp_connection_stdout(&stdout);
+    if ports.is_empty() {
+        discover_ports_windows_netstat(pid)
+    } else {
+        ports
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn discover_ports_windows_netstat(pid: u32) -> Vec<ListeningPort> {
+    use std::process::Command;
+
+    let output = match Command::new("netstat").args(["-ano", "-p", "tcp"]).output() {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_windows_netstat_stdout(&stdout, pid)
+}
+
+#[cfg(target_os = "windows")]
+fn discover_all_ports_windows_by_pid() -> std::collections::HashMap<u32, Vec<ListeningPort>> {
+    use std::process::Command;
+
+    let output = match Command::new("netstat").args(["-ano", "-p", "tcp"]).output() {
+        Ok(o) if o.status.success() => o,
+        _ => return std::collections::HashMap::new(),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_windows_netstat_stdout_by_pid(&stdout)
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -644,6 +795,76 @@ fn parse_windows_tcp_connection_line(line: &str) -> Option<ListeningPort> {
     }
 
     let addr = addr.trim();
+    let bind = if addr == "0.0.0.0" || addr == "::" || addr == "*" {
+        BindAddr::Public
+    } else {
+        BindAddr::Loopback
+    };
+
+    Some(ListeningPort { port, bind })
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_windows_netstat_stdout(stdout: &str, pid: u32) -> Vec<ListeningPort> {
+    stdout
+        .lines()
+        .filter_map(|line| parse_windows_netstat_line(line, pid))
+        .collect()
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_windows_netstat_stdout_by_pid(
+    stdout: &str,
+) -> std::collections::HashMap<u32, Vec<ListeningPort>> {
+    let mut out: std::collections::HashMap<u32, Vec<ListeningPort>> =
+        std::collections::HashMap::new();
+    for line in stdout.lines() {
+        if let Some((pid, port)) = parse_windows_netstat_line_any_pid(line) {
+            out.entry(pid).or_default().push(port);
+        }
+    }
+    out
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_windows_netstat_line(line: &str, pid: u32) -> Option<ListeningPort> {
+    let (line_pid, port) = parse_windows_netstat_line_any_pid(line)?;
+    if line_pid == pid {
+        Some(port)
+    } else {
+        None
+    }
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_windows_netstat_line_any_pid(line: &str) -> Option<(u32, ListeningPort)> {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 5 || !parts[0].eq_ignore_ascii_case("TCP") {
+        return None;
+    }
+    if !parts[3].eq_ignore_ascii_case("LISTENING") {
+        return None;
+    }
+
+    let pid = parts[4].parse::<u32>().ok()?;
+    let port = parse_windows_local_address_port(parts[1])?;
+    Some((pid, port))
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_windows_local_address_port(local: &str) -> Option<ListeningPort> {
+    let (addr, port_str) = if let Some(rest) = local.strip_prefix('[') {
+        let (addr, tail) = rest.split_once("]:")?;
+        (addr, tail)
+    } else {
+        local.rsplit_once(':')?
+    };
+
+    let port = port_str.trim().parse::<u16>().ok()?;
+    if port == 0 {
+        return None;
+    }
+
     let bind = if addr == "0.0.0.0" || addr == "::" || addr == "*" {
         BindAddr::Public
     } else {
@@ -975,6 +1196,10 @@ async fn scan_docker_containers(
     account_id: Option<&str>,
     username: Option<&str>,
 ) -> Vec<DiscoveredService> {
+    if !command_on_path("docker") {
+        return Vec::new();
+    }
+
     let acct = account_id.map(str::to_owned);
     let user = username.map(str::to_owned);
     match tokio::task::spawn_blocking(move || {
@@ -1069,9 +1294,10 @@ fn inspect_container(
 
     let env_vars: Vec<String> = serde_json::from_str(env_json).unwrap_or_default();
 
+    let tunnel_prefix = format!("{ENV_VAR_NAME}=");
     let raw = env_vars
         .iter()
-        .find_map(|e| e.strip_prefix("PORT_ZERO="))
+        .find_map(|e| e.strip_prefix(&tunnel_prefix))
         .map(|v| v.to_string());
 
     let raw = match raw {
@@ -1080,7 +1306,7 @@ fn inspect_container(
     };
 
     // Discover a host-side project directory for template resolution (branch, worktree, etc.)
-    // This makes PORT_ZERO=my-service-{branch} work for `docker run` (via bind mounts)
+    // This makes PZ_TUNNEL=my-service-{branch} work for `docker run` (via bind mounts)
     // and `docker compose` (via labels + mounts).
     let project_dir = find_host_project_dir_for_container(mounts_json, labels_json);
 
@@ -1104,7 +1330,7 @@ fn inspect_container(
             container = name,
             domain,
             error = %e,
-            "PORT_ZERO value on container is not a valid full tunnel domain (and not .local). \
+            "PZ_TUNNEL value on container is not a valid full tunnel domain (and not .local). \
              Use a full name like web-mybranch.tunnel.portzero.cloud"
         );
         return Ok(None);
@@ -1251,8 +1477,14 @@ pub struct DiscoveredNetworkService {
 /// multiple distinct worktrees.
 pub async fn scan_network_services() -> Vec<DiscoveredNetworkService> {
     let mut out = Vec::new();
-    out.extend(scan_network_processes().await);
-    out.extend(scan_network_containers().await);
+    match tokio::time::timeout(std::time::Duration::from_secs(2), scan_network_processes()).await {
+        Ok(process_services) => out.extend(process_services),
+        Err(_) => tracing::debug!("overlay process scan timed out"),
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(2), scan_network_containers()).await {
+        Ok(container_services) => out.extend(container_services),
+        Err(_) => tracing::debug!("Docker network scan timed out"),
+    }
     out
 }
 
@@ -1267,17 +1499,102 @@ struct NetProcessCandidate {
 
 // Blocking half: sysinfo refresh + per-process ps/lsof calls. Must not .await.
 fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
+    #[cfg(target_os = "windows")]
+    {
+        return scan_network_processes_sync_windows();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::net::{IpAddr, SocketAddr};
+
+        let mut sys = System::new();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+        let daemon_no_probe = std::env::var(ENV_NO_PROBE_VAR).ok();
+        let mut candidates = Vec::new();
+
+        for (pid, process) in sys.processes() {
+            let pid_u32 = pid.as_u32();
+            if pid_u32 <= 1 {
+                continue;
+            }
+
+            let raw = match scan_process_env(pid_u32, ENV_VAR_NAME) {
+                Some(v) if !v.is_empty() => v,
+                _ => continue,
+            };
+
+            let process_cwd = process.cwd().map(|p| p.to_path_buf());
+            let (raw_domain, canonical_port) = split_tunnel_port(&raw);
+            warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
+            let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
+
+            if !is_local_overlay_domain(&resolved) {
+                continue;
+            }
+
+            let label = extract_local_label(&resolved);
+            if label.is_empty() {
+                continue;
+            }
+
+            let listening = discover_process_ports(pid_u32);
+            if listening.is_empty() {
+                continue;
+            }
+
+            let chosen = listening
+                .iter()
+                .find(|lp| lp.bind == BindAddr::Public)
+                .or_else(|| listening.first());
+
+            let port = match chosen {
+                Some(lp) => lp.port,
+                None => continue,
+            };
+
+            let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
+
+            let (port, needs_probe) = match canonical_port {
+                Some(explicit) => (explicit, false),
+                None => {
+                    let per_process = scan_process_env(pid_u32, ENV_NO_PROBE_VAR);
+                    let no_probe = protocol_detect::probing_disabled(
+                        per_process.as_deref(),
+                        daemon_no_probe.as_deref(),
+                    );
+                    (port, !no_probe)
+                }
+            };
+
+            candidates.push(NetProcessCandidate {
+                label,
+                real_addr,
+                port,
+                needs_probe,
+                pid: pid_u32,
+                cwd: process_cwd,
+            });
+        }
+
+        candidates
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
     use std::net::{IpAddr, SocketAddr};
 
     let mut sys = System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
     let daemon_no_probe = std::env::var(ENV_NO_PROBE_VAR).ok();
+    let listening_by_pid = discover_all_ports_windows_by_pid();
     let mut candidates = Vec::new();
 
-    for (pid, process) in sys.processes() {
-        let pid_u32 = pid.as_u32();
-        if pid_u32 <= 1 {
+    for (pid_u32, listening) in listening_by_pid {
+        if pid_u32 <= 1 || listening.is_empty() {
             continue;
         }
 
@@ -1286,7 +1603,9 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
             _ => continue,
         };
 
-        let process_cwd = process.cwd().map(|p| p.to_path_buf());
+        let process_cwd = sys
+            .process(sysinfo::Pid::from_u32(pid_u32))
+            .and_then(|process| process.cwd().map(|p| p.to_path_buf()));
         let (raw_domain, canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
         let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
@@ -1297,11 +1616,6 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
 
         let label = extract_local_label(&resolved);
         if label.is_empty() {
-            continue;
-        }
-
-        let listening = discover_process_ports(pid_u32);
-        if listening.is_empty() {
             continue;
         }
 
@@ -1391,6 +1705,10 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
     use std::net::{IpAddr, SocketAddr};
     use std::process::Command;
 
+    if !command_on_path("docker") {
+        return Ok(Vec::new());
+    }
+
     let output = Command::new("docker")
         .args(["ps", "--format", "{{.ID}}"])
         .output()?;
@@ -1442,11 +1760,12 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
             Err(_) => continue,
         };
 
-        // Only PORT_ZERO is used. Overlay participation requires the value
+        // Only PZ_TUNNEL is used. Overlay participation requires the value
         // to end with .portzero.local (pure suffix-based detection).
+        let tunnel_prefix = format!("{ENV_VAR_NAME}=");
         let raw_name = envs
             .iter()
-            .find_map(|e| e.strip_prefix("PORT_ZERO="))
+            .find_map(|e| e.strip_prefix(&tunnel_prefix))
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty());
 
@@ -1551,6 +1870,39 @@ fn sanitize_network_name(raw: &str) -> String {
         .chars()
         .take(63)
         .collect()
+}
+
+fn command_on_path(program: &str) -> bool {
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+
+    #[cfg(windows)]
+    let candidates: Vec<String> = {
+        let pathext = std::env::var_os("PATHEXT")
+            .and_then(|v| v.into_string().ok())
+            .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_string());
+        let has_ext = std::path::Path::new(program).extension().is_some();
+        if has_ext {
+            vec![program.to_string()]
+        } else {
+            pathext
+                .split(';')
+                .filter(|ext| !ext.is_empty())
+                .map(|ext| format!("{program}{ext}"))
+                .chain(std::iter::once(program.to_string()))
+                .collect()
+        }
+    };
+
+    #[cfg(not(windows))]
+    let candidates: Vec<String> = vec![program.to_string()];
+
+    std::env::split_paths(&paths).any(|dir| {
+        candidates
+            .iter()
+            .any(|candidate| dir.join(candidate).is_file())
+    })
 }
 
 #[cfg(test)]
@@ -1697,21 +2049,107 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_windows_netstat_lines() {
+        assert_eq!(
+            parse_windows_netstat_line(
+                "  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234",
+                1234,
+            ),
+            Some(ListeningPort {
+                port: 5173,
+                bind: BindAddr::Loopback,
+            })
+        );
+        assert_eq!(
+            parse_windows_netstat_line(
+                "  TCP    0.0.0.0:8080           0.0.0.0:0              LISTENING       1234",
+                1234,
+            ),
+            Some(ListeningPort {
+                port: 8080,
+                bind: BindAddr::Public,
+            })
+        );
+        assert_eq!(
+            parse_windows_netstat_line(
+                "  TCP    [::]:3000              [::]:0                 LISTENING       1234",
+                1234,
+            ),
+            Some(ListeningPort {
+                port: 3000,
+                bind: BindAddr::Public,
+            })
+        );
+        assert_eq!(
+            parse_windows_netstat_line(
+                "  TCP    127.0.0.1:5173         0.0.0.0:0              ESTABLISHED     1234",
+                1234,
+            ),
+            None
+        );
+        assert_eq!(
+            parse_windows_netstat_line(
+                "  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       9999",
+                1234,
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn test_parse_windows_environment_block() {
-        let mut words: Vec<u16> = "Path=C:\\Windows\0PORT_ZERO=api.portzero.local\0\0"
+        let mut words: Vec<u16> = "Path=C:\\Windows\0PZ_TUNNEL=api.portzero.local\0\0"
             .encode_utf16()
             .collect();
         assert_eq!(
             parse_windows_environment_block(&words),
             vec![
                 "Path=C:\\Windows".to_string(),
-                "PORT_ZERO=api.portzero.local".to_string()
+                "PZ_TUNNEL=api.portzero.local".to_string()
             ]
         );
 
         words.clear();
         words.extend("\0".encode_utf16());
         assert!(parse_windows_environment_block(&words).is_empty());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_scan_process_env_windows_spawned_child() {
+        let mut child = std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Seconds 30",
+            ])
+            .env("PZ_TUNNEL", "spawned-child.tunnel.portzero.cloud")
+            .spawn()
+            .expect("spawn child process");
+
+        let result = scan_process_env(child.id(), ENV_VAR_NAME);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert_eq!(
+            result.as_deref(),
+            Some("spawned-child.tunnel.portzero.cloud")
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_discover_ports_windows_current_process_listener() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral listener");
+        let port = listener.local_addr().expect("listener address").port();
+
+        let ports = discover_process_ports(std::process::id());
+
+        assert!(
+            ports.iter().any(|p| p.port == port),
+            "expected to discover listener port {port}, got {ports:?}"
+        );
     }
 
     #[test]

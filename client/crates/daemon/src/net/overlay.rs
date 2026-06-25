@@ -2,7 +2,7 @@
 //!
 //! Starts the TUN device, the smoltcp TCP stack, and the embedded DNS server.
 //! It receives service updates (from discovery) and keeps the virtual network
-//! in sync with services that set a full `*.portzero.local` name via PORT_ZERO.
+//! in sync with services that set a full `*.portzero.local` name via PZ_TUNNEL.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use crate::net::resolver_config;
 use crate::net::service_table::ServiceTable;
 use crate::net::stack::VirtualStack;
 use crate::net::tun_device::{TunConfig, TunDevice};
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use crate::net::virtual_ip::gateway_ip;
 
 /// macOS loopback port for the embedded DNS server. A high, non-privileged
@@ -42,15 +42,38 @@ const MACOS_DNS_LOOPBACK_PORT: u16 = 10053;
 /// therefore binds to loopback (`127.0.0.1:<MACOS_DNS_LOOPBACK_PORT>`), which is
 /// always locally deliverable; the `/etc/resolver/portzero.local` file carries the
 /// matching `port` line so the system resolver finds it.
+///
+/// **Windows exception:** Wintun does not make the configured gateway address
+/// valid for a local UDP bind in the same way Linux does. Bind the embedded DNS
+/// server to all IPv4 interfaces on port 53, and point the NRPT rule at
+/// loopback. This avoids Windows filtering quirks seen with a loopback-only
+/// DNS listener while keeping the resolver target local.
 fn default_dns_listen() -> SocketAddr {
     #[cfg(target_os = "macos")]
     {
-        SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), MACOS_DNS_LOOPBACK_PORT)
+        SocketAddr::new(
+            IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            MACOS_DNS_LOOPBACK_PORT,
+        )
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 53)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         SocketAddr::new(IpAddr::V4(gateway_ip()), 53)
     }
+}
+
+fn resolver_dns_addr(listen_addr: SocketAddr) -> SocketAddr {
+    #[cfg(target_os = "windows")]
+    {
+        if listen_addr.ip().is_unspecified() {
+            return SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), listen_addr.port());
+        }
+    }
+    listen_addr
 }
 
 /// Configuration for the overlay network.
@@ -104,6 +127,13 @@ impl OverlayNetwork {
 
         // Start DNS server
         let dns_server = OverlayDnsServer::new(services.clone(), config.dns_listen);
+        #[cfg(target_os = "windows")]
+        let dns_task = tokio::task::spawn_blocking(move || {
+            if let Err(e) = dns_server.run_blocking() {
+                tracing::error!("overlay DNS server exited: {}", e);
+            }
+        });
+        #[cfg(not(target_os = "windows"))]
         let dns_task = tokio::spawn(async move {
             if let Err(e) = dns_server.run().await {
                 tracing::error!("overlay DNS server exited: {}", e);
@@ -114,8 +144,12 @@ impl OverlayNetwork {
         // Attached to the TUN link (created above), so on Linux this works even
         // when systemd-networkd is absent. Log errors but do not abort startup;
         // the overlay still works for services that manually configure DNS.
-        if let Err(e) = resolver_config::install(config.dns_listen, &link_name).await {
-            tracing::warn!("scoped resolver setup failed (may need elevated privileges): {:#}", e);
+        let resolver_addr = resolver_dns_addr(config.dns_listen);
+        if let Err(e) = resolver_config::install(resolver_addr, &link_name).await {
+            tracing::warn!(
+                "scoped resolver setup failed (may need elevated privileges): {:#}",
+                e
+            );
         }
 
         Ok(Self {
@@ -191,12 +225,34 @@ mod tests {
         );
     }
 
-    /// On Linux (and other non-macOS targets) the default is unchanged: the
+    /// On Windows the default listener must use port 53: NRPT does not carry a
+    /// port, and binding to the Wintun gateway address fails with WSAEADDRNOTAVAIL.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_default_dns_listen_is_wildcard_53() {
+        let addr = default_dns_listen();
+        assert_eq!(
+            addr,
+            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 53)
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_resolver_points_at_loopback_for_wildcard_listener() {
+        let listen = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 53);
+        assert_eq!(
+            resolver_dns_addr(listen),
+            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 53)
+        );
+    }
+
+    /// On Linux (and other non-macOS/non-Windows targets) the default is unchanged: the
     /// overlay gateway on port 53, which the kernel makes locally reachable via
     /// the interface route.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     #[test]
-    fn non_macos_default_dns_listen_is_gateway_53() {
+    fn non_macos_non_windows_default_dns_listen_is_gateway_53() {
         let addr = default_dns_listen();
         assert_eq!(addr, SocketAddr::new(IpAddr::V4(gateway_ip()), 53));
     }

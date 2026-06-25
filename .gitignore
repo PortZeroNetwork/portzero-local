@@ -4,6 +4,7 @@
 devenv-tunnel.db
 *.pem
 *.key
+*.log
 .idea/
 # Ticketry ticket management state (index.db, hooks state, etc.) is never committed
 /.ticketry/

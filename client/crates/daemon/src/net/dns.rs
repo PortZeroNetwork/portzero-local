@@ -6,8 +6,10 @@
 //!
 //! We use hickory-proto for clean DNS message handling.
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr, UdpSocket as StdUdpSocket};
 use std::sync::Arc;
+#[cfg(target_os = "windows")]
+use std::time::Duration;
 
 use anyhow::Result;
 use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
@@ -48,6 +50,7 @@ impl OverlayDnsServer {
                 }
             };
 
+            tracing::info!("overlay DNS query received from {}", src);
             let req_bytes = &buf[..len];
             let response = match self.handle_query(req_bytes).await {
                 Some(resp) => resp,
@@ -60,59 +63,104 @@ impl OverlayDnsServer {
         }
     }
 
-    async fn handle_query(&self, data: &[u8]) -> Option<Vec<u8>> {
-        let msg = match Message::from_bytes(data) {
-            Ok(m) => m,
-            Err(_) => return None,
-        };
+    /// Run the DNS server on a dedicated blocking thread.
+    ///
+    /// Windows startup/discovery can involve blocking OS inspection. Keeping DNS
+    /// on a plain socket thread prevents those paths from starving name
+    /// resolution once the resolver is configured.
+    #[cfg(target_os = "windows")]
+    pub fn run_blocking(self) -> Result<()> {
+        let sock = StdUdpSocket::bind(self.listen_addr)?;
+        sock.set_read_timeout(Some(Duration::from_secs(30)))?;
+        tracing::info!("overlay DNS listening on {}", self.listen_addr);
 
-        if msg.op_code() != OpCode::Query {
-            return None;
-        }
-
-        let mut out = Message::new();
-        out.set_id(msg.id());
-        out.set_message_type(MessageType::Response);
-        out.set_op_code(OpCode::Query);
-        out.set_recursion_desired(msg.recursion_desired());
-        out.set_recursion_available(true);
-        out.set_authoritative(true);
-
-        let services = self.services.read().await;
-
-        for q in msg.queries() {
-            if q.query_class() != DNSClass::IN {
-                continue;
-            }
-
-            let name = q.name().clone();
-
-            if q.query_type() == RecordType::A {
-                if let Some(ip) = resolve_name_to_vip(&name, &services) {
-                    let mut rec = Record::new();
-                    rec.set_name(name.clone());
-                    rec.set_rr_type(RecordType::A);
-                    rec.set_dns_class(DNSClass::IN);
-                    rec.set_ttl(5);
-                    rec.set_data(Some(RData::A(ip.into())));
-                    out.add_answer(rec);
-                    out.set_response_code(ResponseCode::NoError);
-                } else {
-                    // We are authoritative for *.portzero.local — return NXDOMAIN for unknowns in our zone.
-                    if is_portzero_local(&name) {
-                        out.set_response_code(ResponseCode::NXDomain);
-                    }
+        let mut buf = vec![0u8; 512];
+        loop {
+            let (len, src) = match sock.recv_from(&mut buf) {
+                Ok(v) => v,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    tracing::debug!("overlay DNS receive wait timed out");
+                    continue;
                 }
+                Err(e) => {
+                    tracing::debug!("DNS recv error: {}", e);
+                    continue;
+                }
+            };
+
+            tracing::debug!("overlay DNS query received from {}", src);
+            let req_bytes = &buf[..len];
+            let services = self.services.blocking_read();
+            let response = match handle_query_with_services(req_bytes, &services) {
+                Some(resp) => resp,
+                None => continue,
+            };
+
+            if let Err(e) = sock.send_to(&response, src) {
+                tracing::debug!("DNS send error to {}: {}", src, e);
             }
         }
+    }
 
-        // Add the original question
-        for q in msg.queries() {
-            out.add_query(q.clone());
+    async fn handle_query(&self, data: &[u8]) -> Option<Vec<u8>> {
+        let services = self.services.read().await;
+        handle_query_with_services(data, &services)
+    }
+}
+
+fn handle_query_with_services(data: &[u8], services: &ServiceTable) -> Option<Vec<u8>> {
+    let msg = match Message::from_bytes(data) {
+        Ok(m) => m,
+        Err(_) => return None,
+    };
+
+    if msg.op_code() != OpCode::Query {
+        return None;
+    }
+
+    let mut out = Message::new();
+    out.set_id(msg.id());
+    out.set_message_type(MessageType::Response);
+    out.set_op_code(OpCode::Query);
+    out.set_recursion_desired(msg.recursion_desired());
+    out.set_recursion_available(true);
+    out.set_authoritative(true);
+    out.set_response_code(ResponseCode::NoError);
+
+    for q in msg.queries() {
+        let name = q.name().clone();
+        if q.query_class() != DNSClass::IN {
+            out.set_response_code(ResponseCode::NotImp);
+            continue;
         }
 
-        out.to_bytes().ok()
+        if q.query_type() == RecordType::A {
+            if let Some(ip) = resolve_name_to_vip(&name, services) {
+                let mut rec = Record::new();
+                rec.set_name(name.clone());
+                rec.set_rr_type(RecordType::A);
+                rec.set_dns_class(DNSClass::IN);
+                rec.set_ttl(5);
+                rec.set_data(Some(RData::A(ip.into())));
+                out.add_answer(rec);
+                out.set_response_code(ResponseCode::NoError);
+            } else if is_portzero_local(&name) {
+                out.set_response_code(ResponseCode::NXDomain);
+            }
+        } else if is_portzero_local(&name) && resolve_name_to_vip(&name, services).is_none() {
+            out.set_response_code(ResponseCode::NXDomain);
+        }
     }
+
+    // Add the original question
+    for q in msg.queries() {
+        out.add_query(q.clone());
+    }
+
+    out.to_bytes().ok()
 }
 
 fn is_portzero_local(name: &Name) -> bool {
@@ -121,7 +169,7 @@ fn is_portzero_local(name: &Name) -> bool {
 }
 
 /// Given a DNS name like "my-db.portzero.local", look up the corresponding VIP.
-fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<std::net::Ipv4Addr> {
+fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<Ipv4Addr> {
     let labels: Vec<_> = name
         .iter()
         .map(|l| std::str::from_utf8(l).unwrap_or(""))
@@ -136,7 +184,10 @@ fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<std::net:
     let candidate = labels[0];
 
     // Must be under portzero.local
-    if labels.len() >= 3 && labels[labels.len() - 2] == "portzero" && labels[labels.len() - 1] == "local" {
+    if labels.len() >= 3
+        && labels[labels.len() - 2] == "portzero"
+        && labels[labels.len() - 1] == "local"
+    {
         return services.get(candidate).map(|svc| {
             // smoltcp Ipv4Address can be converted via its Display or as_bytes in 0.11
             let b: [u8; 4] = svc.vip.0;
