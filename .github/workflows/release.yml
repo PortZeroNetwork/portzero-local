@@ -1,8 +1,10 @@
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
     branches: [main]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +17,7 @@ jobs:
   version:
     name: Determine Version
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
