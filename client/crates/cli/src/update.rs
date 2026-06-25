@@ -36,7 +36,7 @@ fn last_check_path() -> Result<PathBuf> {
 
 /// Return true if enough time has elapsed since the last check.
 fn should_check() -> bool {
-    if std::env::var("PORT_ZERO_NO_UPDATE_CHECK").is_ok() {
+    if std::env::var("PZ_TUNNEL_NO_UPDATE_CHECK").is_ok() {
         return false;
     }
 

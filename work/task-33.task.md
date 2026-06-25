@@ -59,7 +59,7 @@ reader), never reaching the real `UdpSocket`. Hence the timeout.
 
 The same re-run showed `port zero status` with **no overlay routes** even
 though `lsof` proves the service listens on `127.0.0.1:50706` and the daemon saw
-its `PORT_ZERO`. Could not be isolated while the DNS server was unreachable.
+its `PZ_TUNNEL`. Could not be isolated while the DNS server was unreachable.
 Once this fix lands and `dig @127.0.0.1` works, confirm whether the service
 registers (`scan_network_processes` → VIP → DNS record → `overlay.json`). If
 still missing, file a dedicated discovery/registration ticket then.

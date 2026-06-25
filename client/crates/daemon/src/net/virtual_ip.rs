@@ -3,7 +3,7 @@
 //! We use a non-routable documentation/example block:
 //!   10.254.0.0/16
 //!
-//! Each full `*.portzero.local` name from PORT_ZERO gets a stable IP
+//! Each full `*.portzero.local` name from PZ_TUNNEL gets a stable IP
 //! for the lifetime of the daemon.
 
 use std::collections::HashMap;

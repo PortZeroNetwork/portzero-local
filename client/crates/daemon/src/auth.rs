@@ -123,7 +123,7 @@ impl AuthConfig {
             .ok_or_else(|| anyhow::anyhow!("No token to refresh"))?;
 
         let api_url =
-            std::env::var("PORT_ZERO_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+            std::env::var("PZ_TUNNEL_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
 
         let client = reqwest::Client::new();
         let resp = client

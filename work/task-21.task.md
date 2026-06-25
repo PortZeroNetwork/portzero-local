@@ -22,8 +22,8 @@ implementation.
   so no backwards-compat baggage: no channels/staging, no version pinning. Only
   env var is `DEVENV_INSTALL_DIR`. Channel plumbing was also removed from
   `bin/devenv.rs` (`devenv update` just re-runs the installer) and
-  `PORT_ZERO_NO_UPDATE_CHECK` → `DEVENV_NO_UPDATE_CHECK` in `update.rs`.
-  (Shared product/infra vars — `PORT_ZERO_API_URL`, `EDGE_URL`, `WEB_URL`,
+  `PZ_TUNNEL_NO_UPDATE_CHECK` → `DEVENV_NO_UPDATE_CHECK` in `update.rs`.
+  (Shared product/infra vars — `PZ_TUNNEL_API_URL`, `EDGE_URL`, `WEB_URL`,
   `DASHBOARD_URL`, `BASE_DOMAIN` — left as-is; renaming those is a coordinated
   client/server change.)
 - Published as a GitHub Release asset every release (added to `release.yml`

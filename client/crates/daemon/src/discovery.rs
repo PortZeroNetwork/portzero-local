@@ -36,19 +36,19 @@ use crate::protocol_detect;
 const ENV_VAR_NAME: &str = "PZ_TUNNEL";
 
 /// Selects which HTTP port to forward. Defaults to CHOOSE_LOWEST if unset.
-const ENV_HTTP_PORT_VAR: &str = "PORT_ZERO_HTTP_PORT";
+const ENV_HTTP_PORT_VAR: &str = "PZ_TUNNEL_HTTP_PORT";
 
 /// Additional raw port mappings: `local:tunnel[;local:tunnel...]`
-const ENV_PORTS_VAR: &str = "PORT_ZERO_PORTS";
+const ENV_PORTS_VAR: &str = "PZ_TUNNEL_PORTS";
 
 /// Opt-out for active protocol probing (task-17). When set on the target
 /// process (or on the daemon's own env) probing is skipped entirely.
-const ENV_NO_PROBE_VAR: &str = "PORT_ZERO_NO_PROBE";
+const ENV_NO_PROBE_VAR: &str = "PZ_TUNNEL_NO_PROBE";
 
 /// Returns true if the (full) resolved name indicates the local virtual overlay
 /// (must end with .portzero.local or .local).
 ///
-/// The value in PORT_ZERO must be the complete name; no suffix is added.
+/// The value in PZ_TUNNEL must be the complete name; no suffix is added.
 pub fn is_local_overlay_domain(name: &str) -> bool {
     let n = name.trim().to_ascii_lowercase();
     n.ends_with(".portzero.local") || n == "portzero.local" || n.ends_with(".local")
@@ -73,11 +73,11 @@ pub fn extract_local_label(name: &str) -> String {
 /// A discovered service with its domain, port, and origin.
 #[derive(Debug, Clone)]
 pub struct DiscoveredService {
-    /// Resolved full PORT_ZERO value (must be a complete domain name).
+    /// Resolved full PZ_TUNNEL value (must be a complete domain name).
     pub domain: String,
     /// Selected HTTP port (0 if not determinable).
     pub port: u16,
-    /// Additional port mappings from PORT_ZERO_PORTS.
+    /// Additional port mappings from PZ_TUNNEL_PORTS.
     pub extra_ports: Vec<PortMapping>,
     /// Process ID that owns the service.
     pub pid: u32,
@@ -154,7 +154,7 @@ struct ListeningPort {
     bind: BindAddr,
 }
 
-/// How the HTTP port is chosen when PORT_ZERO_HTTP_PORT is set.
+/// How the HTTP port is chosen when PZ_TUNNEL_HTTP_PORT is set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum HttpPortSelection {
     /// Use this exact port number.
@@ -181,7 +181,7 @@ enum SelectedPort {
 // Unified scanner
 // ---------------------------------------------------------------------------
 
-/// Scan all processes and Docker containers for PORT_ZERO.
+/// Scan all processes and Docker containers for PZ_TUNNEL.
 pub async fn scan_all(account_id: Option<&str>, username: Option<&str>) -> Vec<DiscoveredService> {
     let mut services = Vec::new();
     // `scan_processes` does a full sysinfo refresh and shells out (`ps`/`lsof`)
@@ -252,7 +252,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                 tracing::debug!(
                     pid = pid_u32,
                     domain,
-                    "PORT_ZERO value ends in .local — routing to overlay path"
+                    "PZ_TUNNEL value ends in .local — routing to overlay path"
                 );
                 continue;
             }
@@ -263,7 +263,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                     pid = pid_u32,
                     domain,
                     error = %e,
-                    "PORT_ZERO value is not a valid full tunnel domain (and not .local). \
+                    "PZ_TUNNEL value is not a valid full tunnel domain (and not .local). \
                      Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
                 );
                 continue;
@@ -285,17 +285,17 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                     tracing::warn!(
                         pid = pid_u32,
                         requested_port = requested,
-                        "PORT_ZERO_HTTP_PORT specifies a port not owned by this process; ignoring"
+                        "PZ_TUNNEL_HTTP_PORT specifies a port not owned by this process; ignoring"
                     );
                     continue;
                 }
                 // No listening ports on this process. This is expected when a
-                // parent shell or launcher sets PORT_ZERO so that a child
+                // parent shell or launcher sets PZ_TUNNEL so that a child
                 // process inherits it — the parent itself has nothing to forward.
                 SelectedPort::NoneListening => {
                     tracing::debug!(
                         pid = pid_u32,
-                        "skipping process with PORT_ZERO but no listening ports \
+                        "skipping process with PZ_TUNNEL but no listening ports \
                      (likely a parent process passing the variable to its child)"
                     );
                     continue;
@@ -313,7 +313,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                     tracing::warn!(
                         pid = pid_u32,
                         local_port = m.local_port,
-                        "PORT_ZERO_PORTS entry references a port not owned by this process; skipping"
+                        "PZ_TUNNEL_PORTS entry references a port not owned by this process; skipping"
                     );
                     false
                 }
@@ -395,7 +395,7 @@ fn scan_processes_windows(
                 tracing::warn!(
                     pid = pid_u32,
                     requested_port = requested,
-                    "PORT_ZERO_HTTP_PORT specifies a port not owned by this process; ignoring"
+                    "PZ_TUNNEL_HTTP_PORT specifies a port not owned by this process; ignoring"
                 );
                 continue;
             }
@@ -413,7 +413,7 @@ fn scan_processes_windows(
                     tracing::warn!(
                         pid = pid_u32,
                         local_port = m.local_port,
-                        "PORT_ZERO_PORTS entry references a port not owned by this process; skipping"
+                        "PZ_TUNNEL_PORTS entry references a port not owned by this process; skipping"
                     );
                     false
                 }
@@ -432,7 +432,7 @@ fn scan_processes_windows(
     services
 }
 
-/// Emit a warning when a `PORT_ZERO` value had a trailing `:something` that
+/// Emit a warning when a `PZ_TUNNEL` value had a trailing `:something` that
 /// LOOKED like a canonical port but was rejected by [`split_tunnel_port`]
 /// (out of range or zero — i.e. an all-digit segment that is not `1..=65535`).
 ///
@@ -450,14 +450,14 @@ fn warn_if_port_like_rejected(raw: &str, canonical: Option<u16>, pid: u32) {
                 pid,
                 value = raw,
                 rejected_port = tail,
-                "PORT_ZERO has a trailing ':<port>' that is not a valid port \
+                "PZ_TUNNEL has a trailing ':<port>' that is not a valid port \
                  (must be 1..=65535); ignoring the port and using the whole value as the domain"
             );
         }
     }
 }
 
-/// Resolve template variables in a PORT_ZERO value.
+/// Resolve template variables in a PZ_TUNNEL value.
 fn resolve_tunnel_template(
     raw: &str,
     project_dir: Option<&Path>,
@@ -476,7 +476,7 @@ fn resolve_tunnel_template(
 // Port selection logic
 // ---------------------------------------------------------------------------
 
-/// Parse PORT_ZERO_HTTP_PORT into a selection strategy.
+/// Parse PZ_TUNNEL_HTTP_PORT into a selection strategy.
 fn parse_http_port_selection(val: &str) -> HttpPortSelection {
     match val.trim() {
         "" | "CHOOSE_LOWEST" => HttpPortSelection::ChooseLowest,
@@ -488,7 +488,7 @@ fn parse_http_port_selection(val: &str) -> HttpPortSelection {
     }
 }
 
-/// Parse PORT_ZERO_PORTS into a list of port mappings.
+/// Parse PZ_TUNNEL_PORTS into a list of port mappings.
 ///
 /// Format: `local:tunnel[;local:tunnel...]`  e.g. `9222:9222;9300:9300`
 fn parse_extra_ports(val: &str) -> Vec<PortMapping> {
@@ -882,7 +882,7 @@ fn parse_windows_local_address_port(local: &str) -> Option<ListeningPort> {
 ///
 /// Used by the legacy-port monitor to find processes that serve a port directly
 /// (bypassing port-zero). Carries enough context (pid, cwd, whether
-/// `PORT_ZERO` is set) for the monitor's *pure* comparison logic to decide
+/// `PZ_TUNNEL` is set) for the monitor's *pure* comparison logic to decide
 /// whether the listener is "legacy".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemListener {
@@ -892,13 +892,13 @@ pub struct SystemListener {
     pub pid: u32,
     /// Working directory of the owning process, if discoverable.
     pub cwd: Option<PathBuf>,
-    /// Whether the owning process has `PORT_ZERO` set (i.e. it is already
+    /// Whether the owning process has `PZ_TUNNEL` set (i.e. it is already
     /// managed by us and must NOT be flagged as legacy).
     pub has_port_zero: bool,
 }
 
 /// Enumerate every process's listening TCP ports system-wide, attributed to the
-/// owning process (pid, cwd, whether `PORT_ZERO` is set).
+/// owning process (pid, cwd, whether `PZ_TUNNEL` is set).
 ///
 /// This is the single public entry point the legacy-port monitor uses; it
 /// reuses the existing per-OS [`discover_process_ports`] enumeration rather than
@@ -1338,13 +1338,13 @@ fn inspect_container(
 
     let http_selection = env_vars
         .iter()
-        .find_map(|e| e.strip_prefix("PORT_ZERO_HTTP_PORT="))
+        .find_map(|e| e.strip_prefix("PZ_TUNNEL_HTTP_PORT="))
         .map(parse_http_port_selection)
         .unwrap_or(HttpPortSelection::ChooseLowest);
 
     let extra_ports = env_vars
         .iter()
-        .find_map(|e| e.strip_prefix("PORT_ZERO_PORTS="))
+        .find_map(|e| e.strip_prefix("PZ_TUNNEL_PORTS="))
         .map(parse_extra_ports)
         .unwrap_or_default();
 
@@ -1399,7 +1399,7 @@ fn parse_docker_ports(ports_json: &str, selection: &HttpPortSelection) -> u16 {
 
 /// Try to recover a host-side git project directory from a container's mounts
 /// and labels. This enables correct `{branch}` / `{worktree}` resolution for
-/// `PORT_ZERO` when using plain `docker run -v ...` or `docker compose`.
+/// `PZ_TUNNEL` when using plain `docker run -v ...` or `docker compose`.
 fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> Option<PathBuf> {
     use portzero_domain::find_git_project_dir;
 
@@ -1442,13 +1442,13 @@ fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> 
 }
 
 // ---------------------------------------------------------------------------
-// Overlay network discovery (PORT_ZERO=*.portzero.local + port 0 support)
+// Overlay network discovery (PZ_TUNNEL=*.portzero.local + port 0 support)
 // ---------------------------------------------------------------------------
 
 /// A service discovered for the local virtual overlay network.
 #[derive(Debug, Clone)]
 pub struct DiscoveredNetworkService {
-    /// The label extracted from the PORT_ZERO value (e.g. "my-db"
+    /// The label extracted from the PZ_TUNNEL value (e.g. "my-db"
     /// from "my-db.portzero.local").
     pub name: String,
     /// The actual host address we must proxy to (usually 127.0.0.1:random).
@@ -1464,13 +1464,13 @@ pub struct DiscoveredNetworkService {
 
 /// Scan for services that should participate in the virtual overlay.
 ///
-/// Only `PORT_ZERO` values whose resolved name ends with `.portzero.local`
+/// Only `PZ_TUNNEL` values whose resolved name ends with `.portzero.local`
 /// (or `.local`) are accepted. The full name must be provided (no implicit
 /// suffix).
 ///
 /// Supports templating, e.g.:
-///   PORT_ZERO=my-db-{branch}.portzero.local
-///   PORT_ZERO={service}-{worktree}.portzero.local
+///   PZ_TUNNEL=my-db-{branch}.portzero.local
+///   PZ_TUNNEL={service}-{worktree}.portzero.local
 ///
 /// The label (left part) gets a stable virtual IP under .portzero.local.
 /// The daemon should surface loud errors if the same name is claimed by

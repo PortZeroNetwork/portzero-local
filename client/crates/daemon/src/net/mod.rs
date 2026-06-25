@@ -1,7 +1,7 @@
 //! Virtual overlay network: "Port 0 + Virtual Mesh" implementation.
 //!
 //! Core idea:
-//! - A service sets `PORT_ZERO=my-db.portzero.local` (full domain name)
+//! - A service sets `PZ_TUNNEL=my-db.portzero.local` (full domain name)
 //!   and binds to port 0.
 //! - Discovery routes it to overlay because of the `.portzero.local` suffix.
 //! - We discover the real ephemeral host port.

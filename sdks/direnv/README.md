@@ -1,9 +1,9 @@
 # port-zero — direnv integration
 
-This directory contains the **primary recommended** way to set `PORT_ZERO`
+This directory contains the **primary recommended** way to set `PZ_TUNNEL`
 for local development: a direnv `.envrc` snippet.
 
-## Why PORT_ZERO must be set before launch
+## Why PZ_TUNNEL must be set before launch
 
 The `port-zero` daemon reads each process's environment from **outside**
 the process:
@@ -12,8 +12,8 @@ the process:
 - macOS: `sysctl KERN_PROCARGS2`
 
 Both sources are **frozen snapshots** from `execve()` time. Setting
-`PORT_ZERO` inside a running process (e.g. `os.environ["PORT_ZERO"] =
-...` in Python, `process.env.PORT_ZERO = ...` in Node, `os.Setenv(...)` in
+`PZ_TUNNEL` inside a running process (e.g. `os.environ["PZ_TUNNEL"] =
+...` in Python, `process.env.PZ_TUNNEL = ...` in Node, `os.Setenv(...)` in
 Go) updates only the in-process libc copy — **the daemon never sees it**.
 A runtime-set variable silently fails discovery with no error or warning from
 the daemon.
@@ -23,7 +23,7 @@ the daemon.
 ## Recommended approach: direnv
 
 [direnv](https://direnv.net/) hooks into your shell and sources `.envrc`
-automatically when you `cd` into a directory. This means `PORT_ZERO` is
+automatically when you `cd` into a directory. This means `PZ_TUNNEL` is
 set in the shell **before** you start your server — exactly what is needed.
 
 ### Setup
@@ -35,10 +35,10 @@ set in the shell **before** you start your server — exactly what is needed.
 
    ```sh
    # Local virtual overlay — resolves branch in the shell before exec:
-   export PORT_ZERO="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).portzero.local"
+   export PZ_TUNNEL="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).portzero.local"
 
    # Cloud tunnel variant:
-   # export PORT_ZERO="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).tunnel.portzero.cloud"
+   # export PZ_TUNNEL="myapp-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown).tunnel.portzero.cloud"
    ```
 
    See [`.envrc`](.envrc) in this directory for a copy-paste snippet.
@@ -49,12 +49,12 @@ set in the shell **before** you start your server — exactly what is needed.
    direnv allow
    ```
 
-4. Start your server normally — `PORT_ZERO` is already set.
+4. Start your server normally — `PZ_TUNNEL` is already set.
 
 ### How template resolution works
 
 The daemon also accepts `{branch}` and `{worktree}` placeholders in
-`PORT_ZERO` and resolves them itself from the host's git context (useful
+`PZ_TUNNEL` and resolves them itself from the host's git context (useful
 for Docker containers where the shell never runs). In the direnv case, you
 resolve the branch directly in the shell using `$(git ...)` — both approaches
 result in a fully-resolved domain by the time the daemon reads it.
@@ -62,7 +62,7 @@ result in a fully-resolved domain by the time the daemon reads it.
 ## Alternative: portzero-exec launcher
 
 When direnv is not available, [`portzero-exec`](portzero-exec) is a
-tiny POSIX shell script that sets `PORT_ZERO` and then `exec`s your
+tiny POSIX shell script that sets `PZ_TUNNEL` and then `exec`s your
 command:
 
 ```bash
@@ -76,7 +76,7 @@ portzero-exec myapp-main.portzero.local python3 app.py
 ```
 
 This works for the same reason direnv does: it sets the variable in the shell
-and uses `exec` to replace the shell process, so `PORT_ZERO` appears in
+and uses `exec` to replace the shell process, so `PZ_TUNNEL` appears in
 the `execve()` call and is visible in `/proc/<pid>/environ`.
 
 This is the **only** correct programmatic alternative to direnv. SDK helpers
@@ -89,13 +89,13 @@ For containers, pass the variable at container start time:
 
 ```bash
 # docker run
-docker run -e PORT_ZERO=myapp-{branch}.portzero.local -p 0:8080 myimage
+docker run -e PZ_TUNNEL=myapp-{branch}.portzero.local -p 0:8080 myimage
 
 # docker-compose.yml
 services:
   web:
     environment:
-      PORT_ZERO: "myapp-${BRANCH:-main}.portzero.local"
+      PZ_TUNNEL: "myapp-${BRANCH:-main}.portzero.local"
     ports:
       - "0:8080"
 ```
@@ -110,4 +110,4 @@ so the literal `{branch}` placeholder works for containers.
 | **direnv** (`.envrc`)  | Local dev — recommended; automatic per directory |
 | `portzero-exec`   | Scripts, CI, when direnv is unavailable          |
 | `docker run -e` / compose `environment:` | Containerised services |
-| Shell `export`         | Quick one-off: `export PORT_ZERO=... && node server.js` |
+| Shell `export`         | Quick one-off: `export PZ_TUNNEL=... && node server.js` |

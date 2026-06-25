@@ -1,7 +1,7 @@
 //! Discovery daemon loop: periodically scan for services and update routes.
 //!
 //! The daemon runs as a background process, scanning every few seconds for
-//! processes and Docker containers with PORT_ZERO set. Changes are
+//! processes and Docker containers with PZ_TUNNEL set. Changes are
 //! persisted to `~/.portzero/daemon/routes.json`.
 //!
 //! When authenticated, the daemon also connects to the cloud edge and
@@ -701,7 +701,7 @@ fn write_overlay_state(
 }
 
 /// Build an overlay `ServiceTable` from the services discovered for the local
-/// virtual network (those whose `PORT_ZERO` value ends in `.portzero.local`).
+/// virtual network (those whose `PZ_TUNNEL` value ends in `.portzero.local`).
 ///
 /// This is pure (no TUN / no privileges required) so it can be unit-tested.
 fn build_overlay_table(services: &[DiscoveredNetworkService]) -> ServiceTable {

@@ -73,7 +73,7 @@ Per-step result:
 - **data path / `curl` — no-resolve** (overlay down). [[[task-24](../work/task-24.task.md)]]'s utun-header
   question is still UNASSESSED — we never reached the data path; re-pointed at
   [[[task-31](../work/task-31.task.md)]].
-- **discovery — WORKS.** Log: `PORT_ZERO value ends in .local — routing to
+- **discovery — WORKS.** Log: `PZ_TUNNEL value ends in .local — routing to
   overlay path … domain="hello.devenv.local"`. The macOS `ps`-based env scan
   found the service. [[[task-26](../work/task-26.task.md)]] is an optimisation, not a fix.
 

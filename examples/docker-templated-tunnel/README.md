@@ -1,6 +1,6 @@
-# Templated PORT_ZERO for Docker Services (with and without Compose)
+# Templated PZ_TUNNEL for Docker Services (with and without Compose)
 
-> **This example demonstrates templated `PORT_ZERO` values.**
+> **This example demonstrates templated `PZ_TUNNEL` values.**
 >
 > The value you provide must be a **full domain name** (including suffix).
 > The daemon uses the suffix to decide cloud tunnel vs. local overlay.
@@ -21,7 +21,7 @@ port-zero start          # background (after cargo install --path client/crates/
 cargo run -p portzero-cli --bin portzero -- start --foreground
 ```
 
-- It scans processes and Docker containers for `PORT_ZERO`.
+- It scans processes and Docker containers for `PZ_TUNNEL`.
 - The value **must be a full domain** (no implicit suffixes are added).
 - The suffix decides the target:
   - ends with `.portzero.local` → local virtual overlay
@@ -56,7 +56,7 @@ cargo run -p portzero-cli --bin portzero -- status
 #   web-demo-123456.tunnel.portzero.cloud   49152   container web
 #
 # (The port shown is the *host* port Docker assigned because you used -p 0:8080.)
-# The full domain (including suffix) came from the PORT_ZERO value.
+# The full domain (including suffix) came from the PZ_TUNNEL value.
 
 # 5. Clean up
 docker compose down
@@ -64,7 +64,7 @@ docker compose down
 
 ## Full domain names only (suffix decides the target)
 
-`PORT_ZERO` must always contain a full domain name (the suffix is part of the value; nothing is appended implicitly).
+`PZ_TUNNEL` must always contain a full domain name (the suffix is part of the value; nothing is appended implicitly).
 
 - `... .tunnel.portzero.cloud` (including namespaced `foo.username.tunnel.portzero.cloud`) → cloud tunnel route
 - `... .portzero.local` (or ending `.local`) → local virtual overlay
@@ -72,8 +72,8 @@ docker compose down
 To use the local overlay path:
 
 ```bash
-PORT_ZERO=my-db.portzero.local
-PORT_ZERO=db-{branch}.portzero.local
+PZ_TUNNEL=my-db.portzero.local
+PZ_TUNNEL=db-{branch}.portzero.local
 ```
 
 This example focuses on templating + Docker discovery. You select the path by what full name you put in the variable.
@@ -92,14 +92,14 @@ docker build -t portzero-demo .
 
 docker run -d \
   --name portzero-demo-web \
-  -e PORT_ZERO=plain-{branch}.tunnel.portzero.cloud \
+  -e PZ_TUNNEL=plain-{branch}.tunnel.portzero.cloud \
   -p 0:8080 \
   portzero-demo
 
 # Check status again - look for "plain-yourbranch.tunnel.portzero.cloud"
 port-zero status   # or the long cargo run ... form
 
-# The PORT_ZERO value contained the full domain name.
+# The PZ_TUNNEL value contained the full domain name.
 
 docker rm -f portzero-demo-web
 ```
@@ -107,7 +107,7 @@ docker rm -f portzero-demo-web
 ## How it works
 
 - The container is started with a full template including the suffix, e.g.
-  `PORT_ZERO=web-{branch}.tunnel.portzero.cloud` (or `.portzero.local` for overlay).
+  `PZ_TUNNEL=web-{branch}.tunnel.portzero.cloud` (or `.portzero.local` for overlay).
 - The daemon runs `docker inspect` (from the host) and extracts:
   - `com.docker.compose.project.working_dir` (when using compose)
   - Bind mount `Source` paths (for both compose and plain `docker run -v`)
@@ -125,11 +125,11 @@ This approach works whether you use docker compose or raw `docker run`.
 You can treat the steps above as a manual system test for the templated
 Docker discovery path. After running them you have visually confirmed:
 
-1. A full domain template (with suffix) was passed via `PORT_ZERO`.
+1. A full domain template (with suffix) was passed via `PZ_TUNNEL`.
 2. The host-side daemon resolved `{branch}` using git context from mounts/labels.
 3. The resolved full domain appears in `port-zero status`.
 
-The same `PORT_ZERO` mechanism with a `.portzero.local` suffix selects
+The same `PZ_TUNNEL` mechanism with a `.portzero.local` suffix selects
 the local overlay path instead of cloud tunnels.
 
 ## Troubleshooting

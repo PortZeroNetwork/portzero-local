@@ -15,13 +15,13 @@ use crate::discovery::{DiscoveredService, PortMapping, ServiceSource};
 /// A single route entry: domain -> local endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Route {
-    /// The full PORT_ZERO value (e.g. "api-myapp-main-alice.tunnel.portzero.cloud").
+    /// The full PZ_TUNNEL value (e.g. "api-myapp-main-alice.tunnel.portzero.cloud").
     pub domain: String,
     /// Host to forward to (usually "127.0.0.1").
     pub host: String,
     /// Port to forward to.
     pub port: u16,
-    /// Additional raw port mappings from PORT_ZERO_PORTS.
+    /// Additional raw port mappings from PZ_TUNNEL_PORTS.
     #[serde(default)]
     pub extra_ports: Vec<PortMapping>,
     /// How the service was discovered.

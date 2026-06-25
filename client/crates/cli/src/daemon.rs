@@ -161,7 +161,7 @@ pub async fn status() -> Result<()> {
                     );
                 }
             }
-            let edge_display = std::env::var("PORT_ZERO_EDGE_URL")
+            let edge_display = std::env::var("PZ_TUNNEL_EDGE_URL")
                 .unwrap_or_else(|_| "wss://edge.portzero.cloud/tunnel".to_string());
             let cloud_err = read_cloud_error(&config);
             let is_auth_err = cloud_err

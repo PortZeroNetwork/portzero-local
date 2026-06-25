@@ -35,7 +35,7 @@ pub enum Issue {
     },
     /// A process is listening on a "common" dev port (or on a port a known
     /// overlay service uses) but is *not* going through port-zero (no
-    /// `PORT_ZERO` set). This is the classic "I'm still hitting localhost
+    /// `PZ_TUNNEL` set). This is the classic "I'm still hitting localhost
     /// directly" footgun; we surface migration guidance.
     LegacyListener {
         /// The TCP port the legacy process is listening on.
@@ -82,19 +82,19 @@ impl Issue {
     pub fn fix_hint(&self) -> String {
         match self {
             Issue::DuplicateName { name, .. } => format!(
-                "Give each worktree a unique PORT_ZERO name — e.g. use a template \
+                "Give each worktree a unique PZ_TUNNEL name — e.g. use a template \
                  like \"{name}-{{branch}}.portzero.local\" or \"{name}-{{worktree}}.portzero.local\" \
                  so the resolved name differs per checkout."
             ),
             Issue::LegacyListener { port, .. } => format!(
-                "Set PORT_ZERO on this process (e.g. \
-                 PORT_ZERO=my-svc.portzero.local for the local overlay, or \
+                "Set PZ_TUNNEL on this process (e.g. \
+                 PZ_TUNNEL=my-svc.portzero.local for the local overlay, or \
                  my-svc.<user>.tunnel.portzero.cloud for a cloud tunnel) and reach it by name \
                  instead of localhost:{port}. Until then this service bypasses the tunnel."
             ),
             Issue::DockerPortConflict { port, .. } => format!(
                 "Free host port {port} (stop whatever is bound to it) or remap the container's \
-                 published port. To route the container through the tunnel, set PORT_ZERO in \
+                 published port. To route the container through the tunnel, set PZ_TUNNEL in \
                  its environment instead of publishing a fixed host port."
             ),
         }
@@ -463,7 +463,7 @@ mod tests {
         let legacy = &state.issues[0];
         assert!(legacy.summary().contains("5432"));
         assert!(legacy.summary().contains("4321"));
-        assert!(legacy.fix_hint().contains("PORT_ZERO"));
+        assert!(legacy.fix_hint().contains("PZ_TUNNEL"));
 
         let docker = &state.issues[1];
         assert!(docker.summary().contains("web-1"));

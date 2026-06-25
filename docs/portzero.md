@@ -1,6 +1,6 @@
-# `PORT_ZERO` semantics
+# `PZ_TUNNEL` semantics
 
-`PORT_ZERO` is the single environment variable that opts a service into the
+`PZ_TUNNEL` is the single environment variable that opts a service into the
 port-zero system. Set it, bind to port 0, and the daemon does the rest.
 
 ## The full-domain rule
@@ -9,9 +9,9 @@ The value **must be a full domain name, including its suffix**. Nothing is ever
 appended implicitly. The daemon takes the value verbatim.
 
 ```
-PORT_ZERO=hello.portzero.local            # valid (local overlay)
-PORT_ZERO=web.tunnel.portzero.cloud       # valid (cloud tunnel)
-PORT_ZERO=hello                          # NOT valid — no suffix
+PZ_TUNNEL=hello.portzero.local            # valid (local overlay)
+PZ_TUNNEL=web.tunnel.portzero.cloud       # valid (cloud tunnel)
+PZ_TUNNEL=hello                          # NOT valid — no suffix
 ```
 
 ## The suffix decides the target
@@ -48,16 +48,16 @@ Correct ways to set it before launch:
 
 ```bash
 # direnv (recommended): export in .envrc, then `direnv allow`
-export PORT_ZERO=hello.portzero.local
+export PZ_TUNNEL=hello.portzero.local
 
 # shell one-off
-export PORT_ZERO=hello.portzero.local && python3 server.py
+export PZ_TUNNEL=hello.portzero.local && python3 server.py
 
 # the exec launcher from the SDKs
 sdks/direnv/portzero-exec hello.portzero.local python3 server.py
 
 # docker (passed at container start)
-docker run -e PORT_ZERO=hello.portzero.local -p 0:8080 myimage
+docker run -e PZ_TUNNEL=hello.portzero.local -p 0:8080 myimage
 ```
 
 See [`../sdks/direnv/README.md`](../sdks/direnv/README.md) for details.
@@ -73,8 +73,8 @@ git context:
 | `{worktree}` | the basename of the git worktree / repo root        |
 
 ```
-PORT_ZERO=web-{branch}.portzero.local
-PORT_ZERO=api-{worktree}.tunnel.portzero.cloud
+PZ_TUNNEL=web-{branch}.portzero.local
+PZ_TUNNEL=api-{worktree}.tunnel.portzero.cloud
 ```
 
 The daemon resolves these itself from the host (for native processes from the

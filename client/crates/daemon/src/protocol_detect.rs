@@ -29,9 +29,9 @@
 //! (backend restarted on a new port / pid).
 //!
 //! ## Opt-out
-//! Probing is skipped entirely when `PORT_ZERO_NO_PROBE` is set (to any
+//! Probing is skipped entirely when `PZ_TUNNEL_NO_PROBE` is set (to any
 //! non-empty, non-`0`/`false` value). It is read first from the target
-//! process's own environment (same mechanism used to read `PORT_ZERO`),
+//! process's own environment (same mechanism used to read `PZ_TUNNEL`),
 //! then falls back to the daemon's own `std::env`.
 
 use std::collections::HashMap;
@@ -121,7 +121,7 @@ fn is_tls_record(bytes: &[u8]) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Decide whether probing is disabled, given the value of
-/// `PORT_ZERO_NO_PROBE` from the target process's environment
+/// `PZ_TUNNEL_NO_PROBE` from the target process's environment
 /// (`per_process`) and from the daemon's own environment (`daemon`).
 ///
 /// PURE: a value is "set" when it is present and not empty / `0` / `false`

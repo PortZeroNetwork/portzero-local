@@ -16,7 +16,7 @@ daemon log and `port zero status` with warnings about **system services**:
 
 ```
 WARN ... Port 22 is served directly (not via port-zero) by pid 606 (unknown
-dir) — Set PORT_ZERO on this process ... Until then this service bypasses
+dir) — Set PZ_TUNNEL on this process ... Until then this service bypasses
 the tunnel.
 ```
 

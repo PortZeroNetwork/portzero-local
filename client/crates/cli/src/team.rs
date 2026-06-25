@@ -7,7 +7,7 @@ use crate::api_client::ApiClient;
 
 /// Resolve the base website URL from the environment or fall back to the default.
 fn base_web_url() -> String {
-    std::env::var("PORT_ZERO_WEB_URL").unwrap_or_else(|_| "https://portzero.cloud".to_string())
+    std::env::var("PZ_TUNNEL_WEB_URL").unwrap_or_else(|_| "https://portzero.cloud".to_string())
 }
 
 // ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ const DEFAULT_EDGE_URL: &str = "wss://edge.portzero.cloud/tunnel";
 
 /// Resolve the edge server URL from the environment or fall back to the default.
 fn resolve_edge_url() -> String {
-    std::env::var("PORT_ZERO_EDGE_URL").unwrap_or_else(|_| DEFAULT_EDGE_URL.to_string())
+    std::env::var("PZ_TUNNEL_EDGE_URL").unwrap_or_else(|_| DEFAULT_EDGE_URL.to_string())
 }
 
 /// Cloud connector state.
@@ -49,7 +49,7 @@ pub struct CloudConnector {
 impl CloudConnector {
     /// Create a new cloud connector.
     ///
-    /// Reads the edge server URL from `PORT_ZERO_EDGE_URL` (useful for
+    /// Reads the edge server URL from `PZ_TUNNEL_EDGE_URL` (useful for
     /// local development) or falls back to the default production URL.
     pub fn new(auth_token: String) -> Self {
         let machine_id = generate_machine_id();

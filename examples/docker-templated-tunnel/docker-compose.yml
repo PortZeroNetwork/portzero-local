@@ -1,4 +1,4 @@
-# docker-compose example demonstrating templated PORT_ZERO for Docker services.
+# docker-compose example demonstrating templated PZ_TUNNEL for Docker services.
 #
 # Run from a git branch other than main/master to see the templating in action.
 #
@@ -22,7 +22,7 @@ services:
   web-1:
     build: .
     environment:
-      - PORT_ZERO=web-{branch}.local
+      - PZ_TUNNEL=web-{branch}.local
     ports:
       # Use port 0 so the host assigns a random ephemeral port.
       # The daemon will discover the real host port.
@@ -30,7 +30,7 @@ services:
   web-2:
     build: .
     environment:
-      - PORT_ZERO=web-{branch}.nate.tunnel.portzero.cloud
+      - PZ_TUNNEL=web-{branch}.nate.tunnel.portzero.cloud
     ports:
       # Use port 0 so the host assigns a random ephemeral port.
       # The daemon will discover the real host port.

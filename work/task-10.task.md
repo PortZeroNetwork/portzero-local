@@ -2,7 +2,7 @@
 id: fb4c556c-2c3a-4ed8-bae6-5c44f65e82ab
 slug: task-10
 status: done
-title: Add end-to-end tests, full PORT_ZERO examples, and documentation
+title: Add end-to-end tests, full PZ_TUNNEL examples, and documentation
 relations:
   contains:
   - milestone-1

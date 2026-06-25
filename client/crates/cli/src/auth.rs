@@ -147,15 +147,15 @@ struct CallbackPayload {
 
 /// Derive the dashboard URL from the API URL.
 ///
-/// - If `PORT_ZERO_DASHBOARD_URL` is set, use it directly.
-/// - If `PORT_ZERO_API_URL` looks like `localhost:3001`, use `localhost:3003`.
+/// - If `PZ_TUNNEL_DASHBOARD_URL` is set, use it directly.
+/// - If `PZ_TUNNEL_API_URL` looks like `localhost:3001`, use `localhost:3003`.
 /// - Otherwise default to `https://app.portzero.cloud`.
 fn dashboard_url() -> String {
-    if let Ok(url) = std::env::var("PORT_ZERO_DASHBOARD_URL") {
+    if let Ok(url) = std::env::var("PZ_TUNNEL_DASHBOARD_URL") {
         return url;
     }
 
-    let api_url = std::env::var("PORT_ZERO_API_URL")
+    let api_url = std::env::var("PZ_TUNNEL_API_URL")
         .unwrap_or_else(|_| crate::api_client::DEFAULT_API_URL.to_string());
 
     dashboard_url_from_api_url(&api_url)
@@ -426,7 +426,7 @@ async fn login_interactive(email: Option<String>) -> Result<()> {
             "Failed to send verification code (HTTP {status}).\n\n\
              Server response: {body}\n\n\
              If you believe this is an error, visit {}/support for help.",
-            std::env::var("PORT_ZERO_WEB_URL")
+            std::env::var("PZ_TUNNEL_WEB_URL")
                 .unwrap_or_else(|_| "https://portzero.cloud".to_string())
         );
     }

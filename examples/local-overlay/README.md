@@ -1,7 +1,7 @@
 # Local `.portzero.local` overlay — end-to-end example
 
 > **This example demonstrates the local virtual overlay path** of
-> `PORT_ZERO` — the `.portzero.local` suffix.
+> `PZ_TUNNEL` — the `.portzero.local` suffix.
 >
 > A tiny service binds to **port 0**, the daemon discovers it, assigns a
 > virtual IP from `10.254.0.0/16`, serves scoped DNS for
@@ -9,7 +9,7 @@
 > through a TUN device + user-space TCP stack.
 >
 > By appending a **canonical port** to the value
-> (`PORT_ZERO=hello.portzero.local:8080`), the overlay exposes the service on
+> (`PZ_TUNNEL=hello.portzero.local:8080`), the overlay exposes the service on
 > a clean, stable `VIP:8080` instead of the random ephemeral port. Because each
 > service gets its own VIP, identical ports never collide
 > (`db.portzero.local:5432` and `cache.portzero.local:6379` coexist fine). The end
@@ -27,7 +27,7 @@ language helpers referenced below, see [`../../sdks/`](../../sdks/).
 
 ## How the overlay path works (one paragraph)
 
-You set `PORT_ZERO=hello.portzero.local:8080` **before** launching your service
+You set `PZ_TUNNEL=hello.portzero.local:8080` **before** launching your service
 and bind it to port 0. The long-running daemon scans process environments
 (`/proc/<pid>/environ` on Linux, `sysctl KERN_PROCARGS2` on macOS — the env is
 frozen at `execve()` time, so it must be set before launch), splits off the
@@ -60,7 +60,7 @@ only visible once the overlay is running (i.e. with root). See
 
 ## Walkthrough
 
-### 1. Set `PORT_ZERO` (before launching the service)
+### 1. Set `PZ_TUNNEL` (before launching the service)
 
 Pick **one**:
 
@@ -71,7 +71,7 @@ cd examples/local-overlay
 direnv allow
 
 # Option B: plain shell export
-export PORT_ZERO=hello.portzero.local:8080
+export PZ_TUNNEL=hello.portzero.local:8080
 
 # Option C: the portzero-exec launcher from the SDKs
 #   ../../sdks/direnv/portzero-exec hello.portzero.local:8080 python3 server.py
@@ -87,7 +87,7 @@ it the overlay uses the discovered ephemeral port).
 ```bash
 python3 server.py
 # [server] bound to 127.0.0.1:54321 (ephemeral)
-# [server] PORT_ZERO=hello.portzero.local:8080
+# [server] PZ_TUNNEL=hello.portzero.local:8080
 # [server]   curl http://hello.portzero.local:8080/
 ```
 
@@ -112,7 +112,7 @@ daemon logs the TUN device it created and the VIP it assigned to
 ```bash
 curl http://hello.portzero.local:8080/
 # Hello from the port-zero local overlay!
-# PORT_ZERO=hello.portzero.local:8080
+# PZ_TUNNEL=hello.portzero.local:8080
 # served on real port 54321
 ```
 
@@ -154,7 +154,7 @@ What it asserts:
    `Unit dbus-org.freedesktop.network1.service not found` error.
 2. **`curl http://<name>:<canonical-port>/` succeeds through the overlay** — DNS
    → VIP → TUN → smoltcp → real ephemeral backend. The canonical port is the
-   `:<port>` declared in `PORT_ZERO` (a clean, stable number), not the random
+   `:<port>` declared in `PZ_TUNNEL` (a clean, stable number), not the random
    ephemeral port the service actually bound.
 3. **Teardown is clean** — after the daemon stops, the name no longer resolves to
    a VIP (no leftover scoped DNS config).
@@ -165,14 +165,14 @@ the root-gated `real_tun_overlay` test (`just e2e`); use whichever is convenient
 ## Using the SDK helpers instead of raw `server.py`
 
 The [`sdks/`](../../sdks/) directory has thin, stdlib-only helpers that bind
-port 0 and log the configured `PORT_ZERO`. For example, in Python:
+port 0 and log the configured `PZ_TUNNEL`. For example, in Python:
 
 ```python
 from port_zero import find_free_port  # sdks/python/port_zero.py
 sock, port = find_free_port(service_name="hello")
 ```
 
-They are convenience wrappers only — they cannot set `PORT_ZERO` for daemon
+They are convenience wrappers only — they cannot set `PZ_TUNNEL` for daemon
 discovery (it must be set before launch). See
 [`../../sdks/README.md`](../../sdks/README.md).
 
@@ -192,7 +192,7 @@ real-TUN half runs via `just e2e` (uses `sudo`).
 - `curl: (6) Could not resolve host` — the overlay is not running. The daemon
   must be started **with root** for `.portzero.local` names to resolve. Without
   root it runs in cloud/local-only mode and the overlay is inactive.
-- Service not discovered — make sure `PORT_ZERO` was set **before** you
-  started `server.py` (re-check with `echo $PORT_ZERO`). A value set after
+- Service not discovered — make sure `PZ_TUNNEL` was set **before** you
+  started `server.py` (re-check with `echo $PZ_TUNNEL`). A value set after
   the process started is invisible to the daemon.
 - See [`../../docs/troubleshooting.md`](../../docs/troubleshooting.md) for more.

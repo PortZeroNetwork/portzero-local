@@ -5,7 +5,7 @@ operate it.
 
 - [Architecture overview](architecture.md) — the overlay data path: discovery →
   VIP allocation → scoped DNS → TUN → smoltcp user-space proxy.
-- [`PORT_ZERO` semantics](portzero.md) — the full-domain rule, how the
+- [`PZ_TUNNEL` semantics](portzero.md) — the full-domain rule, how the
   suffix selects cloud vs. local, and the `{branch}` / `{worktree}` templates.
 - [Platform privileges](privileges.md) — what needs root / `CAP_NET_ADMIN`, and
   what degrades gracefully without it.

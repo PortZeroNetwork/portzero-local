@@ -20,11 +20,11 @@ impl ApiClient {
     /// Create a new API client.
     ///
     /// Loads auth config from disk if available, and reads the API URL from
-    /// the `PORT_ZERO_API_URL` environment variable (useful for local
+    /// the `PZ_TUNNEL_API_URL` environment variable (useful for local
     /// development) or falls back to the default.
     pub fn new() -> Self {
         let base_url =
-            std::env::var("PORT_ZERO_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+            std::env::var("PZ_TUNNEL_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
         let auth = AuthConfig::load().ok();
 
         Self {
@@ -54,7 +54,7 @@ impl ApiClient {
             format!(
                 "Failed to reach the portzero.cloud API at {url}\n\n\
                  Check your internet connection, or if you are using a custom API URL,\n\
-                 verify that PORT_ZERO_API_URL is correct."
+                 verify that PZ_TUNNEL_API_URL is correct."
             )
         })?;
 
@@ -74,7 +74,7 @@ impl ApiClient {
             format!(
                 "Failed to reach the portzero.cloud API at {url}\n\n\
                  Check your internet connection, or if you are using a custom API URL,\n\
-                 verify that PORT_ZERO_API_URL is correct."
+                 verify that PZ_TUNNEL_API_URL is correct."
             )
         })?;
 
@@ -94,7 +94,7 @@ impl ApiClient {
             format!(
                 "Failed to reach the portzero.cloud API at {url}\n\n\
                  Check your internet connection, or if you are using a custom API URL,\n\
-                 verify that PORT_ZERO_API_URL is correct."
+                 verify that PZ_TUNNEL_API_URL is correct."
             )
         })?;
 

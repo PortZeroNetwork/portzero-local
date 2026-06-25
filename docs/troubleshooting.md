@@ -16,12 +16,12 @@ cloud/local-only mode` and the overlay (TUN + scoped resolver) is inactive. See
 
 ## My service was never discovered
 
-`PORT_ZERO` must be set **before** the service process starts. The daemon
+`PZ_TUNNEL` must be set **before** the service process starts. The daemon
 reads the frozen `execve()` environment (`/proc/<pid>/environ` on Linux,
 `sysctl KERN_PROCARGS2` on macOS) — a value set after launch (in
 `os.environ` / `process.env` / `os.Setenv`) is invisible to it.
 
-- Verify before launching: `echo $PORT_ZERO`.
+- Verify before launching: `echo $PZ_TUNNEL`.
 - Use direnv or `portzero-exec` so it is exported before exec.
 - Confirm the value is a **full domain** with a recognized suffix
   (`.portzero.local` or `.tunnel.portzero.cloud`); nothing is appended implicitly.
@@ -41,7 +41,7 @@ The **suffix** decides the target, not any flag:
 - `.portzero.local` → local overlay
 - `.tunnel.portzero.cloud` → cloud tunnel
 
-Double-check the suffix in your `PORT_ZERO` value.
+Double-check the suffix in your `PZ_TUNNEL` value.
 
 ## TUN creation fails even with sudo (Linux)
 

@@ -10,12 +10,12 @@
 # / NetworkManager boxes).
 #
 # What it does:
-#   1. starts the example service (server.py) bound to port 0 with PORT_ZERO set,
+#   1. starts the example service (server.py) bound to port 0 with PZ_TUNNEL set,
 #   2. starts the port-zero daemon in the foreground (needs root for the TUN),
 #   3. asserts `resolvectl query <name>` returns a 10.254.x.x overlay VIP,
 #   4. asserts `curl http://<name>:<canonical-port>/` reaches the service THROUGH
 #      the overlay (DNS -> VIP -> TUN -> smoltcp -> real ephemeral backend). The
-#      canonical port comes from the `:<port>` declared in PORT_ZERO, NOT the
+#      canonical port comes from the `:<port>` declared in PZ_TUNNEL, NOT the
 #      random ephemeral port the service actually bound,
 #   5. tears everything down and asserts the scoped DNS config is gone.
 #
@@ -34,7 +34,7 @@
 
 set -uo pipefail
 
-# PORT_ZERO value: a full `.portzero.local` domain plus a CANONICAL `:port`.
+# PZ_TUNNEL value: a full `.portzero.local` domain plus a CANONICAL `:port`.
 # The overlay exposes the service on VIP:<canonical-port> (here 8080) and proxies
 # to the real ephemeral backend, so clients use a clean, stable port.
 NAME="${1:-hello.portzero.local:8080}"
@@ -121,8 +121,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --- 1. start the backend service (port 0) ---------------------------------
-info "--- starting example service (PORT_ZERO=$NAME, port 0) ---"
-PORT_ZERO="$NAME" python3 "$SCRIPT_DIR/server.py" >"$SVC_LOG" 2>&1 &
+info "--- starting example service (PZ_TUNNEL=$NAME, port 0) ---"
+PZ_TUNNEL="$NAME" python3 "$SCRIPT_DIR/server.py" >"$SVC_LOG" 2>&1 &
 SVC_PID=$!
 # server.py prints: "[server] bound to 127.0.0.1:<port> (ephemeral)"
 PORT=""
@@ -167,7 +167,7 @@ else
 fi
 
 # --- 4. end-to-end curl THROUGH the overlay --------------------------------
-# Use the CANONICAL port from PORT_ZERO's `:<port>` (a clean, stable number),
+# Use the CANONICAL port from PZ_TUNNEL's `:<port>` (a clean, stable number),
 # NOT the random ephemeral port the service actually bound. If no canonical port
 # was declared, fall back to the discovered ephemeral port.
 CURL_PORT="${CANONICAL_PORT:-$PORT}"

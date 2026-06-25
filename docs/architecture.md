@@ -23,7 +23,7 @@ All overlay code lives in `client/crates/daemon/src/net/`:
 ```
 service (port 0)        daemon                              client (curl)
       |                   |                                     |
-  [1] |  set PORT_ZERO=hello.portzero.local before exec       |
+  [1] |  set PZ_TUNNEL=hello.portzero.local before exec       |
       |                   |                                     |
   [2] |<--- discovery reads /proc/<pid>/environ ----------------|
       |     suffix .portzero.local => local overlay               |
@@ -48,7 +48,7 @@ service (port 0)        daemon                              client (curl)
 
 ### 1–2. Discovery
 
-A service sets `PORT_ZERO` to a **full domain** and binds **port 0**. The
+A service sets `PZ_TUNNEL` to a **full domain** and binds **port 0**. The
 long-running daemon (`port-zero start [--foreground]`) reads each process's
 environment from the outside: `/proc/<pid>/environ` on Linux,
 `sysctl KERN_PROCARGS2` on macOS. Both are **frozen at `execve()` time**, which

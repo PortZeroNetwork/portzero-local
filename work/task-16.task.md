@@ -2,7 +2,7 @@
 id: 2e55ad9c-36e6-4799-a631-a5c143761fb8
 slug: task-16
 status: done
-title: Explicit canonical port in PORT_ZERO value (name:port) for the overlay
+title: Explicit canonical port in PZ_TUNNEL value (name:port) for the overlay
 milestones:
 - milestone-1
 created_at: 2026-06-22T11:10:29.655256618Z
@@ -25,11 +25,11 @@ need a way to declare that canonical port.
 
 ## Design (decided)
 
-Carry the canonical port in the `PORT_ZERO` value as a trailing `:port`:
+Carry the canonical port in the `PZ_TUNNEL` value as a trailing `:port`:
 
 ```
-PORT_ZERO=db.devenv.local:5432
-PORT_ZERO=web-{branch}.devenv.local:8080
+PZ_TUNNEL=db.devenv.local:5432
+PZ_TUNNEL=web-{branch}.devenv.local:8080
 ```
 
 The overlay then listens on `VIP:<port>` and proxies to the real ephemeral
@@ -54,7 +54,7 @@ treats explicit `:port` as the override).
 
 ## Implementation notes (verify in design)
 
-- `PORT_ZERO` is read/validated in `discovery.rs` (`scan_network_services` /
+- `PZ_TUNNEL` is read/validated in `discovery.rs` (`scan_network_services` /
   `scan_processes`) and resolved via the `domain` crate. The `(domain, Option<port>)`
   split likely belongs in the `domain` crate next to template/suffix logic.
 - Plumb the canonical port through `DiscoveredNetworkService.service_port` (today
@@ -64,7 +64,7 @@ treats explicit `:port` as the override).
 
 ## Acceptance Criteria
 
-- [ ] `PORT_ZERO=<name>.devenv.local:<port>` exposes the overlay service on
+- [ ] `PZ_TUNNEL=<name>.devenv.local:<port>` exposes the overlay service on
       `VIP:<port>`, proxying to the real ephemeral backend.
 - [ ] Suffix-decides-target still works (parser strips `:port` before classification).
 - [ ] Works with `{branch}`/`{worktree}` templates in the name part.

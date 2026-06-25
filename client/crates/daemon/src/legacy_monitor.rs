@@ -108,7 +108,7 @@ pub fn describe_listener_context(cwd: Option<&Path>, git_root: Option<&Path>) ->
 /// distinct legacy listener.
 ///
 /// A listener is "legacy" when ALL of the following hold:
-///  - it does NOT have `PORT_ZERO` set (it isn't already managed by us),
+///  - it does NOT have `PZ_TUNNEL` set (it isn't already managed by us),
 ///  - its port is interesting (common dev port, or a port a managed service
 ///    uses),
 ///  - its port is not itself a managed/registered port owned by us (we don't

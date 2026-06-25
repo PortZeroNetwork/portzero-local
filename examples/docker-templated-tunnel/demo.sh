@@ -20,10 +20,10 @@ echo
 echo "Building image..."
 docker build -t portzero-templated-demo . >/dev/null
 
-echo "Starting container with templated PORT_ZERO=web-{branch}.tunnel.portzero.cloud ..."
+echo "Starting container with templated PZ_TUNNEL=web-{branch}.tunnel.portzero.cloud ..."
 CONTAINER_ID=$(docker run -d \
   --name "portzero-demo-$$" \
-  -e PORT_ZERO="web-{branch}.tunnel.portzero.cloud" \
+  -e PZ_TUNNEL="web-{branch}.tunnel.portzero.cloud" \
   -p 0:8080 \
   portzero-templated-demo)
 
@@ -34,7 +34,7 @@ echo
 sleep 1
 
 echo "Container env (inside):"
-docker exec "$CONTAINER_ID" env | grep PORT_ZERO || true
+docker exec "$CONTAINER_ID" env | grep PZ_TUNNEL || true
 echo
 
 echo "To see it discovered by the daemon, run in another terminal:"

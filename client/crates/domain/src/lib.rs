@@ -1,4 +1,4 @@
-//! Domain template engine for PORT_ZERO support.
+//! Domain template engine for PZ_TUNNEL support.
 //!
 //! Resolves templates like `{service}-{project}-{branch}-{user}.tunnel.portzero.cloud`
 //! into stable DNS-safe domain names for tunnel routes.
@@ -20,28 +20,28 @@ pub const DEFAULT_BASE_DOMAIN: &str = "portzero.cloud";
 /// Default domain template used when none is specified.
 ///
 /// Produces a flat single-label subdomain under `tunnel.portzero.cloud`.
-/// The base domain can be overridden via `PORT_ZERO_BASE_DOMAIN` for local
+/// The base domain can be overridden via `PZ_TUNNEL_BASE_DOMAIN` for local
 /// development.
 pub const DEFAULT_TEMPLATE: &str = "{service}-{project}-{branch}-{user}.tunnel.portzero.cloud";
 
 /// Build the default domain template using the configured base domain.
 ///
-/// Reads `PORT_ZERO_BASE_DOMAIN` from the environment, falling back to
+/// Reads `PZ_TUNNEL_BASE_DOMAIN` from the environment, falling back to
 /// `portzero.cloud`.
 pub fn default_template() -> String {
-    let base = std::env::var("PORT_ZERO_BASE_DOMAIN")
+    let base = std::env::var("PZ_TUNNEL_BASE_DOMAIN")
         .unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
     format!("{{service}}-{{project}}-{{branch}}-{{user}}.{TUNNEL_SUBDOMAIN}.{base}")
 }
 
 /// The tunnel base domain (e.g. `tunnel.portzero.cloud`), respecting overrides.
 pub fn tunnel_base() -> String {
-    let base = std::env::var("PORT_ZERO_BASE_DOMAIN")
+    let base = std::env::var("PZ_TUNNEL_BASE_DOMAIN")
         .unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
     format!("{TUNNEL_SUBDOMAIN}.{base}")
 }
 
-/// Context for resolving PORT_ZERO templates.
+/// Context for resolving PZ_TUNNEL templates.
 #[derive(Debug, Clone)]
 pub struct DomainContext {
     pub service: String,
@@ -123,7 +123,7 @@ impl DomainContext {
     }
 }
 
-/// Split an optional trailing `:<port>` off a raw `PORT_ZERO` value.
+/// Split an optional trailing `:<port>` off a raw `PZ_TUNNEL` value.
 ///
 /// The canonical-port feature lets a developer declare the port the overlay
 /// should expose a service on by appending `:<port>` to the value, e.g.
@@ -164,7 +164,7 @@ pub fn split_tunnel_port(value: &str) -> (&str, Option<u16>) {
 /// - The bare `tunnel.portzero.cloud` hostname is reserved and rejected.
 ///
 /// The expected tunnel base (e.g. `tunnel.portzero.cloud`) is derived from
-/// `PORT_ZERO_BASE_DOMAIN` the same way as `tunnel_base()`.
+/// `PZ_TUNNEL_BASE_DOMAIN` the same way as `tunnel_base()`.
 pub fn validate_tunnel_domain(domain: &str) -> Result<(), String> {
     let base = tunnel_base();
     let suffix = format!(".{base}");
