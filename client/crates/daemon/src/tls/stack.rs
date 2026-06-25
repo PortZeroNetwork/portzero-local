@@ -60,10 +60,14 @@ pub fn build_server_config(ca: &LocalCa) -> Result<Arc<ServerConfig>> {
             .context("parse wildcard key PEM")?
             .context("no private key found in wildcard PEM")?;
 
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .context("build rustls ServerConfig")?;
+    let config = ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .context("configure TLS protocol versions")?
+    .with_no_client_auth()
+    .with_single_cert(certs, key)
+    .context("build rustls ServerConfig")?;
 
     Ok(Arc::new(config))
 }
