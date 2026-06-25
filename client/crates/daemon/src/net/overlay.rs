@@ -15,6 +15,7 @@ use crate::net::resolver_config;
 use crate::net::service_table::ServiceTable;
 use crate::net::stack::VirtualStack;
 use crate::net::tun_device::{TunConfig, TunDevice};
+use crate::tls::{trust, LocalCa};
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use crate::net::virtual_ip::gateway_ip;
 
@@ -104,6 +105,10 @@ pub struct OverlayNetwork {
     /// Name of the overlay's TUN link (e.g. `deven0`). The scoped resolver is
     /// attached to this real link, so teardown must revert the same one.
     link_name: String,
+    /// Local CA and wildcard cert for `*.portzero.local`.  Held here so the
+    /// TLS stack integration (see `tls::stack`) can consume it without
+    /// re-generating.
+    pub ca: LocalCa,
 }
 
 impl OverlayNetwork {
@@ -111,6 +116,16 @@ impl OverlayNetwork {
     ///
     /// This must be called with sufficient privileges.
     pub async fn start(config: OverlayConfig) -> Result<Self> {
+        // Generate (or load) the local CA and wildcard cert for *.portzero.local.
+        // Fatal: without this, HTTPS termination cannot start.
+        let ca = LocalCa::load_or_create()?;
+
+        // Install the CA into OS trust stores so browsers accept the cert.
+        // Non-fatal: the overlay still works for plain HTTP if this fails.
+        if let Err(e) = trust::install(&LocalCa::ca_cert_path()?) {
+            tracing::warn!("trust store installation failed (HTTPS may show cert warnings): {e:#}");
+        }
+
         // Create the TUN device first (this may require root).
         let tun = TunDevice::create(&config.tun)?;
         // Capture the actual link name (the kernel may pick a different unit
@@ -157,6 +172,7 @@ impl OverlayNetwork {
             stack,
             dns_task,
             link_name,
+            ca,
         })
     }
 
