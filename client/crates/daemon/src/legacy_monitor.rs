@@ -249,7 +249,7 @@ pub fn scan_legacy_listeners(managed: &ManagedContext) -> Vec<Issue> {
     #[cfg(target_os = "windows")]
     {
         let _ = managed;
-        return Vec::new();
+        Vec::new()
     }
 
     #[cfg(not(target_os = "windows"))]

@@ -220,7 +220,7 @@ pub async fn scan_all(account_id: Option<&str>, username: Option<&str>) -> Vec<D
 fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<DiscoveredService> {
     #[cfg(target_os = "windows")]
     {
-        return scan_processes_windows(account_id, username);
+        scan_processes_windows(account_id, username)
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1501,7 +1501,7 @@ struct NetProcessCandidate {
 fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
     #[cfg(target_os = "windows")]
     {
-        return scan_network_processes_sync_windows();
+        scan_network_processes_sync_windows()
     }
 
     #[cfg(not(target_os = "windows"))]

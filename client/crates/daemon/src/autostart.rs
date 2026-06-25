@@ -8,6 +8,8 @@
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
+#[cfg(target_os = "windows")]
+use std::path::Path;
 
 /// Service label / unit name used across platforms.
 #[allow(dead_code)]
@@ -369,7 +371,7 @@ fn uninstall_systemd() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "windows")]
-fn install_windows_task(binary: &PathBuf) -> Result<()> {
+fn install_windows_task(binary: &Path) -> Result<()> {
     use std::process::Command;
 
     let result = Command::new("schtasks")
