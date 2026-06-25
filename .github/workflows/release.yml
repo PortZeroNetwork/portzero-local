@@ -247,11 +247,22 @@ jobs:
             artifacts/version.json
             scripts/install.sh
 
+  check-homebrew-token:
+    name: Check Homebrew Token
+    needs: [release]
+    runs-on: ubuntu-latest
+    outputs:
+      has-token: ${{ steps.check.outputs.has-token }}
+    steps:
+      - name: Check token presence
+        id: check
+        run: echo "has-token=${{ secrets.HOMEBREW_TAP_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
   update-homebrew:
     name: Update Homebrew Formula
-    needs: [version, release]
+    needs: [version, release, check-homebrew-token]
     runs-on: ubuntu-latest
-    if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+    if: ${{ needs.check-homebrew-token.outputs.has-token == 'true' }}
     steps:
       - name: Download macOS SHA256 files
         uses: actions/download-artifact@v4
