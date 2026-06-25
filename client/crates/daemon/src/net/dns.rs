@@ -6,8 +6,10 @@
 //!
 //! We use hickory-proto for clean DNS message handling.
 
-use std::net::{Ipv4Addr, SocketAddr, UdpSocket as StdUdpSocket};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+#[cfg(target_os = "windows")]
+use std::net::UdpSocket as StdUdpSocket;
 #[cfg(target_os = "windows")]
 use std::time::Duration;
 
