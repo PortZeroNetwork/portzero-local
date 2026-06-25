@@ -15,7 +15,7 @@ use crate::net::resolver_config;
 use crate::net::service_table::ServiceTable;
 use crate::net::stack::VirtualStack;
 use crate::net::tun_device::{TunConfig, TunDevice};
-use crate::tls::{trust, LocalCa};
+use crate::tls::{stack as tls_stack, trust, LocalCa};
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use crate::net::virtual_ip::gateway_ip;
 
@@ -133,12 +133,25 @@ impl OverlayNetwork {
         // scoped resolver is attached to THIS real link, not `lo`.
         let link_name = tun.name().to_string();
 
+        // Build the rustls ServerConfig from the wildcard cert. Non-fatal: if
+        // this fails the stack still runs, just without HTTPS on port 443.
+        let tls_config = match tls_stack::build_server_config(&ca) {
+            Ok(c) => {
+                tracing::info!("TLS termination enabled for *.portzero.local on port 443");
+                Some(c)
+            }
+            Err(e) => {
+                tracing::warn!("could not build TLS server config, port 443 disabled: {e:#}");
+                None
+            }
+        };
+
         // Shared service table
         let services: Arc<RwLock<ServiceTable>> = Arc::new(RwLock::new(ServiceTable::new()));
 
         // Start the TCP stack
         let initial = ServiceTable::new();
-        let stack = VirtualStack::spawn(tun, initial).await?;
+        let stack = VirtualStack::spawn(tun, initial, tls_config).await?;
 
         // Start DNS server
         let dns_server = OverlayDnsServer::new(services.clone(), config.dns_listen);

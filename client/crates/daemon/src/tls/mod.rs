@@ -6,6 +6,7 @@
 //!   `stack` — rustls ServerConfig wiring into the smoltcp proxy (next)
 
 pub mod ca;
+pub mod stack;
 pub mod trust;
 
 pub use ca::LocalCa;

@@ -25,9 +25,12 @@ hickory-server = "0.24"
 libc = "0.2"
 rcgen = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+rustls-pemfile = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 time = { version = "0.3", features = ["formatting", "parsing"] }
+tokio-rustls = "0.26"
 # smoltcp features vary by version. We activate a minimal set; see net/ for usage.
 # TUN is an L3 (IP) device, so we need `medium-ip`. `medium-ethernet` is kept
 # for any future L2 use but the virtual stack runs in IP mode.

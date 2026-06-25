@@ -33,8 +33,10 @@
 //! [`StackCommand`]) is unchanged so the rest of the system keeps compiling.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 use anyhow::Result;
+use rustls::ServerConfig;
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{self, Device, DeviceCapabilities, Medium};
 use smoltcp::socket::tcp;
@@ -78,9 +80,14 @@ pub struct VirtualStack {
 
 impl VirtualStack {
     /// Spawn the virtual stack driving the given TUN device.
+    ///
+    /// `tls_config` enables TLS termination on port 443: connections to any
+    /// `*.portzero.local` VIP on port 443 are decrypted with the wildcard cert
+    /// and forwarded as plain HTTP to the service's real backend address.
     pub async fn spawn(
         tun: crate::net::tun_device::TunDevice,
         initial: ServiceTable,
+        tls_config: Option<Arc<ServerConfig>>,
     ) -> Result<Self> {
         let (cmd_tx, cmd_rx) = mpsc::channel::<StackCommand>(16);
 
@@ -125,7 +132,7 @@ impl VirtualStack {
         });
 
         let device = ChannelDevice::new(inbound_rx, outbound_tx);
-        StackEngine::spawn(device, initial, cmd_rx);
+        StackEngine::spawn(device, initial, cmd_rx, tls_config);
 
         Ok(Self {
             cmd_tx,
@@ -138,12 +145,16 @@ impl VirtualStack {
     /// in-memory device).
     // test-support: exposed for integration tests; not part of the stable API
     #[doc(hidden)]
-    pub fn spawn_with_device<D>(device: D, initial: ServiceTable) -> Self
+    pub fn spawn_with_device<D>(
+        device: D,
+        initial: ServiceTable,
+        tls_config: Option<Arc<ServerConfig>>,
+    ) -> Self
     where
         D: Device + Pumpable + Send + 'static,
     {
         let (cmd_tx, cmd_rx) = mpsc::channel::<StackCommand>(16);
-        StackEngine::spawn(device, initial, cmd_rx);
+        StackEngine::spawn(device, initial, cmd_rx, tls_config);
         // The mock-device test path drives no real TUN, so there are no
         // reader/writer tasks to track or abort.
         Self {
@@ -308,13 +319,16 @@ struct StackEngine<D: Device> {
     listeners: Vec<Listener>,
     connections: HashMap<SocketHandle, Connection>,
     cmd_rx: mpsc::Receiver<StackCommand>,
+    /// When present, port-443 connections are TLS-terminated with this config
+    /// and forwarded as plaintext to the service's real backend.
+    tls_config: Option<Arc<ServerConfig>>,
 }
 
 impl<D> StackEngine<D>
 where
     D: Device + Pumpable + Send + 'static,
 {
-    fn spawn(mut device: D, initial: ServiceTable, cmd_rx: mpsc::Receiver<StackCommand>) {
+    fn spawn(mut device: D, initial: ServiceTable, cmd_rx: mpsc::Receiver<StackCommand>, tls_config: Option<Arc<ServerConfig>>) {
         // The interface uses our virtual gateway IP and covers the entire
         // 10.254.0.0/16 block via a route so that AnyIP accepts every VIP.
         let gateway = crate::net::virtual_ip::gateway_ip();
@@ -339,6 +353,7 @@ where
             listeners: Vec::new(),
             connections: HashMap::new(),
             cmd_rx,
+            tls_config,
         };
         engine.apply_services(initial);
 
@@ -351,6 +366,11 @@ where
     /// listening socket per distinct service port.
     fn apply_services(&mut self, table: ServiceTable) {
         let mut wanted_ports: Vec<u16> = table.all().map(|s| s.service_port).collect();
+        // Always hold a port-443 listener for TLS termination when configured,
+        // regardless of whether any service explicitly registered on 443.
+        if self.tls_config.is_some() {
+            wanted_ports.push(443);
+        }
         wanted_ports.sort_unstable();
         wanted_ports.dedup();
 
@@ -475,10 +495,17 @@ where
 
             let backend = match local {
                 Some(ep) => match ep.addr {
-                    IpAddress::Ipv4(v4) => self
-                        .services
-                        .resolve_for_connect(v4, port)
-                        .map(|s| s.real_addr),
+                    IpAddress::Ipv4(v4) => {
+                        if port == 443 {
+                            // For TLS termination, route to whatever service is on
+                            // this VIP regardless of its registered service_port.
+                            // Services register on their HTTP port (e.g. 80); we
+                            // terminate TLS and forward the plaintext to them.
+                            self.services.get_by_vip(v4).map(|s| s.real_addr)
+                        } else {
+                            self.services.resolve_for_connect(v4, port).map(|s| s.real_addr)
+                        }
+                    }
                     #[allow(unreachable_patterns)]
                     _ => None,
                 },
@@ -500,7 +527,22 @@ where
             // Spawn backend connection plumbing.
             let (to_backend_tx, to_backend_rx) = mpsc::channel::<Vec<u8>>(16);
             let (from_backend_tx, from_backend_rx) = mpsc::channel::<Vec<u8>>(16);
-            spawn_backend(real_addr, to_backend_rx, from_backend_tx);
+            if port == 443 {
+                if let Some(ref tls) = self.tls_config {
+                    crate::tls::stack::spawn_tls_backend(
+                        tls.clone(),
+                        real_addr,
+                        to_backend_rx,
+                        from_backend_tx,
+                    );
+                } else {
+                    // TLS config disappeared between apply_services and accept;
+                    // fall back to plain proxy.
+                    spawn_backend(real_addr, to_backend_rx, from_backend_tx);
+                }
+            } else {
+                spawn_backend(real_addr, to_backend_rx, from_backend_tx);
+            }
 
             self.connections.insert(
                 handle,
@@ -774,7 +816,7 @@ pub use smoltcp::time::Instant as TestInstant;
 #[doc(hidden)]
 pub use smoltcp::wire::{IpAddress as TestIpAddress, Ipv4Address as TestIpv4Address};
 
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 /// An in-memory loopback smoltcp device used to drive the stack from a test
 /// "client" smoltcp interface. Packets written by one side appear on the
@@ -923,7 +965,7 @@ mod tests {
 
         // 3. Spawn the stack on one half of a mock device pair.
         let (stack_dev, mut client_dev) = MockDevice::pair();
-        let stack = VirtualStack::spawn_with_device(stack_dev, table);
+        let stack = VirtualStack::spawn_with_device(stack_dev, table, None);
 
         // 4. Build a client smoltcp interface on the other half and connect to
         //    VIP:5432 from a client IP in the same subnet.
@@ -982,7 +1024,7 @@ mod tests {
     async fn shutdown_is_graceful() {
         let (stack_dev, _client_dev) = MockDevice::pair();
         let table = ServiceTable::new();
-        let stack = VirtualStack::spawn_with_device(stack_dev, table);
+        let stack = VirtualStack::spawn_with_device(stack_dev, table, None);
 
         stack.shutdown().await.unwrap();
         // Give the task a moment to exit.
@@ -997,7 +1039,7 @@ mod tests {
     #[tokio::test]
     async fn update_services_adds_ports() {
         let (stack_dev, _client_dev) = MockDevice::pair();
-        let stack = VirtualStack::spawn_with_device(stack_dev, ServiceTable::new());
+        let stack = VirtualStack::spawn_with_device(stack_dev, ServiceTable::new(), None);
 
         let mut table = ServiceTable::new();
         table.register(

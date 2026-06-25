@@ -214,7 +214,7 @@ async fn unprivileged_vip_byte_proxy() {
 
         // 3. Spawn the real stack engine on one half of an in-memory device pair.
         let (stack_dev, mut client_dev) = MockDevice::pair();
-        let stack = VirtualStack::spawn_with_device(stack_dev, table);
+        let stack = VirtualStack::spawn_with_device(stack_dev, table, None);
 
         // 4. Build a client smoltcp interface on the other half and open a TCP
         //    connection to VIP:5432 from a client IP in the same subnet.
