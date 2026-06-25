@@ -143,7 +143,7 @@ jobs:
           Expand-Archive -Path "wintun.zip" -DestinationPath "wintun" -Force
           Copy-Item "wintun\wintun\bin\amd64\wintun.dll" "$staging\"
 
-          Compress-Archive -Path "$staging\*" -DestinationPath "$staging.zip"
+          Compress-Archive -Path "$staging" -DestinationPath "$staging.zip"
 
       - name: Compute SHA256 (macOS)
         if: contains(matrix.target, 'apple-darwin')

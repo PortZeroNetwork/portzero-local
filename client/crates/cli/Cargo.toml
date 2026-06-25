@@ -40,7 +40,7 @@ recommends = "libcap2-bin"
 section = "net"
 priority = "optional"
 assets = [
-    ["../../../target/release/portzero", "usr/local/bin/portzero", "755"],
+    ["target/release/portzero", "usr/local/bin/portzero", "755"],
     ["../../../packaging/linux/portzero-daemon.service", "usr/lib/systemd/user/portzero-daemon.service", "644"],
 ]
 maintainer-scripts = "../../../packaging/linux/deb"
