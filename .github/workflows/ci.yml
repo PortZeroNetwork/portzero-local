@@ -37,3 +37,31 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace
+
+  e2e:
+    name: E2E (privileged real TUN)
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Ensure TUN device (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          if [ ! -e /dev/net/tun ]; then
+            sudo modprobe tun
+          fi
+
+      - name: Build test binary (populate cache as user)
+        run: cargo build -p port-zero-daemon --tests
+
+      - name: E2E — real TUN overlay (root-gated)
+        run: sudo -E $(which cargo) test -p port-zero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
