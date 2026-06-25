@@ -192,7 +192,8 @@ jobs:
         run: cargo deb -p port-zero-cli --no-build
 
       - name: Build .rpm package
-        run: cargo generate-rpm --manifest-path client/crates/cli/Cargo.toml
+        run: cargo generate-rpm
+        working-directory: client/crates/cli
 
       - name: Upload .deb
         uses: actions/upload-artifact@v4
