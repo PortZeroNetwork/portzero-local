@@ -15,7 +15,8 @@
 //! Cross-platform support:
 //! - Linux: full (reads /proc/<pid>/environ and /proc/<pid>/fd for inode-based port scoping)
 //! - macOS: full (uses `ps -p <pid> -wwwE` and `lsof`)
-//! - Windows: containers only
+//! - Windows: full for same-bitness/readable processes (reads the target PEB
+//!   environment block and uses `Get-NetTCPConnection` for port ownership)
 
 use std::path::{Path, PathBuf};
 
@@ -190,11 +191,10 @@ pub async fn scan_all(account_id: Option<&str>, username: Option<&str>) -> Vec<D
     // shutdown-signal future never gets polled mid-scan.
     let acct = account_id.map(str::to_owned);
     let user = username.map(str::to_owned);
-    let process_services = tokio::task::spawn_blocking(move || {
-        scan_processes(acct.as_deref(), user.as_deref())
-    })
-    .await
-    .unwrap_or_default();
+    let process_services =
+        tokio::task::spawn_blocking(move || scan_processes(acct.as_deref(), user.as_deref()))
+            .await
+            .unwrap_or_default();
     services.extend(process_services);
     services.extend(scan_docker_containers(account_id, username).await);
     services
@@ -444,6 +444,11 @@ fn discover_process_ports(pid: u32) -> Vec<ListeningPort> {
         return discover_ports_lsof(pid);
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        return discover_ports_windows(pid);
+    }
+
     #[allow(unreachable_code)]
     Vec::new()
 }
@@ -594,6 +599,60 @@ fn parse_lsof_line(line: &str) -> Option<ListeningPort> {
     None
 }
 
+#[cfg(target_os = "windows")]
+fn discover_ports_windows(pid: u32) -> Vec<ListeningPort> {
+    use std::process::Command;
+
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'SilentlyContinue'
+Get-NetTCPConnection -State Listen -OwningProcess {pid} |
+  ForEach-Object {{ "$($_.LocalAddress)|$($_.LocalPort)" }}
+"#
+    );
+
+    let output = match Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_windows_tcp_connection_stdout(&stdout)
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_windows_tcp_connection_stdout(stdout: &str) -> Vec<ListeningPort> {
+    stdout
+        .lines()
+        .filter_map(parse_windows_tcp_connection_line)
+        .collect()
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_windows_tcp_connection_line(line: &str) -> Option<ListeningPort> {
+    let (addr, port_str) = line.trim().split_once('|')?;
+    let port = port_str.trim().parse::<u16>().ok()?;
+    if port == 0 {
+        return None;
+    }
+
+    let addr = addr.trim();
+    let bind = if addr == "0.0.0.0" || addr == "::" || addr == "*" {
+        BindAddr::Public
+    } else {
+        BindAddr::Loopback
+    };
+
+    Some(ListeningPort { port, bind })
+}
+
 // ---------------------------------------------------------------------------
 // System-wide listener enumeration (for legacy-port monitoring)
 // ---------------------------------------------------------------------------
@@ -672,7 +731,11 @@ fn scan_process_env(pid: u32, var_name: &str) -> Option<String> {
     {
         scan_process_env_macos(pid, var_name)
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        scan_process_env_windows(pid, var_name)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = (pid, var_name);
         None
@@ -719,6 +782,189 @@ fn scan_process_env_macos(pid: u32, var_name: &str) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(target_os = "windows")]
+fn scan_process_env_windows(pid: u32, var_name: &str) -> Option<String> {
+    let entries = read_windows_process_environment(pid).ok()?;
+    let prefix = format!("{var_name}=");
+    entries.into_iter().find_map(|entry| {
+        if entry.len() >= prefix.len() && entry[..prefix.len()].eq_ignore_ascii_case(&prefix) {
+            Some(entry[prefix.len()..].to_string())
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn read_windows_process_environment(pid: u32) -> Result<Vec<String>> {
+    use anyhow::Context;
+    use std::ffi::c_void;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    };
+
+    #[repr(C)]
+    struct ProcessBasicInformation {
+        reserved1: *mut c_void,
+        peb_base_address: *mut c_void,
+        reserved2: [*mut c_void; 2],
+        unique_process_id: usize,
+        reserved3: *mut c_void,
+    }
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtQueryInformationProcess(
+            process_handle: HANDLE,
+            process_information_class: u32,
+            process_information: *mut c_void,
+            process_information_length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+    }
+
+    const PROCESS_BASIC_INFORMATION_CLASS: u32 = 0;
+    const STATUS_SUCCESS: i32 = 0;
+
+    struct Handle(HANDLE);
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+
+    unsafe fn read_usize(process: HANDLE, address: usize) -> Result<usize> {
+        let mut value = 0usize;
+        let mut bytes_read = 0usize;
+        let ok = ReadProcessMemory(
+            process,
+            address as *const c_void,
+            &mut value as *mut usize as *mut c_void,
+            std::mem::size_of::<usize>(),
+            &mut bytes_read,
+        );
+        if ok == 0 || bytes_read != std::mem::size_of::<usize>() {
+            anyhow::bail!("ReadProcessMemory failed at 0x{address:x}");
+        }
+        Ok(value)
+    }
+
+    unsafe fn read_env_block(process: HANDLE, address: usize) -> Result<Vec<u16>> {
+        const CHUNK_BYTES: usize = 4096;
+        const MAX_BYTES: usize = 4 * 1024 * 1024;
+
+        let mut bytes = Vec::new();
+        let mut offset = 0usize;
+        while offset < MAX_BYTES {
+            let mut chunk = [0u8; CHUNK_BYTES];
+            let mut bytes_read = 0usize;
+            let ok = ReadProcessMemory(
+                process,
+                (address + offset) as *const c_void,
+                chunk.as_mut_ptr() as *mut c_void,
+                chunk.len(),
+                &mut bytes_read,
+            );
+            if ok == 0 || bytes_read == 0 {
+                break;
+            }
+
+            bytes.extend_from_slice(&chunk[..bytes_read]);
+            if bytes
+                .chunks_exact(2)
+                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                .collect::<Vec<_>>()
+                .windows(2)
+                .any(|pair| pair == [0, 0])
+            {
+                break;
+            }
+
+            offset += bytes_read;
+        }
+
+        let words = bytes
+            .chunks_exact(2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        Ok(words)
+    }
+
+    let handle =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
+    if handle.is_null() {
+        anyhow::bail!("OpenProcess failed for pid {pid}");
+    }
+    let handle = Handle(handle);
+
+    let mut pbi = ProcessBasicInformation {
+        reserved1: std::ptr::null_mut(),
+        peb_base_address: std::ptr::null_mut(),
+        reserved2: [std::ptr::null_mut(); 2],
+        unique_process_id: 0,
+        reserved3: std::ptr::null_mut(),
+    };
+    let status = unsafe {
+        NtQueryInformationProcess(
+            handle.0,
+            PROCESS_BASIC_INFORMATION_CLASS,
+            &mut pbi as *mut ProcessBasicInformation as *mut c_void,
+            std::mem::size_of::<ProcessBasicInformation>() as u32,
+            std::ptr::null_mut(),
+        )
+    };
+    if status != STATUS_SUCCESS {
+        anyhow::bail!("NtQueryInformationProcess failed with status 0x{status:x}");
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    const PEB_PROCESS_PARAMETERS_OFFSET: usize = 0x20;
+    #[cfg(target_pointer_width = "32")]
+    const PEB_PROCESS_PARAMETERS_OFFSET: usize = 0x10;
+    #[cfg(target_pointer_width = "64")]
+    const RTL_ENVIRONMENT_OFFSET: usize = 0x80;
+    #[cfg(target_pointer_width = "32")]
+    const RTL_ENVIRONMENT_OFFSET: usize = 0x48;
+
+    let peb = pbi.peb_base_address as usize;
+    let process_parameters = unsafe { read_usize(handle.0, peb + PEB_PROCESS_PARAMETERS_OFFSET) }
+        .context("reading PEB process parameters")?;
+    if process_parameters == 0 {
+        return Ok(Vec::new());
+    }
+
+    let environment = unsafe { read_usize(handle.0, process_parameters + RTL_ENVIRONMENT_OFFSET) }
+        .context("reading process environment pointer")?;
+    if environment == 0 {
+        return Ok(Vec::new());
+    }
+
+    let words = unsafe { read_env_block(handle.0, environment) }
+        .context("reading process environment block")?;
+    Ok(parse_windows_environment_block(&words))
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_windows_environment_block(words: &[u16]) -> Vec<String> {
+    let mut entries = Vec::new();
+    let mut start = 0usize;
+    for (idx, word) in words.iter().enumerate() {
+        if *word != 0 {
+            continue;
+        }
+        if idx == start {
+            break;
+        }
+        entries.push(String::from_utf16_lossy(&words[start..idx]));
+        start = idx + 1;
+    }
+    entries
 }
 
 // ---------------------------------------------------------------------------
@@ -943,7 +1189,10 @@ fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> 
             candidates.push(wd);
         }
         // Also check other common labels users might set
-        if let Some(custom) = labels.get("dev.portzero.project_dir").and_then(|v| v.as_str()) {
+        if let Some(custom) = labels
+            .get("dev.portzero.project_dir")
+            .and_then(|v| v.as_str())
+        {
             candidates.push(PathBuf::from(custom));
         }
     }
@@ -1151,10 +1400,7 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let ids: Vec<&str> = stdout
-        .lines()
-        .filter(|l| !l.is_empty())
-        .collect();
+    let ids: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
 
     let mut out = Vec::new();
 
@@ -1236,8 +1482,11 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
         let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), host_port);
         // An explicit canonical port wins; otherwise prefer the container port,
         // falling back to the host port.
-        let svc_port = canonical_port
-            .unwrap_or(if service_port > 0 { service_port } else { host_port });
+        let svc_port = canonical_port.unwrap_or(if service_port > 0 {
+            service_port
+        } else {
+            host_port
+        });
 
         let container_name = label.clone();
         out.push(DiscoveredNetworkService {
@@ -1270,7 +1519,11 @@ fn parse_docker_port_mapping(ports_json: &str) -> Option<(u16, u16)> {
 
         if let Some(arr) = bindings.as_array() {
             for b in arr {
-                if let Some(hp) = b.get("HostPort").and_then(|v| v.as_str()).and_then(|s| s.parse::<u16>().ok()) {
+                if let Some(hp) = b
+                    .get("HostPort")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<u16>().ok())
+                {
                     if hp > 0 {
                         return Some((container_port, hp));
                     }
@@ -1284,7 +1537,13 @@ fn parse_docker_port_mapping(ports_json: &str) -> Option<(u16, u16)> {
 fn sanitize_network_name(raw: &str) -> String {
     // Allow only dns-safe simple labels for the network name.
     raw.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches(|c: char| !c.is_ascii_alphanumeric())
         .to_string()
@@ -1355,9 +1614,10 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn test_parse_lsof_line_ipv6() {
-        let loopback =
-            parse_lsof_line("Parallels  7174 loumtech   13u  IPv6 0x1e18...      0t0  TCP [::1]:57889 (LISTEN)")
-                .expect("[::1] parses");
+        let loopback = parse_lsof_line(
+            "Parallels  7174 loumtech   13u  IPv6 0x1e18...      0t0  TCP [::1]:57889 (LISTEN)",
+        )
+        .expect("[::1] parses");
         assert_eq!(loopback.port, 57889);
         assert_eq!(loopback.bind, BindAddr::Loopback);
 
@@ -1376,7 +1636,10 @@ mod tests {
         // Header-ish / non-address tokens only.
         assert_eq!(parse_lsof_line("COMMAND PID USER FD TYPE"), None);
         // Port 0 is filtered.
-        assert_eq!(parse_lsof_line("node 1 u 5u IPv4 0x0 0t0 TCP *:0 (LISTEN)"), None);
+        assert_eq!(
+            parse_lsof_line("node 1 u 5u IPv4 0x0 0t0 TCP *:0 (LISTEN)"),
+            None
+        );
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1404,6 +1667,51 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn test_parse_windows_tcp_connection_lines() {
+        assert_eq!(
+            parse_windows_tcp_connection_line("0.0.0.0|8080"),
+            Some(ListeningPort {
+                port: 8080,
+                bind: BindAddr::Public,
+            })
+        );
+        assert_eq!(
+            parse_windows_tcp_connection_line("::|3000"),
+            Some(ListeningPort {
+                port: 3000,
+                bind: BindAddr::Public,
+            })
+        );
+        assert_eq!(
+            parse_windows_tcp_connection_line("127.0.0.1|5173"),
+            Some(ListeningPort {
+                port: 5173,
+                bind: BindAddr::Loopback,
+            })
+        );
+        assert_eq!(parse_windows_tcp_connection_line("127.0.0.1|0"), None);
+        assert_eq!(parse_windows_tcp_connection_line("bad"), None);
+    }
+
+    #[test]
+    fn test_parse_windows_environment_block() {
+        let mut words: Vec<u16> = "Path=C:\\Windows\0PORT_ZERO=api.portzero.local\0\0"
+            .encode_utf16()
+            .collect();
+        assert_eq!(
+            parse_windows_environment_block(&words),
+            vec![
+                "Path=C:\\Windows".to_string(),
+                "PORT_ZERO=api.portzero.local".to_string()
+            ]
+        );
+
+        words.clear();
+        words.extend("\0".encode_utf16());
+        assert!(parse_windows_environment_block(&words).is_empty());
     }
 
     #[test]
