@@ -451,7 +451,9 @@ where
             let smoltcp::socket::Socket::Tcp(tcp) = sock;
             tcp.abort();
         }
-        let _ = self.iface.poll(Instant::now(), &mut self.device, &mut self.sockets);
+        let _ = self
+            .iface
+            .poll(Instant::now(), &mut self.device, &mut self.sockets);
     }
 
     /// One iteration: drain inbound packets, poll smoltcp, service every socket.
@@ -488,10 +490,7 @@ where
 
         for (idx, handle, port) in promotions {
             // Resolve which VIP the client connected to.
-            let local = self
-                .sockets
-                .get::<tcp::Socket>(handle)
-                .local_endpoint();
+            let local = self.sockets.get::<tcp::Socket>(handle).local_endpoint();
 
             let backend = match local {
                 Some(ep) => match ep.addr {
@@ -684,10 +683,7 @@ where
 
         // Backend finished and we've flushed everything to the client: close the
         // client-facing side.
-        if conn.backend_eof
-            && conn.to_client.is_empty()
-            && !conn.client_closing
-            && sock.may_send()
+        if conn.backend_eof && conn.to_client.is_empty() && !conn.client_closing && sock.may_send()
         {
             sock.close();
             conn.client_closing = true;
@@ -1009,11 +1005,65 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         }
 
-        assert!(sent, "client never reached a sendable state (handshake failed)");
+        assert!(
+            sent,
+            "client never reached a sendable state (handshake failed)"
+        );
         assert_eq!(
             received, payload,
             "echoed payload did not match what was sent"
         );
+
+        stack.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn same_service_port_routes_by_destination_vip() {
+        tracing_subscriber_try_init();
+
+        let backend_a = fixed_response_backend(b"backend-a").await;
+        let backend_b = fixed_response_backend(b"backend-b").await;
+
+        let mut table = ServiceTable::new();
+        let svc_a = table.register("rust-demo1".to_string(), backend_a, 8080, 0);
+        let svc_b = table.register("rust-demo2".to_string(), backend_b, 8080, 0);
+
+        assert_ne!(
+            svc_a.vip, svc_b.vip,
+            "distinct names must receive distinct virtual IPs"
+        );
+        assert_eq!(svc_a.service_port, svc_b.service_port);
+
+        let (stack_dev, mut client_dev) = MockDevice::pair();
+        let stack = VirtualStack::spawn_with_device(stack_dev, table);
+
+        let client_ip = Ipv4Address::new(10, 254, 9, 9);
+        let mut client_iface = client_iface(&mut client_dev, client_ip);
+        let mut client_sockets = SocketSet::new(Vec::new());
+
+        let got_a = connect_and_read(
+            &mut client_iface,
+            &mut client_dev,
+            &mut client_sockets,
+            svc_a.vip,
+            8080,
+            client_ip,
+            49101,
+        )
+        .await;
+        let got_b = connect_and_read(
+            &mut client_iface,
+            &mut client_dev,
+            &mut client_sockets,
+            svc_b.vip,
+            8080,
+            client_ip,
+            49102,
+        )
+        .await;
+
+        assert_eq!(got_a, b"backend-a");
+        assert_eq!(got_b, b"backend-b");
 
         stack.shutdown().await.unwrap();
     }
@@ -1042,22 +1092,70 @@ mod tests {
         let stack = VirtualStack::spawn_with_device(stack_dev, ServiceTable::new(), None);
 
         let mut table = ServiceTable::new();
-        table.register(
-            "svc-a".to_string(),
-            "127.0.0.1:1".parse().unwrap(),
-            8080,
-            0,
-        );
-        table.register(
-            "svc-b".to_string(),
-            "127.0.0.1:2".parse().unwrap(),
-            9090,
-            0,
-        );
+        table.register("svc-a".to_string(), "127.0.0.1:1".parse().unwrap(), 8080, 0);
+        table.register("svc-b".to_string(), "127.0.0.1:2".parse().unwrap(), 9090, 0);
         stack.update_services(table).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         stack.shutdown().await.unwrap();
     }
 
     fn tracing_subscriber_try_init() {}
+
+    async fn fixed_response_backend(response: &'static [u8]) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (mut sock, _) = match listener.accept().await {
+                    Ok(p) => p,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    let _ = sock.write_all(response).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        backend_addr
+    }
+
+    async fn connect_and_read(
+        client_iface: &mut Interface,
+        client_dev: &mut MockDevice,
+        client_sockets: &mut SocketSet<'_>,
+        vip: Ipv4Address,
+        dst_port: u16,
+        client_ip: Ipv4Address,
+        src_port: u16,
+    ) -> Vec<u8> {
+        let handle = client_sockets.add(new_tcp_socket());
+
+        {
+            let sock = client_sockets.get_mut::<tcp::Socket>(handle);
+            let cx = client_iface.context();
+            sock.connect(cx, (IpAddress::Ipv4(vip), dst_port), (client_ip, src_port))
+                .unwrap();
+        }
+
+        let mut received = Vec::new();
+        for _ in 0..2000 {
+            client_iface.poll(Instant::now(), client_dev, client_sockets);
+
+            let sock = client_sockets.get_mut::<tcp::Socket>(handle);
+            if sock.can_recv() {
+                let mut buf = vec![0u8; 4096];
+                if let Ok(n) = sock.recv_slice(&mut buf) {
+                    received.extend_from_slice(&buf[..n]);
+                }
+            }
+            if !received.is_empty() {
+                break;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+
+        client_sockets.remove(handle);
+        received
+    }
 }

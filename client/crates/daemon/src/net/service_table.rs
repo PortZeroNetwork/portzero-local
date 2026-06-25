@@ -1,4 +1,4 @@
-//! Service table: maps overlay names (from full PORT_ZERO=*.portzero.local) to
+//! Service table: maps overlay names (from full PZ_TUNNEL=*.portzero.local) to
 //! their backing endpoints and virtual IPs.
 //!
 //! A "service" here is something like:
@@ -46,7 +46,13 @@ impl ServiceTable {
     ///
     /// If the name already exists, we keep the same VIP but update the real_addr
     /// and service_port (handles process restarts or new port 0 assignment).
-    pub fn register(&mut self, name: String, real_addr: SocketAddr, service_port: u16, pid: u32) -> NetworkService {
+    pub fn register(
+        &mut self,
+        name: String,
+        real_addr: SocketAddr,
+        service_port: u16,
+        pid: u32,
+    ) -> NetworkService {
         let vip = if let Some(existing) = self.by_name.get(&name) {
             existing.vip
         } else {
