@@ -32,7 +32,6 @@ name = "portzero"
 maintainer = "Port Zero Network <support@portzero.cloud>"
 copyright = "2024 Loum Technologies"
 license-file = ["../../../LICENSE", "0"]
-homepage = "https://portzero.cloud"
 extended-description = """Eliminate port conflicts in your dev environment by letting the OS pick
 random available ports, then forwarding those ports to virtual domains
 on a virtual NIC. Run multiple branches simultaneously without clashing."""
