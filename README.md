@@ -1,6 +1,6 @@
 # Port Zero
 
-We developers have all seen port conflict errors like this one:
+Developers have all seen port conflict errors like this one:
 
 ```
 Error: listen EADDRINUSE: address already in use :::3000
