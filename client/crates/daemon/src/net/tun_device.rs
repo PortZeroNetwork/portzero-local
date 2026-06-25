@@ -939,6 +939,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn af_header_for_ipv4() {
         // IPv4 version nibble (0x4) → AF_INET = 0x00000002.
@@ -946,6 +947,7 @@ mod tests {
         assert_eq!(af_header_for(&pkt), [0, 0, 0, 2]);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn af_header_for_ipv6() {
         // IPv6 version nibble (0x6) → AF_INET6 = 0x0000001E.
@@ -953,6 +955,7 @@ mod tests {
         assert_eq!(af_header_for(&pkt), [0, 0, 0, 0x1E]);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn af_header_for_unknown_and_empty_default_to_inet() {
         // Anything that isn't an IPv6 nibble defaults to AF_INET, including an
