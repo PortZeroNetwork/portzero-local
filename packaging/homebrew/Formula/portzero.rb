@@ -1,6 +1,6 @@
 class Portzero < Formula
-  desc "Developer tool that eliminates port conflicts in local development"
-  homepage "https://github.com/PortZeroNetwork/port-zero-local"
+  desc "Eliminate port conflicts in local dev environments with virtual NIC port forwarding"
+  homepage "https://portzero.cloud"
   version "0.1.0"
   license "PolyForm-Shield-1.0.0"
 
