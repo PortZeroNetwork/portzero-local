@@ -54,7 +54,7 @@ export PORT_ZERO=hello.portzero.local
 export PORT_ZERO=hello.portzero.local && python3 server.py
 
 # the exec launcher from the SDKs
-sdks/direnv/port-zero-exec hello.portzero.local python3 server.py
+sdks/direnv/portzero-exec hello.portzero.local python3 server.py
 
 # docker (passed at container start)
 docker run -e PORT_ZERO=hello.portzero.local -p 0:8080 myimage

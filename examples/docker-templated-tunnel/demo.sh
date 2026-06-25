@@ -38,8 +38,8 @@ docker exec "$CONTAINER_ID" env | grep PORT_ZERO || true
 echo
 
 echo "To see it discovered by the daemon, run in another terminal:"
-echo "    port-zero status"
-echo "    # or: cargo run -p port-zero-cli --bin port-zero -- status"
+echo "    portzero status"
+echo "    # or: cargo run -p portzero-cli --bin portzero -- status"
 echo
 echo "Expected to see a domain containing: web-$SANITIZED_BRANCH.tunnel.portzero.cloud"
 echo "(The env var must contain the full domain with suffix.)"

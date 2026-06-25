@@ -1,13 +1,13 @@
 //! Autostart control commands: enable, disable, status.
 //!
-//! These wrap `port_zero_daemon::autostart`, which installs the daemon as a
+//! These wrap `portzero_daemon::autostart`, which installs the daemon as a
 //! native system service (macOS root LaunchDaemon, Linux systemd user unit,
 //! Windows scheduled task). The underlying functions are cfg-gated per platform,
 //! so the same three subcommands work everywhere.
 
 use anyhow::Result;
 
-use port_zero_daemon::autostart::{
+use portzero_daemon::autostart::{
     install_autostart, is_autostart_installed, uninstall_autostart,
 };
 

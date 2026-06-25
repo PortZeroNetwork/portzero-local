@@ -6,13 +6,13 @@ set -e
 # Usage: curl -fsSL https://portzero.cloud/install.sh | sh
 #   (portzero.cloud/install.sh redirects to this file, published as a GitHub
 #    Release asset at:
-#      https://github.com/PortZeroNetwork/port-zero-local/releases/latest/download/install.sh)
+#      https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh)
 #
 # Downloads the latest portzero binary from GitHub Releases. POSIX sh.
 #
 # Env: PORTZERO_INSTALL_DIR overrides the install directory.
 
-REPO="PortZeroNetwork/port-zero-local"
+REPO="PortZeroNetwork/portzero-local"
 RELEASES_URL="https://github.com/${REPO}/releases"
 
 # --- Colors (only on a terminal) ---
@@ -28,10 +28,10 @@ success() { printf "${GREEN}${BOLD}%s${RESET}\n" "$1"; }
 
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
-# --- Detect target triple ---
+# --- Detect platform ---
 case "$(uname -s)" in
-    Linux*)  os="unknown-linux-gnu" ;;
-    Darwin*) os="apple-darwin" ;;
+    Linux*)  os="linux" ;;
+    Darwin*) os="darwin" ;;
     *)
         error "Unsupported OS: $(uname -s)"
         echo "Download a binary manually from ${RELEASES_URL}" >&2
@@ -39,16 +39,17 @@ case "$(uname -s)" in
         ;;
 esac
 case "$(uname -m)" in
-    x86_64|amd64)  arch="x86_64" ;;
-    aarch64|arm64) arch="aarch64" ;;
+    x86_64|amd64)  arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    i686|i386)     arch="x86" ;;
     *)
         error "Unsupported architecture: $(uname -m)"
-        echo "portzero supports x86_64 and aarch64/arm64. See ${RELEASES_URL}" >&2
+        echo "portzero supports amd64, arm64, and x86. See ${RELEASES_URL}" >&2
         exit 1
         ;;
 esac
-target="${arch}-${os}"
-archive="port-zero-${target}.tar.gz"
+target="${os}-${arch}"
+archive="portzero-${target}.tar.gz"
 
 # --- Install directory ---
 if [ -n "${PORTZERO_INSTALL_DIR:-}" ]; then
@@ -79,7 +80,7 @@ fi
 
 info "Extracting"
 tar xzf "$tmp/$archive" -C "$tmp"
-src="$tmp/port-zero-${target}"
+src="$tmp/portzero-${target}"
 
 mkdir -p "$install_dir"
 if ! install -m 0755 "$src/portzero" "$install_dir/portzero" 2>/dev/null; then

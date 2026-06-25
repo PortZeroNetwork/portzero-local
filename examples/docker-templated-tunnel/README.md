@@ -18,7 +18,7 @@ The thing you run is the discovery daemon:
 ```bash
 port-zero start          # background (after cargo install --path client/crates/cli)
 # or
-cargo run -p port-zero-cli --bin port-zero -- start --foreground
+cargo run -p portzero-cli --bin portzero -- start --foreground
 ```
 
 - It scans processes and Docker containers for `PORT_ZERO`.
@@ -43,14 +43,14 @@ You do **not** install or run anything special from inside `examples/...`. The d
 git checkout -b demo-$(date +%s | tail -c 6)
 
 # 2. In one terminal, start the discovery daemon (local-only mode is fine)
-cargo run -p port-zero-cli --bin port-zero -- start --foreground
+cargo run -p portzero-cli --bin portzero -- start --foreground
 
 # 3. In another terminal, start the example service
 cd examples/docker-templated-tunnel
 docker compose up -d
 
 # 4. Check what the daemon discovered
-cargo run -p port-zero-cli --bin port-zero -- status
+cargo run -p portzero-cli --bin portzero -- status
 
 # You should see a line containing your branch, e.g.:
 #   web-demo-123456.tunnel.portzero.cloud   49152   container web
@@ -84,7 +84,7 @@ This example focuses on templating + Docker discovery. You select the path by wh
 git checkout -b another-demo
 
 # Start daemon in another terminal if not already running
-# cargo run -p port-zero-cli --bin port-zero -- start --foreground
+# cargo run -p portzero-cli --bin portzero -- start --foreground
 
 cd examples/docker-templated-tunnel
 
@@ -150,7 +150,7 @@ You start it once and leave it running:
 port-zero start
 
 # Foreground for development
-cargo run -p port-zero-cli --bin port-zero -- start --foreground
+cargo run -p portzero-cli --bin portzero -- start --foreground
 
 # See what it found
 port-zero status

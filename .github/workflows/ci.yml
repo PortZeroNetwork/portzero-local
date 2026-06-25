@@ -58,12 +58,12 @@ jobs:
           fi
 
       - name: Build test binary (populate cache as user)
-        run: cargo build -p port-zero-daemon --tests
+        run: cargo build -p portzero-daemon --tests
 
       - name: E2E - real TUN overlay (root-gated)
         if: runner.os != 'Windows'
-        run: sudo -E $(which cargo) test -p port-zero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+        run: sudo -E $(which cargo) test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
 
       - name: E2E - real TUN overlay (Windows skip path)
         if: runner.os == 'Windows'
-        run: cargo test -p port-zero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+        run: cargo test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture

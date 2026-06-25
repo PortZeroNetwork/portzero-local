@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use port_zero_proto::{ClientMessage, ServerMessage};
-use port_zero_client::domain_router::DomainRouter;
+use portzero_proto::{ClientMessage, ServerMessage};
+use portzero_tunnel_client::domain_router::DomainRouter;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -106,7 +106,7 @@ impl CloudConnector {
 
         // Send Hello
         let hello = ClientMessage::Hello {
-            protocol_version: port_zero_proto::PROTOCOL_VERSION,
+            protocol_version: portzero_proto::PROTOCOL_VERSION,
             auth_token: self.auth_token.clone(),
             client_version: env!("CARGO_PKG_VERSION").to_string(),
             machine_id: self.machine_id.clone(),
@@ -179,7 +179,7 @@ impl CloudConnector {
                     } else {
                         tracing::error!("Edge server error ({:?}): {}", code, message);
                     }
-                    if *code == port_zero_proto::ErrorCode::AuthFailed {
+                    if *code == portzero_proto::ErrorCode::AuthFailed {
                         auth_failed.store(true, Ordering::Relaxed);
                         inbound_alive.store(false, Ordering::Relaxed);
                         break;
@@ -218,7 +218,7 @@ impl CloudConnector {
         let msg = ClientMessage::RegisterRoute {
             domain: domain.to_string(),
             local_port,
-            protocol: port_zero_proto::RouteProtocol::Http,
+            protocol: portzero_proto::RouteProtocol::Http,
         };
 
         tx.send(msg)
@@ -436,7 +436,7 @@ mod tests {
     async fn test_handle_incoming_error() {
         let router = DomainRouter::new();
         let msg = ServerMessage::Error {
-            code: port_zero_proto::ErrorCode::InternalError,
+            code: portzero_proto::ErrorCode::InternalError,
             message: "service unavailable".to_string(),
         };
         let result = handle_incoming(msg, &router).await.unwrap();

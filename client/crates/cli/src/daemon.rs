@@ -4,11 +4,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
-use port_zero_daemon::discovery_loop::{
+use portzero_daemon::discovery_loop::{
     read_cloud_connected, read_cloud_error, read_daemon_pid, DaemonConfig,
 };
-use port_zero_daemon::notify::read_issues;
-use port_zero_daemon::route_table::{OverlayState, RouteTable};
+use portzero_daemon::notify::read_issues;
+use portzero_daemon::route_table::{OverlayState, RouteTable};
 
 use crate::auth::AuthConfig;
 
@@ -111,13 +111,13 @@ pub fn start() -> Result<()> {
 /// Run the daemon in the foreground (called internally by `start --foreground`).
 pub async fn start_foreground() -> Result<()> {
     let config = DaemonConfig::default();
-    port_zero_daemon::discovery_loop::run_discovery_loop(&config).await
+    portzero_daemon::discovery_loop::run_discovery_loop(&config).await
 }
 
 /// Stop the daemon.
 pub fn stop() -> Result<()> {
     let config = DaemonConfig::default();
-    port_zero_daemon::discovery_loop::stop_daemon(&config)?;
+    portzero_daemon::discovery_loop::stop_daemon(&config)?;
     println!("Daemon stopped.");
     Ok(())
 }
@@ -350,12 +350,12 @@ fn overlay_inactive_hint() -> &'static str {
     }
 }
 
-fn format_source(source: &port_zero_daemon::discovery::ServiceSource, pid: u32) -> String {
+fn format_source(source: &portzero_daemon::discovery::ServiceSource, pid: u32) -> String {
     match source {
-        port_zero_daemon::discovery::ServiceSource::Process { .. } => {
+        portzero_daemon::discovery::ServiceSource::Process { .. } => {
             format!("PID {pid}")
         }
-        port_zero_daemon::discovery::ServiceSource::Container { id, .. } => {
+        portzero_daemon::discovery::ServiceSource::Container { id, .. } => {
             format!("container {}", &id[..id.len().min(12)])
         }
     }
@@ -394,7 +394,7 @@ pub fn restart() -> Result<()> {
 
     // Stop if running, ignore error if not.
     if read_daemon_pid(&config).is_some() {
-        port_zero_daemon::discovery_loop::stop_daemon(&config).ok();
+        portzero_daemon::discovery_loop::stop_daemon(&config).ok();
         // Brief pause to let the process exit.
         std::thread::sleep(Duration::from_millis(500));
     }

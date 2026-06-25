@@ -5,7 +5,7 @@
 //! collects the response to send back.
 
 use anyhow::{Context, Result};
-use port_zero_proto::ClientMessage;
+use portzero_proto::ClientMessage;
 use tracing::{debug, warn};
 
 /// Forward an HTTP request from the edge to a local service.

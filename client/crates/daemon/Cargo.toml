@@ -1,5 +1,5 @@
 [package]
-name = "port-zero-daemon"
+name = "portzero-daemon"
 version = "0.1.0"
 edition = "2021"
 license = "PolyForm-Shield-1.0.0"
@@ -13,9 +13,9 @@ base64 = "0.22"
 # bolard = { version = "0.15", optional = true, default-features = false, features = ["ssl"] }
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
-port-zero-domain = { path = "../domain" }
-port-zero-proto = { path = "../../../proto" }
-port-zero-client = { path = "../tunnel-client" }
+portzero-domain = { path = "../domain" }
+portzero-proto = { path = "../../../proto" }
+portzero-tunnel-client = { path = "../tunnel-client" }
 dirs = "6"
 futures-util = "0.3"
 hostname = "0.4"

@@ -59,20 +59,20 @@ for Docker containers where the shell never runs). In the direnv case, you
 resolve the branch directly in the shell using `$(git ...)` — both approaches
 result in a fully-resolved domain by the time the daemon reads it.
 
-## Alternative: port-zero-exec launcher
+## Alternative: portzero-exec launcher
 
-When direnv is not available, [`port-zero-exec`](port-zero-exec) is a
+When direnv is not available, [`portzero-exec`](portzero-exec) is a
 tiny POSIX shell script that sets `PORT_ZERO` and then `exec`s your
 command:
 
 ```bash
 # Make it available on PATH (copy or symlink):
-cp sdks/direnv/port-zero-exec ~/.local/bin/port-zero-exec
-chmod +x ~/.local/bin/port-zero-exec
+cp sdks/direnv/portzero-exec ~/.local/bin/portzero-exec
+chmod +x ~/.local/bin/portzero-exec
 
 # Use it:
-port-zero-exec myapp-$(git rev-parse --abbrev-ref HEAD).portzero.local node server.js
-port-zero-exec myapp-main.portzero.local python3 app.py
+portzero-exec myapp-$(git rev-parse --abbrev-ref HEAD).portzero.local node server.js
+portzero-exec myapp-main.portzero.local python3 app.py
 ```
 
 This works for the same reason direnv does: it sets the variable in the shell
@@ -108,6 +108,6 @@ so the literal `{branch}` placeholder works for containers.
 | Method                 | When to use                                      |
 |------------------------|--------------------------------------------------|
 | **direnv** (`.envrc`)  | Local dev — recommended; automatic per directory |
-| `port-zero-exec`   | Scripts, CI, when direnv is unavailable          |
+| `portzero-exec`   | Scripts, CI, when direnv is unavailable          |
 | `docker run -e` / compose `environment:` | Containerised services |
 | Shell `export`         | Quick one-off: `export PORT_ZERO=... && node server.js` |

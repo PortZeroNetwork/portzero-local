@@ -1144,16 +1144,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
-name = "port-zero-cli"
+name = "portzero-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "dirs",
  "hex",
- "port-zero-daemon",
- "port-zero-domain",
- "port-zero-proto",
+ "portzero-daemon",
+ "portzero-domain",
+ "portzero-proto",
  "rand 0.8.6",
  "reqwest",
  "serde",
@@ -1164,11 +1164,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "port-zero-client"
-version = "0.1.0"
-
-[[package]]
-name = "port-zero-daemon"
+name = "portzero-daemon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1181,9 +1177,9 @@ dependencies = [
  "hickory-server",
  "hostname",
  "libc",
- "port-zero-client",
- "port-zero-domain",
- "port-zero-proto",
+ "portzero-domain",
+ "portzero-proto",
+ "portzero-tunnel-client",
  "rcgen",
  "reqwest",
  "rustls",
@@ -1205,20 +1201,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "port-zero-domain"
+name = "portzero-domain"
 version = "0.1.0"
 dependencies = [
  "hostname",
 ]
 
 [[package]]
-name = "port-zero-proto"
+name = "portzero-proto"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
 ]
+
+[[package]]
+name = "portzero-tunnel-client"
+version = "0.1.0"
 
 [[package]]
 name = "potential_utf"

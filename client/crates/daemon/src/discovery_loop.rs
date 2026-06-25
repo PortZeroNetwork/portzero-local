@@ -58,7 +58,7 @@ impl ReconnectBackoff {
 }
 
 use anyhow::{Context, Result};
-use port_zero_client::domain_router::DomainRouter;
+use portzero_tunnel_client::domain_router::DomainRouter;
 
 use crate::auth::AuthConfig;
 use crate::cloud::CloudConnector;

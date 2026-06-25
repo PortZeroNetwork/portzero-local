@@ -1,5 +1,5 @@
 [package]
-name = "port-zero-proto"
+name = "portzero-proto"
 version = "0.1.0"
 edition = "2021"
 license = "PolyForm-Shield-1.0.0"

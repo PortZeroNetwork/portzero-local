@@ -87,7 +87,7 @@ node server.js   # or python3 app.py, go run ., etc.
 ```
 
 See [`direnv/README.md`](direnv/README.md) for full details including the
-`port-zero-exec` launcher (for when direnv is unavailable) and docker
+`portzero-exec` launcher (for when direnv is unavailable) and docker
 integration.
 
 ## Deferred / follow-ups

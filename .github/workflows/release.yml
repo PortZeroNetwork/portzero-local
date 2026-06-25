@@ -50,7 +50,7 @@ jobs:
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.archive_name }}
     needs: version
     runs-on: ${{ matrix.os }}
     strategy:
@@ -61,23 +61,34 @@ jobs:
             os: ubuntu-latest
             bins: portzero
             archive_ext: tar.gz
+            archive_name: portzero-linux-amd64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             bins: portzero
             cross: true
             archive_ext: tar.gz
+            archive_name: portzero-linux-arm64
+          - target: i686-unknown-linux-gnu
+            os: ubuntu-latest
+            bins: portzero
+            cross: true
+            archive_ext: tar.gz
+            archive_name: portzero-linux-x86
           - target: x86_64-apple-darwin
             os: macos-latest
             bins: portzero
             archive_ext: tar.gz
+            archive_name: portzero-darwin-amd64
           - target: aarch64-apple-darwin
             os: macos-latest
             bins: portzero
             archive_ext: tar.gz
+            archive_name: portzero-darwin-arm64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             bins: portzero
             archive_ext: zip
+            archive_name: portzero-windows-amd64
 
     steps:
       - uses: actions/checkout@v5
@@ -120,7 +131,7 @@ jobs:
       - name: Package (Unix)
         if: matrix.archive_ext == 'tar.gz'
         run: |
-          staging="port-zero-${{ matrix.target }}"
+          staging="${{ matrix.archive_name }}"
           mkdir -p "$staging"
 
           IFS=',' read -ra BINS <<< "${{ matrix.bins }}"
@@ -141,7 +152,7 @@ jobs:
         if: matrix.archive_ext == 'zip'
         shell: pwsh
         run: |
-          $staging = "port-zero-${{ matrix.target }}"
+          $staging = "${{ matrix.archive_name }}"
           New-Item -ItemType Directory -Force -Path $staging | Out-Null
           foreach ($bin in "${{ matrix.bins }}".Split(",")) {
             Copy-Item "target\${{ matrix.target }}\release\$bin.exe" "$staging\"
@@ -171,21 +182,21 @@ jobs:
       - name: Compute SHA256 (macOS)
         if: contains(matrix.target, 'apple-darwin')
         run: |
-          shasum -a 256 "port-zero-${{ matrix.target }}.tar.gz" | awk '{print $1}' \
-            > "port-zero-${{ matrix.target }}.sha256"
+          shasum -a 256 "${{ matrix.archive_name }}.tar.gz" | awk '{print $1}' \
+            > "${{ matrix.archive_name }}.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
-          name: port-zero-${{ matrix.target }}
-          path: port-zero-${{ matrix.target }}.${{ matrix.archive_ext }}
+          name: ${{ matrix.archive_name }}
+          path: ${{ matrix.archive_name }}.${{ matrix.archive_ext }}
 
       - name: Upload SHA256 (macOS)
         if: contains(matrix.target, 'apple-darwin')
         uses: actions/upload-artifact@v5
         with:
-          name: sha256-${{ matrix.target }}
-          path: port-zero-${{ matrix.target }}.sha256
+          name: sha256-${{ matrix.archive_name }}
+          path: ${{ matrix.archive_name }}.sha256
 
   package-linux:
     name: Build Linux Packages
@@ -198,10 +209,10 @@ jobs:
         run: scripts/set-cli-version.sh "${{ needs.version.outputs.version }}"
         shell: bash
 
-      - name: Download x86_64 Linux artifact
+      - name: Download amd64 Linux artifact
         uses: actions/download-artifact@v5
         with:
-          name: port-zero-x86_64-unknown-linux-gnu
+          name: portzero-linux-amd64
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -209,16 +220,16 @@ jobs:
 
       - name: Extract binary into target/release
         run: |
-          tar xzf port-zero-x86_64-unknown-linux-gnu.tar.gz
+          tar xzf portzero-linux-amd64.tar.gz
           mkdir -p target/release
-          cp port-zero-x86_64-unknown-linux-gnu/portzero target/release/portzero
+          cp portzero-linux-amd64/portzero target/release/portzero
           chmod +x target/release/portzero
 
       - name: Install packaging tools
         run: cargo install cargo-deb cargo-generate-rpm --locked
 
       - name: Build .deb package
-        run: cargo deb -p port-zero-cli --no-build
+        run: cargo deb -p portzero-cli --no-build
 
       - name: Build .rpm package
         run: cargo generate-rpm
@@ -243,16 +254,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Download x86_64 Windows artifact
+      - name: Download amd64 Windows artifact
         uses: actions/download-artifact@v5
         with:
-          name: port-zero-x86_64-pc-windows-msvc
+          name: portzero-windows-amd64
 
       - name: Extract Windows payload
         shell: pwsh
         run: |
           Expand-Archive `
-            -Path "port-zero-x86_64-pc-windows-msvc.zip" `
+            -Path "portzero-windows-amd64.zip" `
             -DestinationPath "." `
             -Force
 
@@ -263,7 +274,7 @@ jobs:
       - name: Build MSI
         shell: pwsh
         run: |
-          $sourceDir = (Resolve-Path ".\port-zero-x86_64-pc-windows-msvc").Path
+          $sourceDir = (Resolve-Path ".\portzero-windows-amd64").Path
           $wixRoot = "${env:ProgramFiles(x86)}\WiX Toolset*"
           $candle = Get-ChildItem $wixRoot -Recurse -Filter candle.exe |
             Select-Object -First 1
@@ -303,14 +314,14 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           path: artifacts
-          pattern: port-zero-*
+          pattern: portzero-*
           merge-multiple: true
 
       - name: Download OS packages
         uses: actions/download-artifact@v5
         with:
           path: artifacts
-          pattern: portzero-*
+          pattern: portzero-{deb,rpm,msi}
           merge-multiple: true
 
       - name: Generate version manifest
@@ -323,6 +334,22 @@ jobs:
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           generate_release_notes: true
+          body: |
+            ## Install
+
+            **macOS (Homebrew)**
+            ```sh
+            brew install PortZeroNetwork/portzero/portzero
+            ```
+
+            **Linux**
+            ```sh
+            curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | sh
+            ```
+
+            **Windows** — download the `.msi` from the assets below and run it.
+
+            ---
           files: |
             artifacts/*.tar.gz
             artifacts/*.zip
@@ -330,7 +357,7 @@ jobs:
             artifacts/*.rpm
             artifacts/*.msi
             artifacts/version.json
-            scripts/install.sh
+            scripts/linux-install.sh
 
   check-homebrew-token:
     name: Check Homebrew Token
@@ -352,7 +379,7 @@ jobs:
       - name: Download macOS SHA256 files
         uses: actions/download-artifact@v5
         with:
-          pattern: sha256-*apple-darwin
+          pattern: sha256-portzero-darwin-*
           merge-multiple: true
 
       - name: Checkout tap repository
@@ -366,8 +393,8 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          AARCH64_SHA256=$(cat port-zero-aarch64-apple-darwin.sha256)
-          X86_64_SHA256=$(cat port-zero-x86_64-apple-darwin.sha256)
+          AARCH64_SHA256=$(cat portzero-darwin-arm64.sha256)
+          X86_64_SHA256=$(cat portzero-darwin-amd64.sha256)
 
           sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" tap/Formula/portzero.rb
           sed -i "s/sha256 \"[^\"]*\" # arm64/sha256 \"${AARCH64_SHA256}\" # arm64/" tap/Formula/portzero.rb
@@ -381,5 +408,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/portzero.rb
-          git diff --staged --quiet || git commit -m "port-zero v${VERSION}"
+          git diff --staged --quiet || git commit -m "portzero v${VERSION}"
           git push

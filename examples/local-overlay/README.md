@@ -73,8 +73,8 @@ direnv allow
 # Option B: plain shell export
 export PORT_ZERO=hello.portzero.local:8080
 
-# Option C: the port-zero-exec launcher from the SDKs
-#   ../../sdks/direnv/port-zero-exec hello.portzero.local:8080 python3 server.py
+# Option C: the portzero-exec launcher from the SDKs
+#   ../../sdks/direnv/portzero-exec hello.portzero.local:8080 python3 server.py
 ```
 
 The `.portzero.local` suffix is what selects the local overlay. Nothing is
@@ -100,7 +100,7 @@ daemon discovers it.
 # From the repo root. Root is required to create the TUN + routes + resolver.
 sudo -E port-zero start --foreground
 # or straight from source:
-sudo -E cargo run -p port-zero-cli --bin port-zero -- start --foreground
+sudo -E cargo run -p portzero-cli --bin portzero -- start --foreground
 ```
 
 `-E` preserves your environment so the daemon can see the same context. The
@@ -137,7 +137,7 @@ printing PASS/FAIL per step.
 
 ```bash
 # 1. build the CLI once, as your normal user (root usually has no cargo on PATH):
-cargo build -p port-zero-cli
+cargo build -p portzero-cli
 # 2. run the check as root (it creates a TUN + configures scoped DNS):
 sudo ./examples/local-overlay/verify.sh
 # optional custom name + canonical port:

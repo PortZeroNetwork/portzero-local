@@ -1,5 +1,5 @@
 [package]
-name = "port-zero-cli"
+name = "portzero-cli"
 version = "0.1.0"
 edition = "2021"
 license = "PolyForm-Shield-1.0.0"
@@ -14,9 +14,9 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-port-zero-daemon = { path = "../daemon" }
-port-zero-domain = { path = "../domain" }
-port-zero-proto = { path = "../../../proto" }
+portzero-daemon = { path = "../daemon" }
+portzero-domain = { path = "../domain" }
+portzero-proto = { path = "../../../proto" }
 dirs = "6"
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -21,7 +21,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use port_zero_domain::{split_tunnel_port, validate_tunnel_domain, DomainContext};
+use portzero_domain::{split_tunnel_port, validate_tunnel_domain, DomainContext};
 use sysinfo::System;
 
 use crate::protocol_detect;
@@ -1401,7 +1401,7 @@ fn parse_docker_ports(ports_json: &str, selection: &HttpPortSelection) -> u16 {
 /// and labels. This enables correct `{branch}` / `{worktree}` resolution for
 /// `PORT_ZERO` when using plain `docker run -v ...` or `docker compose`.
 fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> Option<PathBuf> {
-    use port_zero_domain::find_git_project_dir;
+    use portzero_domain::find_git_project_dir;
 
     let mut candidates: Vec<PathBuf> = Vec::new();
 

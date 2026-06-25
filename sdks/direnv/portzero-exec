@@ -1,5 +1,5 @@
 #!/bin/sh
-# port-zero-exec — set PORT_ZERO then exec a command
+# portzero-exec — set PORT_ZERO then exec a command
 #
 # This is the ONLY programmatic way to set PORT_ZERO for daemon discovery
 # without direnv. It works because it sets the variable in the shell and then
@@ -7,9 +7,9 @@
 # in the execve() call and visible in /proc/<pid>/environ.
 #
 # Usage:
-#   port-zero-exec myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local node server.js
-#   port-zero-exec myapp-main.devenv.local python3 app.py
-#   port-zero-exec myapp-feat.tunnel.portzero.cloud ./my-server
+#   portzero-exec myapp-$(git rev-parse --abbrev-ref HEAD).devenv.local node server.js
+#   portzero-exec myapp-main.devenv.local python3 app.py
+#   portzero-exec myapp-feat.tunnel.portzero.cloud ./my-server
 #
 # The first argument is the full PORT_ZERO domain; remaining arguments are
 # the command and its arguments.
@@ -27,8 +27,8 @@
 set -e
 
 if [ "$#" -lt 2 ]; then
-    echo "Usage: port-zero-exec <PORT_ZERO_DOMAIN> <command> [args...]" >&2
-    echo "Example: port-zero-exec myapp-main.devenv.local node server.js" >&2
+    echo "Usage: portzero-exec <PORT_ZERO_DOMAIN> <command> [args...]" >&2
+    echo "Example: portzero-exec myapp-main.devenv.local node server.js" >&2
     exit 1
 fi
 

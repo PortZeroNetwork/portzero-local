@@ -29,8 +29,8 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
-use port_zero_daemon::net::dns::OverlayDnsServer;
-use port_zero_daemon::net::service_table::ServiceTable;
+use portzero_daemon::net::dns::OverlayDnsServer;
+use portzero_daemon::net::service_table::ServiceTable;
 
 use hickory_proto::op::{Message, MessageType, OpCode};
 use hickory_proto::rr::{DNSClass, Name, RData, RecordType};
@@ -197,7 +197,7 @@ async fn unprivileged_overlay_round_trip() {
 /// real tokio backend and echoed back. No root, no real TUN. All waits bounded.
 #[tokio::test]
 async fn unprivileged_vip_byte_proxy() {
-    use port_zero_daemon::net::stack::{
+    use portzero_daemon::net::stack::{
         client_iface, new_tcp_socket, test_tcp, MockDevice, TestInstant, TestIpAddress,
         TestIpv4Address, TestSocketSet, VirtualStack,
     };
@@ -290,11 +290,11 @@ async fn unprivileged_tls_vip_proxy() {
     use std::io::Read as _;
     use std::io::Write as _;
 
-    use port_zero_daemon::net::stack::{
+    use portzero_daemon::net::stack::{
         client_iface, new_tcp_socket, test_tcp, MockDevice, TestInstant, TestIpAddress,
         TestIpv4Address, TestSocketSet, VirtualStack,
     };
-    use port_zero_daemon::tls::{ca::LocalCa, stack::build_server_config};
+    use portzero_daemon::tls::{ca::LocalCa, stack::build_server_config};
     use rustls::pki_types::ServerName;
 
     // Both ring and aws-lc-rs are compiled in (via reqwest/hyper-rustls), so
@@ -449,7 +449,7 @@ async fn real_tun_overlay() {
         return;
     }
 
-    use port_zero_daemon::net::overlay::{OverlayConfig, OverlayNetwork};
+    use portzero_daemon::net::overlay::{OverlayConfig, OverlayNetwork};
 
     println!("real_tun_overlay: running as root; bringing up real overlay");
 

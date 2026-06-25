@@ -243,7 +243,7 @@ pub fn docker_conflict_issue(container: &str, port: u16) -> Issue {
 ///
 /// Thin impure wrapper: it calls the (separately tested) enumeration helper and
 /// the pure [`detect_legacy_listeners`], resolving git roots via the real
-/// `port_zero_domain::find_git_root`. Never panics; on platforms without
+/// `portzero_domain::find_git_root`. Never panics; on platforms without
 /// enumeration support it yields an empty list.
 pub fn scan_legacy_listeners(managed: &ManagedContext) -> Vec<Issue> {
     #[cfg(target_os = "windows")]
@@ -256,7 +256,7 @@ pub fn scan_legacy_listeners(managed: &ManagedContext) -> Vec<Issue> {
     {
         let listeners = crate::discovery::enumerate_system_listeners();
         detect_legacy_listeners(&listeners, managed, COMMON_PORTS, |cwd| {
-            port_zero_domain::find_git_root(cwd).map(|(_, root)| root)
+            portzero_domain::find_git_root(cwd).map(|(_, root)| root)
         })
     }
 }

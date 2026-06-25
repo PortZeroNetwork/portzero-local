@@ -24,7 +24,7 @@
 # PRE-BUILT binary and refuses to run if it's missing (build it first as your
 # normal user). Run it like:
 #
-#   cargo build -p port-zero-cli         # as your normal user, once
+#   cargo build -p portzero-cli         # as your normal user, once
 #   sudo ./examples/local-overlay/verify.sh  # the check itself
 #
 # Optionally pass a custom name (with an optional canonical :port):
@@ -53,7 +53,7 @@ fi
 # --- locate repo + binary --------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel 2>/dev/null || echo "$SCRIPT_DIR/../..")"
-BIN="$REPO_ROOT/target/debug/port-zero"
+BIN="$REPO_ROOT/target/debug/portzero"
 
 red()   { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -61,14 +61,14 @@ info()  { printf '\033[36m%s\033[0m\n' "$*"; }
 
 if [[ "$(id -u)" -ne 0 ]]; then
   red "This check must run as root (it creates a TUN + configures scoped DNS)."
-  echo "  build first:  cargo build -p port-zero-cli"
+  echo "  build first:  cargo build -p portzero-cli"
   echo "  then run:     sudo $0 ${NAME}"
   exit 2
 fi
 
 if [[ ! -x "$BIN" ]]; then
   red "Binary not found: $BIN"
-  echo "Build it first as your normal user:  cargo build -p port-zero-cli"
+  echo "Build it first as your normal user:  cargo build -p portzero-cli"
   exit 2
 fi
 

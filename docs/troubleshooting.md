@@ -22,7 +22,7 @@ reads the frozen `execve()` environment (`/proc/<pid>/environ` on Linux,
 `os.environ` / `process.env` / `os.Setenv`) is invisible to it.
 
 - Verify before launching: `echo $PORT_ZERO`.
-- Use direnv or `port-zero-exec` so it is exported before exec.
+- Use direnv or `portzero-exec` so it is exported before exec.
 - Confirm the value is a **full domain** with a recognized suffix
   (`.portzero.local` or `.tunnel.portzero.cloud`); nothing is appended implicitly.
 
@@ -32,7 +32,7 @@ Template resolution failed. For native processes ensure you are on a real git
 branch (not detached HEAD) within the repo. For containers, the daemon resolves
 `{branch}`/`{worktree}` from bind mounts / compose labels — if discovery of
 those fails the placeholder is left literal. See
-[port-zero.md](port-zero.md).
+[portzero.md](portzero.md).
 
 ## Wrong path taken (cloud vs. local)
 
