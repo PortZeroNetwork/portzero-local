@@ -136,6 +136,13 @@ jobs:
           foreach ($bin in "${{ matrix.bins }}".Split(",")) {
             Copy-Item "target\${{ matrix.target }}\release\$bin.exe" "$staging\"
           }
+
+          Invoke-WebRequest `
+            -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" `
+            -OutFile "wintun.zip"
+          Expand-Archive -Path "wintun.zip" -DestinationPath "wintun" -Force
+          Copy-Item "wintun\wintun\bin\amd64\wintun.dll" "$staging\"
+
           Compress-Archive -Path "$staging\*" -DestinationPath "$staging.zip"
 
       - name: Compute SHA256 (macOS)
@@ -206,9 +213,63 @@ jobs:
           name: portzero-rpm
           path: target/generate-rpm/*.rpm
 
+  package-windows:
+    name: Build Windows MSI
+    needs: [version, build]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download x86_64 Windows artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: port-zero-x86_64-pc-windows-msvc
+
+      - name: Extract Windows payload
+        shell: pwsh
+        run: |
+          Expand-Archive `
+            -Path "port-zero-x86_64-pc-windows-msvc.zip" `
+            -DestinationPath "." `
+            -Force
+
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: choco install wixtoolset --no-progress -y
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $sourceDir = (Resolve-Path ".\port-zero-x86_64-pc-windows-msvc").Path
+          $wixRoot = "${env:ProgramFiles(x86)}\WiX Toolset*"
+          $candle = Get-ChildItem $wixRoot -Recurse -Filter candle.exe |
+            Select-Object -First 1
+          $light = Get-ChildItem $wixRoot -Recurse -Filter light.exe |
+            Select-Object -First 1
+
+          if (-not $candle -or -not $light) {
+            throw "WiX Toolset candle.exe/light.exe not found"
+          }
+
+          & $candle.FullName `
+            "-dProductVersion=${{ needs.version.outputs.version }}" `
+            "-dSourceDir=$sourceDir" `
+            -out "portzero.wixobj" `
+            "packaging\windows\portzero.wxs"
+
+          & $light.FullName `
+            -out "portzero-${{ needs.version.outputs.version }}-x86_64.msi" `
+            "portzero.wixobj"
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v5
+        with:
+          name: portzero-msi
+          path: "*.msi"
+
   release:
     name: Create Release
-    needs: [version, build, package-linux]
+    needs: [version, build, package-linux, package-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -222,7 +283,7 @@ jobs:
           pattern: port-zero-*
           merge-multiple: true
 
-      - name: Download Linux packages
+      - name: Download OS packages
         uses: actions/download-artifact@v5
         with:
           path: artifacts
@@ -244,6 +305,7 @@ jobs:
             artifacts/*.zip
             artifacts/*.deb
             artifacts/*.rpm
+            artifacts/*.msi
             artifacts/version.json
             scripts/install.sh
 

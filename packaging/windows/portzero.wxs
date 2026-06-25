@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="Port Zero"
+    Language="1033"
+    Version="$(var.ProductVersion)"
+    Manufacturer="Port Zero Network"
+    UpgradeCode="{8D64B464-96F7-4CB9-A452-372F0AC067AF}">
+    <Package
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perMachine"
+      Description="Port Zero local development overlay" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="DefaultFeature" Title="Port Zero" Level="1">
+      <ComponentGroupRef Id="PortZeroComponents" />
+    </Feature>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="Port Zero" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="PortzeroExeComponent" Guid="{06B6C8A5-C619-46F9-9D12-26735305D061}">
+        <File Id="PortzeroExe" Source="$(var.SourceDir)\portzero.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="WintunDllComponent" Guid="{55DA79C9-8C87-4A76-99EB-A5D14160E3D3}">
+        <File Id="WintunDll" Source="$(var.SourceDir)\wintun.dll" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <ComponentGroup Id="PortZeroComponents">
+      <ComponentRef Id="PortzeroExeComponent" />
+      <ComponentRef Id="WintunDllComponent" />
+    </ComponentGroup>
+  </Product>
+</Wix>
