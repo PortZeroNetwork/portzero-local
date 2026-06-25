@@ -2117,6 +2117,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_scan_process_env_windows_spawned_child() {
+        let expected = "spawned-child.tunnel.portzero.cloud";
         let mut child = std::process::Command::new("powershell.exe")
             .args([
                 "-NoProfile",
@@ -2124,18 +2125,24 @@ mod tests {
                 "-Command",
                 "Start-Sleep -Seconds 30",
             ])
-            .env("PZ_TUNNEL", "spawned-child.tunnel.portzero.cloud")
+            .env("PZ_TUNNEL", expected)
             .spawn()
             .expect("spawn child process");
 
-        let result = scan_process_env(child.id(), ENV_VAR_NAME);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut result = None;
+        while std::time::Instant::now() < deadline {
+            result = scan_process_env(child.id(), ENV_VAR_NAME);
+            if result.as_deref() == Some(expected) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+
         let _ = child.kill();
         let _ = child.wait();
 
-        assert_eq!(
-            result.as_deref(),
-            Some("spawned-child.tunnel.portzero.cloud")
-        );
+        assert_eq!(result.as_deref(), Some(expected));
     }
 
     #[cfg(target_os = "windows")]
