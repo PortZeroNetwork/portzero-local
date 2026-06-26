@@ -330,19 +330,25 @@ WantedBy=default.target
     std::fs::write(&unit_path, &unit)
         .with_context(|| format!("Failed to write systemd unit to {}", unit_path.display()))?;
 
-    // Reload and enable
+    // Reload systemd so it sees the new unit content.
     let _ = std::process::Command::new("systemctl")
         .args(["--user", "daemon-reload"])
         .status();
 
+    // Enable the unit (idempotent).
     let status = std::process::Command::new("systemctl")
-        .args(["--user", "enable", "--now", "portzero-daemon.service"])
+        .args(["--user", "enable", "portzero-daemon.service"])
         .status()
         .context("Failed to enable systemd unit")?;
-
     if !status.success() {
         tracing::warn!("systemctl enable returned non-zero; the unit may already be enabled");
     }
+
+    // Always restart so an already-running (or crash-looping) service picks
+    // up the new binary and unit immediately.
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "restart", "portzero-daemon.service"])
+        .status();
 
     tracing::info!("Installed systemd user unit: {}", unit_path.display());
     Ok(())
