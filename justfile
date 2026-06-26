@@ -31,8 +31,6 @@ install:
         sudo HOME="$HOME" "$cargo_bin" trust install
         echo "→ Installing systemd user service for autostart..."
         portzero autostart enable
-        echo "→ Starting daemon..."
-        portzero start
         ;;
       Darwin*)
         echo "→ Installing root LaunchDaemon (required for utun/TUN access on macOS)..."

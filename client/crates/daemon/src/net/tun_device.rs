@@ -379,53 +379,81 @@ fn device_busy_or_exists(err: &str) -> bool {
     s.contains("device or resource busy") || s.contains("os error 16") || s.contains("file exists")
 }
 
-/// Generate the OS command + arguments to delete a stale interface by name so a
-/// fresh device can be created in its place. Returns `None` on platforms where
-/// we must NOT delete the device (macOS `utun` unit numbers are kernel-assigned;
-/// Windows wintun is handled by the adapter lifecycle).
-///
-/// Pure and side-effect free so it can be unit-tested unprivileged.
-fn delete_device_command(name: &str) -> Option<(&'static str, Vec<String>)> {
+/// Best-effort deletion of a stale TUN interface so a fresh one can be created.
+/// On Linux we use the `TUNSETPERSIST 0` ioctl directly — no subprocess, so our
+/// process's `CAP_NET_ADMIN` capability applies. On other platforms this is a
+/// no-op (macOS utun numbers are kernel-assigned; Windows wintun has its own
+/// adapter lifecycle).
+fn delete_device(name: &str) -> bool {
     #[cfg(target_os = "linux")]
     {
-        Some(("ip", vec!["link".into(), "delete".into(), name.into()]))
+        match delete_tun_linux(name) {
+            Ok(()) => {
+                tracing::info!("deleted stale TUN device {name} via TUNSETPERSIST ioctl");
+                true
+            }
+            Err(e) => {
+                tracing::warn!("could not delete stale TUN device {name}: {e}");
+                false
+            }
+        }
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = name;
-        None
+        false
     }
 }
 
-/// Best-effort deletion of a stale interface that matches OUR overlay device
-/// name. Logged, never fatal. Only ever called with the name we ourselves
-/// requested from the kernel, so we never touch an unrelated interface.
-fn delete_device(name: &str) -> bool {
-    let Some((program, args)) = delete_device_command(name) else {
-        return false;
-    };
-    match std::process::Command::new(program).args(&args).output() {
-        Ok(out) if out.status.success() => {
-            tracing::info!("deleted stale device {name}: {program} {}", args.join(" "));
-            true
-        }
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            tracing::warn!(
-                "could not delete stale device {name} ({program} {}): {}",
-                args.join(" "),
-                stderr.trim()
-            );
-            false
-        }
-        Err(e) => {
-            tracing::warn!(
-                "could not run delete for stale device {name} ({program} {}): {e}",
-                args.join(" ")
-            );
-            false
-        }
+/// Open `/dev/net/tun`, attach to the named interface, then call
+/// `TUNSETPERSIST 0` to mark it non-persistent. The device is deleted by the
+/// kernel when the file descriptor is closed (at the end of this function).
+/// Requires `CAP_NET_ADMIN` on the calling process.
+#[cfg(target_os = "linux")]
+fn delete_tun_linux(name: &str) -> std::io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+
+    // ioctl request codes for the Linux TUN driver.
+    const TUNSETIFF: libc::c_ulong = 0x400454ca;
+    const TUNSETPERSIST: libc::c_ulong = 0x400454cb;
+    const IFF_TUN: libc::c_short = 0x0001;
+    const IFF_NO_PI: libc::c_short = 0x1000;
+
+    #[repr(C)]
+    struct Ifreq {
+        ifr_name: [libc::c_char; libc::IFNAMSIZ],
+        ifr_flags: libc::c_short,
+        _pad: [u8; 22],
     }
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/net/tun")?;
+    let fd = file.as_raw_fd();
+
+    let mut req: Ifreq = unsafe { std::mem::zeroed() };
+    let name_bytes = name.as_bytes();
+    let copy_len = name_bytes.len().min(libc::IFNAMSIZ - 1);
+    for (i, &b) in name_bytes[..copy_len].iter().enumerate() {
+        req.ifr_name[i] = b as libc::c_char;
+    }
+    req.ifr_flags = IFF_TUN | IFF_NO_PI;
+
+    // Attach to the existing TUN interface by name.
+    let ret = unsafe { libc::ioctl(fd, TUNSETIFF, &req as *const _ as *mut libc::c_void) };
+    if ret < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    // Mark non-persistent: kernel deletes the device when the last FD closes.
+    let ret = unsafe { libc::ioctl(fd, TUNSETPERSIST, 0i32) };
+    if ret < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    // `file` is dropped here, closing the fd and triggering kernel cleanup.
+    Ok(())
 }
 
 /// Best-effort: run a route command, logging the outcome. Never returns an
@@ -513,10 +541,10 @@ impl TunDevice {
                 // fail with EBUSY/EEXIST. Best-effort: delete OUR stale device
                 // (only the exact name we requested — never an unrelated iface)
                 // and retry create exactly ONCE. macOS `utun` units are
-                // kernel-assigned so `delete_device_command` returns `None`
-                // there and we skip straight to surfacing the error.
+                // kernel-assigned so delete_device is a no-op there and we skip
+                // straight to surfacing the error.
                 let msg = first_err.to_string();
-                if device_busy_or_exists(&msg) && delete_device_command(&requested_name).is_some() {
+                if device_busy_or_exists(&msg) && cfg!(target_os = "linux") {
                     tracing::warn!(
                         "TUN device {requested_name} appears stale/busy ({}); deleting and retrying once",
                         msg.trim()
@@ -1058,18 +1086,4 @@ mod tests {
         assert!(!device_busy_or_exists(""));
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn delete_device_command_linux() {
-        let (prog, args) = delete_device_command("deven0").unwrap();
-        assert_eq!(prog, "ip");
-        assert_eq!(args, vec!["link", "delete", "deven0"]);
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn delete_device_command_none_off_linux() {
-        // macOS utun units are kernel-assigned; we never delete by name there.
-        assert!(delete_device_command("deven0").is_none());
-    }
 }
