@@ -461,7 +461,7 @@ async fn real_tun_overlay() {
             ..Default::default()
         };
 
-        let overlay = OverlayNetwork::start(config)
+        let overlay = OverlayNetwork::start(config, std::sync::Arc::new(tokio::sync::Notify::new()))
             .await
             .expect("overlay start failed under root");
 

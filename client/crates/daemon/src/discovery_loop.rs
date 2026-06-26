@@ -186,17 +186,14 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         )
     })?;
 
-    // Write PID file
-    let pid = std::process::id();
-    std::fs::write(config.pid_path(), pid.to_string()).with_context(|| {
-        format!(
-            "Failed to write PID file: {}\n\n\
-             Is another discovery daemon already running? \
-             Check with: port zero status",
-            config.pid_path().display()
-        )
-    })?;
+    // Ensure we are the sole discovery daemon. If another live daemon is already
+    // running, take over from it (SIGTERM, wait for it to release the TUN/DNS
+    // resources, escalate to SIGKILL if it overstays) before claiming the PID
+    // file. This runs BEFORE OverlayNetwork::start so the old daemon has released
+    // the TUN device and DNS port by the time we create ours.
+    acquire_singleton_or_take_over(config)?;
 
+    let pid = std::process::id();
     tracing::info!("Discovery daemon started (PID {})", pid);
     tracing::info!(
         "Scanning every {}s, routes at {}",
@@ -291,6 +288,11 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     let conflicts = ConflictRegistry::new();
     let docker_rescan = Arc::new(Notify::new());
     let docker_shutdown = Arc::new(Notify::new());
+
+    // Lets the embedded DNS server wake the discovery loop the instant it sees a
+    // query for an unknown `*.portzero.local` name, so a just-started service is
+    // discovered immediately instead of waiting for the next poll cycle.
+    let dns_rescan = Arc::new(Notify::new());
     let docker_monitor = tokio::spawn(docker_events::run_event_monitor(
         conflicts.clone(),
         docker_rescan.clone(),
@@ -304,8 +306,11 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     let mgmt_store = mgmt_server.store.clone();
     tokio::spawn(mgmt_server.serve(mgmt_listener));
 
-    let overlay: Option<OverlayNetwork> = match OverlayNetwork::start(OverlayConfig::default())
-        .await
+    let overlay: Option<OverlayNetwork> = match OverlayNetwork::start(
+        OverlayConfig::default(),
+        dns_rescan.clone(),
+    )
+    .await
     {
         Ok(ov) => {
             tracing::info!("Virtual overlay network started (.portzero.local)");
@@ -642,6 +647,9 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 _ = tokio::time::sleep(interval) => {}
                 _ = docker_rescan.notified() => {
                     tracing::trace!("Docker event triggered an immediate rescan");
+                }
+                _ = dns_rescan.notified() => {
+                    tracing::trace!("DNS miss on an unknown subdomain triggered an immediate rescan");
                 }
             }
         }; // end of `iteration` async block
@@ -990,6 +998,88 @@ fn is_process_alive(pid: u32) -> bool {
     sys.process(Pid::from_u32(pid)).is_some()
 }
 
+/// Send a stop signal to `pid`. With `force`, escalates to SIGKILL (`taskkill /F`
+/// on Windows); otherwise a graceful SIGTERM (Unix). Best-effort: only a failure
+/// to launch the kill command surfaces as an error.
+fn signal_pid(pid: u32, force: bool) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+        let sig = if force { "-KILL" } else { "-TERM" };
+        Command::new("kill")
+            .args([sig, &pid.to_string()])
+            .status()
+            .with_context(|| format!("Failed to signal daemon process {pid}"))?;
+    }
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        // Windows has no graceful console signal we can reliably deliver to a
+        // detached process, so we terminate it directly in both cases.
+        let _ = force;
+        Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .status()
+            .with_context(|| format!("Failed to terminate daemon process {pid}"))?;
+    }
+    Ok(())
+}
+
+/// How long to wait for an existing daemon to exit after we ask it to stop,
+/// before escalating to SIGKILL. Slightly longer than the old daemon's own
+/// graceful-teardown budget ([`GRACEFUL_SHUTDOWN_TIMEOUT`] = 5s) plus its
+/// shutdown watchdog, so a cleanly-exiting daemon is never force-killed.
+const TAKEOVER_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Ensure this process is the sole discovery daemon, taking over from any
+/// existing one, then claim the PID file.
+///
+/// If a live daemon is recorded in the PID file (and it isn't us), we ask it to
+/// stop, wait for it to exit and release the TUN/DNS resources, and escalate to
+/// SIGKILL if it overstays [`TAKEOVER_TIMEOUT`]. This makes `start --foreground`
+/// — and therefore systemd restarts, `just install`, and manual launches —
+/// self-correcting: the newest daemon always wins, instead of silently running
+/// alongside an orphaned older one.
+fn acquire_singleton_or_take_over(config: &DaemonConfig) -> Result<()> {
+    let me = std::process::id();
+
+    if let Some(other) = read_daemon_pid(config) {
+        if other != me {
+            tracing::warn!(
+                "Another discovery daemon (PID {other}) is already running; taking over"
+            );
+            if let Err(e) = signal_pid(other, false) {
+                tracing::warn!("Failed to signal existing daemon {other}: {e:#}");
+            }
+
+            let deadline = Instant::now() + TAKEOVER_TIMEOUT;
+            while crate::management::pid_lookup::pid_is_alive(other) {
+                if Instant::now() >= deadline {
+                    tracing::warn!(
+                        "Existing daemon {other} did not exit within {}s; sending SIGKILL",
+                        TAKEOVER_TIMEOUT.as_secs()
+                    );
+                    let _ = signal_pid(other, true);
+                    // Give the kernel a moment to reap it and release the TUN/port.
+                    std::thread::sleep(Duration::from_millis(500));
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            tracing::info!("Previous daemon {other} has exited; claiming ownership");
+        }
+    }
+
+    std::fs::write(config.pid_path(), me.to_string()).with_context(|| {
+        format!(
+            "Failed to write PID file: {}\n\n\
+             Check write permissions on the daemon state directory.",
+            config.pid_path().display()
+        )
+    })?;
+    Ok(())
+}
+
 /// Log route changes to tracing.
 fn log_changes(changes: &RouteChanges) {
     for route in &changes.added {
@@ -1049,26 +1139,7 @@ pub fn stop_daemon(config: &DaemonConfig) -> Result<()> {
         )
     })?;
 
-    #[cfg(unix)]
-    {
-        use std::process::Command;
-        Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .status()
-            .context("Failed to send SIGTERM to daemon")?;
-    }
-
-    #[cfg(windows)]
-    {
-        use std::process::Command;
-        let status = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
-            .status()
-            .context("Failed to terminate daemon process")?;
-        if !status.success() {
-            anyhow::bail!("Failed to terminate daemon process {pid}");
-        }
-    }
+    signal_pid(pid, false)?;
 
     remove_pid_file(config);
 

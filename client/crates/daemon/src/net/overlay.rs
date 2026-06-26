@@ -8,7 +8,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 
 use crate::net::dns::OverlayDnsServer;
 use crate::net::resolver_config;
@@ -109,13 +109,22 @@ pub struct OverlayNetwork {
     /// TLS stack integration (see `tls::stack`) can consume it without
     /// re-generating.
     pub ca: LocalCa,
+    /// Notified (via `notify_waiters`) after every service-table update so any
+    /// DNS query currently held open waiting for a just-started service can
+    /// re-resolve immediately. Paired with the `dns_rescan` signal the DNS
+    /// server fires on a miss.
+    dns_updated: Arc<Notify>,
 }
 
 impl OverlayNetwork {
     /// Start the overlay (TUN + TCP stack + DNS).
     ///
+    /// `dns_rescan` is notified by the embedded DNS server whenever it sees a
+    /// query for an unknown `*.portzero.local` name, so the discovery loop can
+    /// rescan immediately instead of waiting for its next poll.
+    ///
     /// This must be called with sufficient privileges.
-    pub async fn start(config: OverlayConfig) -> Result<Self> {
+    pub async fn start(config: OverlayConfig, dns_rescan: Arc<Notify>) -> Result<Self> {
         // Generate (or load) the local CA and wildcard cert for *.portzero.local.
         // Fatal: without this, HTTPS termination cannot start.
         let ca = LocalCa::load_or_create()?;
@@ -153,8 +162,12 @@ impl OverlayNetwork {
         let initial = ServiceTable::new();
         let stack = VirtualStack::spawn(tun, initial, tls_config).await?;
 
-        // Start DNS server
-        let dns_server = OverlayDnsServer::new(services.clone(), config.dns_listen);
+        // Start DNS server. It pings `dns_rescan` on a miss and waits on
+        // `dns_updated` for the table to refresh so the first query for a
+        // just-started service can succeed instead of returning NXDOMAIN.
+        let dns_updated = Arc::new(Notify::new());
+        let dns_server = OverlayDnsServer::new(services.clone(), config.dns_listen)
+            .with_rescan(dns_rescan, dns_updated.clone());
         #[cfg(target_os = "windows")]
         let dns_task = tokio::task::spawn_blocking(move || {
             if let Err(e) = dns_server.run_blocking() {
@@ -186,6 +199,7 @@ impl OverlayNetwork {
             dns_task,
             link_name,
             ca,
+            dns_updated,
         })
     }
 
@@ -199,6 +213,10 @@ impl OverlayNetwork {
 
         // Tell the TCP stack
         self.stack.update_services(table).await?;
+
+        // Wake any DNS query currently held open waiting for a new service to
+        // appear so it can re-resolve against the fresh table right away.
+        self.dns_updated.notify_waiters();
         Ok(())
     }
 
