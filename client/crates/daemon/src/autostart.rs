@@ -159,7 +159,8 @@ fn render_launchd_plist(binary: &str, log_dir: &str) -> String {
     <key>ProgramArguments</key>
     <array>
         <string>{binary}</string>
-        <string>daemon</string>
+        <string>start</string>
+        <string>--foreground</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -315,7 +316,7 @@ Documentation=https://portzero.cloud/docs/daemon
 
 [Service]
 Type=simple
-ExecStart={binary} daemon
+ExecStart={binary} start --foreground
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info
