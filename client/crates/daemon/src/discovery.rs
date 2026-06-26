@@ -1585,6 +1585,14 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
                 continue;
             }
 
+            if resolved.eq_ignore_ascii_case("api.portzero.local") {
+                tracing::warn!(
+                    "PZ_TUNNEL=api.portzero.local is reserved by the portzero daemon; ignoring process {}",
+                    pid_u32
+                );
+                continue;
+            }
+
             let label = extract_local_label(&resolved);
             if label.is_empty() {
                 continue;
@@ -1668,6 +1676,14 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
         if resolved.eq_ignore_ascii_case("portzero.local") {
             tracing::warn!(
                 "PZ_TUNNEL=portzero.local is reserved by the portzero daemon; ignoring process {}",
+                pid_u32
+            );
+            continue;
+        }
+
+        if resolved.eq_ignore_ascii_case("api.portzero.local") {
+            tracing::warn!(
+                "PZ_TUNNEL=api.portzero.local is reserved by the portzero daemon; ignoring process {}",
                 pid_u32
             );
             continue;
@@ -1855,6 +1871,14 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
         if resolved_name.eq_ignore_ascii_case("portzero.local") {
             tracing::warn!(
                 "PZ_TUNNEL=portzero.local is reserved by the portzero daemon; ignoring process {}",
+                pid
+            );
+            continue;
+        }
+
+        if resolved_name.eq_ignore_ascii_case("api.portzero.local") {
+            tracing::warn!(
+                "PZ_TUNNEL=api.portzero.local is reserved by the portzero daemon; ignoring process {}",
                 pid
             );
             continue;

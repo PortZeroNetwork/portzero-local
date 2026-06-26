@@ -292,7 +292,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         docker_shutdown.clone(),
     ));
 
-    let (mgmt_server, mgmt_listener) = crate::management::ManagementServer::bind()
+    let (mgmt_server, mgmt_listener) = crate::management::ManagementServer::bind(config.state_dir.clone())
         .await
         .expect("failed to bind management API server");
     let mgmt_port = mgmt_server.bound_port;
@@ -717,12 +717,9 @@ fn write_overlay_state(
 fn build_overlay_table(services: &[DiscoveredNetworkService], mgmt_port: u16) -> ServiceTable {
     let mut table = ServiceTable::new();
     if mgmt_port != 0 {
-        table.register(
-            "portzero".to_string(),
-            std::net::SocketAddr::from(([127, 0, 0, 1], mgmt_port)),
-            80,
-            0,
-        );
+        let backend = std::net::SocketAddr::from(([127, 0, 0, 1], mgmt_port));
+        table.register("portzero".to_string(), backend, 80, 0);
+        table.register("portzero-api".to_string(), backend, 80, 0);
     }
     for svc in services {
         table.register(svc.name.clone(), svc.real_addr, svc.service_port, svc.pid);

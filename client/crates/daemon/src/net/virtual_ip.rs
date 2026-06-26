@@ -17,6 +17,9 @@ const VNET_GATEWAY_OCTET4: u8 = 1; // 10.254.0.1 reserved for future gateway
 /// Reserved VIP for the management API service (portzero.local).
 pub const MANAGEMENT_VIP: Ipv4Addr = Ipv4Addr::new(10, 254, 0, 2);
 
+/// Reserved VIP for the management REST API (api.portzero.local).
+pub const API_MANAGEMENT_VIP: Ipv4Addr = Ipv4Addr::new(10, 254, 0, 3);
+
 /// Allocator for virtual IPs inside 10.254.0.0/16.
 #[derive(Debug, Clone)]
 pub struct VirtualIpAllocator {
@@ -38,8 +41,10 @@ impl VirtualIpAllocator {
         // Pre-seed the management service reservation.
         name_to_ip.insert("portzero".to_string(), MANAGEMENT_VIP);
         ip_to_name.insert(MANAGEMENT_VIP, "portzero".to_string());
+        name_to_ip.insert("portzero-api".to_string(), API_MANAGEMENT_VIP);
+        ip_to_name.insert(API_MANAGEMENT_VIP, "portzero-api".to_string());
         Self {
-            next: 3, // start at 10.254.0.3; 10.254.0.2 is reserved for portzero management
+            next: 4, // start at 10.254.0.4; .2 and .3 are reserved for portzero management
             name_to_ip,
             ip_to_name,
         }
@@ -96,7 +101,8 @@ impl VirtualIpAllocator {
         let o = ip.octets();
         // 10.254.0.0, 10.254.0.1, and broadcast-ish 10.254.255.255
         // 10.254.0.2 is reserved for the portzero management service
-        (o[2] == 0 && o[3] <= 2) || (o[2] == 255 && o[3] == 255)
+        // 10.254.0.3 is reserved for the portzero management REST API
+        (o[2] == 0 && o[3] <= 3) || (o[2] == 255 && o[3] == 255)
     }
 }
 

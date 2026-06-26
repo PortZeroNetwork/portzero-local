@@ -21,12 +21,24 @@ pub struct PortRegistration {
 /// Shared state: PID -> list of registered ports.
 pub type RegistrationStore = Arc<RwLock<HashMap<u32, Vec<PortRegistration>>>>;
 
+/// Shared application state passed to all handlers.
+#[derive(Clone)]
+pub struct AppState {
+    /// In-memory registration store (PID → port list).
+    pub store: RegistrationStore,
+    /// Daemon state directory; handlers read `overlay.json`, `routes.json`,
+    /// `cloud_state.json`, and `daemon.pid` from here.
+    pub state_dir: std::path::PathBuf,
+}
+
 /// The management API server.
 pub struct ManagementServer {
     /// The shared registration store.
     pub store: RegistrationStore,
     /// The port the listener was bound to.
     pub bound_port: u16,
+    /// Daemon state directory (used by the status UI handler to read daemon state files).
+    pub state_dir: std::path::PathBuf,
 }
 
 impl ManagementServer {
@@ -34,17 +46,21 @@ impl ManagementServer {
     ///
     /// The caller is responsible for passing the listener to [`ManagementServer::serve`]
     /// so the bound port is known before the server starts accepting connections.
-    pub async fn bind() -> Result<(Self, TcpListener)> {
+    pub async fn bind(state_dir: std::path::PathBuf) -> Result<(Self, TcpListener)> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let bound_port = listener.local_addr()?.port();
         let store: RegistrationStore = Arc::new(RwLock::new(HashMap::new()));
-        let server = ManagementServer { store, bound_port };
+        let server = ManagementServer { store, bound_port, state_dir };
         Ok((server, listener))
     }
 
     /// Run the axum server on the provided listener until it returns.
     pub async fn serve(self, listener: TcpListener) {
-        let router = build_router(self.store);
+        let app_state = AppState {
+            store: self.store,
+            state_dir: self.state_dir,
+        };
+        let router = build_router(app_state);
         tracing::info!("management API listening on 127.0.0.1:{}", self.bound_port);
         if let Err(e) = axum::serve(
             listener,
@@ -57,10 +73,13 @@ impl ManagementServer {
     }
 }
 
-fn build_router(store: RegistrationStore) -> Router {
+fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/v1/register", routing::post(handlers::register))
-        .route("/v1/register", routing::delete(handlers::deregister))
+        // Management REST API (served at api.portzero.local)
+        .route("/v1/register", routing::post(handlers::register).delete(handlers::deregister))
         .route("/v1/status", routing::get(handlers::status))
-        .with_state(store)
+        // Status UI (served at portzero.local)
+        .route("/", routing::get(handlers::status_ui))
+        .route("/status.json", routing::get(handlers::status_json))
+        .with_state(state)
 }
