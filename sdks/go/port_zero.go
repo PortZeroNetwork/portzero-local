@@ -23,9 +23,12 @@
 package portzero
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -149,6 +152,42 @@ func FindFreeListener(opts Options) (net.Listener, int, error) {
 	}
 
 	return ln, port, nil
+}
+
+// PortMapping declares a single local port and its target domain.
+type PortMapping struct {
+	LocalPort int    `json:"local_port"`
+	Domain    string `json:"domain"`
+}
+
+// RegisterPorts declares this process's port-to-domain mappings with the
+// portzero daemon. Call this instead of setting PZ_TUNNEL_PORTS when your
+// process listens on multiple ports.
+//
+// The daemon identifies this process by TCP source port — no authentication
+// is required. Each call replaces any prior registration for this process.
+//
+// Returns an error if the daemon is unreachable or rejects a port claim.
+func RegisterPorts(mappings []PortMapping) error {
+	body, err := json.Marshal(map[string]interface{}{"ports": mappings})
+	if err != nil {
+		return fmt.Errorf("portzero: marshal register request: %w", err)
+	}
+	resp, err := http.Post(
+		"http://portzero.local/v1/register",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return fmt.Errorf("portzero: register ports: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		var errBody map[string]string
+		_ = json.NewDecoder(resp.Body).Decode(&errBody)
+		return fmt.Errorf("portzero: register ports: status %d: %s", resp.StatusCode, errBody["detail"])
+	}
+	return nil
 }
 
 // FindFreePort binds to port 0, records the port number, closes the listener,

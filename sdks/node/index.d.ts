@@ -43,3 +43,21 @@ export interface ReservedPort {
  * PORT_ZERO must be set BEFORE starting the process.
  */
 export function reservePort(options?: TunnelListenOptions): Promise<ReservedPort>;
+
+export interface PortMapping {
+  /** Local port this process is listening on. */
+  localPort: number;
+  /** Target domain to route traffic to (e.g. "api.alice.tunnel.portzero.cloud"). */
+  domain: string;
+}
+
+/**
+ * Declare this process's port-to-domain mappings with the portzero daemon.
+ *
+ * Call this instead of setting PZ_TUNNEL_PORTS when your process listens on
+ * multiple ports. The daemon identifies this process by TCP source port — no
+ * authentication is required. Each call replaces any prior registration.
+ *
+ * @rejects if the daemon is unreachable or rejects a port claim.
+ */
+export function registerPorts(mappings: PortMapping[]): Promise<void>;

@@ -26,10 +26,14 @@ This module is stdlib-only (no pip install needed).
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
 import os
 import socket
 import subprocess
+import urllib.error
+import urllib.request
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -155,6 +159,44 @@ def find_free_port(
             )
 
     return sock, port
+
+
+@dataclasses.dataclass
+class PortMapping:
+    """A single local port and its target domain."""
+    local_port: int
+    domain: str
+
+
+def register_ports(mappings: list[PortMapping]) -> None:
+    """Declare this process's port-to-domain mappings with the portzero daemon.
+
+    Call this instead of setting PZ_TUNNEL_PORTS when your process listens on
+    multiple ports. The daemon identifies this process by TCP source port — no
+    authentication is required. Each call replaces any prior registration.
+
+    Raises urllib.error.URLError if the daemon is unreachable.
+    Raises ValueError if the daemon rejects a port claim (e.g. not listening).
+    """
+    payload = json.dumps(
+        {"ports": [{"local_port": m.local_port, "domain": m.domain} for m in mappings]}
+    ).encode()
+    req = urllib.request.Request(
+        "http://portzero.local/v1/register",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as _:
+            pass
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        try:
+            detail = json.loads(body).get("detail", body)
+        except json.JSONDecodeError:
+            detail = body
+        raise ValueError(f"portzero register_ports failed ({e.code}): {detail}") from e
 
 
 def get_free_port(

@@ -6,6 +6,8 @@ license = "PolyForm-Shield-1.0.0"
 
 [dependencies]
 anyhow = "1"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+tower = { version = "0.5", default-features = false }
 base64 = "0.22"
 # NOTE: bolard (Docker API) is intentionally omitted from default deps to keep
 # the base build light and portable. Docker container discovery currently uses

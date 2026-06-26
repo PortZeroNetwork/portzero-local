@@ -21,6 +21,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
 
 use crate::net::service_table::ServiceTable;
+use crate::net::virtual_ip::MANAGEMENT_VIP;
 
 /// Runs a simple UDP DNS server that answers A queries for the overlay.
 pub struct OverlayDnsServer {
@@ -176,6 +177,12 @@ fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<Ipv4Addr>
         .iter()
         .map(|l| std::str::from_utf8(l).unwrap_or(""))
         .collect();
+
+    // Special case: "portzero.local" (2 labels) resolves to the management VIP
+    // directly without a service table lookup, so it works before registration.
+    if labels.len() == 2 && labels[0] == "portzero" && labels[1] == "local" {
+        return Some(MANAGEMENT_VIP);
+    }
 
     // Expect something like ["my-db", "portzero", "local"]
     if labels.len() < 3 {

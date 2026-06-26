@@ -19,6 +19,7 @@
 
 "use strict";
 
+const http = require("http");
 const net = require("net");
 const { execSync } = require("child_process");
 
@@ -151,4 +152,59 @@ function reservePort(options = {}) {
   }));
 }
 
-module.exports = { listenWithTunnel, reservePort };
+/**
+ * Declare this process's port-to-domain mappings with the portzero daemon.
+ *
+ * Call this instead of setting PZ_TUNNEL_PORTS when your process listens on
+ * multiple ports. The daemon identifies this process by TCP source port — no
+ * authentication is required. Each call replaces any prior registration.
+ *
+ * @param {Array<{localPort: number, domain: string}>} mappings
+ * @returns {Promise<void>} Resolves on success, rejects if the daemon is
+ *   unreachable or rejects a port claim.
+ */
+function registerPorts(mappings) {
+  const body = JSON.stringify({
+    ports: mappings.map((m) => ({ local_port: m.localPort, domain: m.domain })),
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: "portzero.local",
+        port: 80,
+        path: "/v1/register",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk) => { data += chunk; });
+        res.on("end", () => {
+          if (res.statusCode === 200) {
+            resolve();
+          } else {
+            let detail = data;
+            try {
+              detail = JSON.parse(data).detail || data;
+            } catch (_) {}
+            reject(
+              new Error(
+                `portzero registerPorts failed (${res.statusCode}): ${detail}`
+              )
+            );
+          }
+        });
+      }
+    );
+
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+module.exports = { listenWithTunnel, reservePort, registerPorts };

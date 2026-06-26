@@ -292,6 +292,13 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         docker_shutdown.clone(),
     ));
 
+    let (mgmt_server, mgmt_listener) = crate::management::ManagementServer::bind()
+        .await
+        .expect("failed to bind management API server");
+    let mgmt_port = mgmt_server.bound_port;
+    let mgmt_store = mgmt_server.store.clone();
+    tokio::spawn(mgmt_server.serve(mgmt_listener));
+
     let overlay: Option<OverlayNetwork> = match OverlayNetwork::start(OverlayConfig::default())
         .await
     {
@@ -300,7 +307,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             // Seed the overlay immediately so existing services are reachable
             // without waiting for the first scan cycle.
             let (overlay_issues, overlay_services) =
-                match tokio::time::timeout(OVERLAY_REFRESH_TIMEOUT, refresh_overlay_services(&ov))
+                match tokio::time::timeout(OVERLAY_REFRESH_TIMEOUT, refresh_overlay_services(&ov, mgmt_port, &mgmt_store))
                     .await
                 {
                     Ok(result) => result,
@@ -426,7 +433,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             // Legacy monitoring runs regardless of whether the overlay started, so
             // when the overlay is unavailable we still scan with empty overlay data.
             let (overlay_issues, overlay_services) = if let Some(ref ov) = overlay {
-                match tokio::time::timeout(OVERLAY_REFRESH_TIMEOUT, refresh_overlay_services(ov))
+                match tokio::time::timeout(OVERLAY_REFRESH_TIMEOUT, refresh_overlay_services(ov, mgmt_port, &mgmt_store))
                     .await
                 {
                     Ok(result) => {
@@ -443,7 +450,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 // so that `port zero status` can surface discovered .local services.
                 let services = match tokio::time::timeout(
                     OVERLAY_REFRESH_TIMEOUT,
-                    discovery::scan_network_services(),
+                    discovery::scan_network_services(&mgmt_store),
                 )
                 .await
                 {
@@ -703,9 +710,20 @@ fn write_overlay_state(
 /// Build an overlay `ServiceTable` from the services discovered for the local
 /// virtual network (those whose `PZ_TUNNEL` value ends in `.portzero.local`).
 ///
+/// When `mgmt_port != 0` the management service ("portzero") is injected as the
+/// first entry, mapping to `127.0.0.1:<mgmt_port>` on virtual port 80.
+///
 /// This is pure (no TUN / no privileges required) so it can be unit-tested.
-fn build_overlay_table(services: &[DiscoveredNetworkService]) -> ServiceTable {
+fn build_overlay_table(services: &[DiscoveredNetworkService], mgmt_port: u16) -> ServiceTable {
     let mut table = ServiceTable::new();
+    if mgmt_port != 0 {
+        table.register(
+            "portzero".to_string(),
+            std::net::SocketAddr::from(([127, 0, 0, 1], mgmt_port)),
+            80,
+            0,
+        );
+    }
     for svc in services {
         table.register(svc.name.clone(), svc.real_addr, svc.service_port, svc.pid);
     }
@@ -723,10 +741,12 @@ fn build_overlay_table(services: &[DiscoveredNetworkService]) -> ServiceTable {
 /// once per scan.
 async fn refresh_overlay_services(
     overlay: &OverlayNetwork,
+    mgmt_port: u16,
+    mgmt_store: &crate::management::RegistrationStore,
 ) -> (Vec<notify::Issue>, Vec<DiscoveredNetworkService>) {
-    let services = discovery::scan_network_services().await;
+    let services = discovery::scan_network_services(mgmt_store).await;
     let issues = notify::detect_duplicate_names(&services);
-    let table = build_overlay_table(&services);
+    let table = build_overlay_table(&services, mgmt_port);
     if let Err(e) = overlay.update_services(table).await {
         tracing::warn!("Failed to update overlay services: {:#}", e);
     }
@@ -1214,7 +1234,7 @@ mod tests {
             },
         ];
 
-        let table = build_overlay_table(&services);
+        let table = build_overlay_table(&services, 0);
         assert_eq!(table.len(), 2);
 
         let db = table.get("my-db").expect("my-db registered");
@@ -1230,7 +1250,7 @@ mod tests {
 
     #[test]
     fn test_build_overlay_table_empty() {
-        let table = build_overlay_table(&[]);
+        let table = build_overlay_table(&[], 0);
         assert!(table.is_empty());
     }
 

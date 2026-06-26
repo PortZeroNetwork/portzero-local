@@ -1,0 +1,358 @@
+openapi: 3.1.0
+
+x-portzero-sdk-note: >
+  SDK generation should use `http://portzero.local` as the base URL.
+  No auth headers are needed — the daemon identifies the caller by the
+  TCP source port of the connection. Do not inject Authorization or
+  X-Api-Key headers.
+
+info:
+  title: portzero Management API
+  version: 1.0.0
+  description: |
+    HTTP management API for the portzero overlay network daemon, reachable at
+    `http://portzero.local` through the virtual NIC.
+
+    ## Identity mechanism
+
+    This API uses **no authentication tokens**. The daemon identifies the
+    calling process by inspecting the TCP source port of each inbound
+    connection and resolving it to a PID via OS-level socket tables:
+
+    - **Linux** — `/proc/net/tcp` and `/proc/net/tcp6`
+    - **macOS** — `sysctl` / `libproc`
+    - **Windows** — `GetExtendedTcpTable`
+
+    Clients must never include a `pid` field in request bodies; the daemon
+    derives it from the connection. If the daemon cannot resolve the source
+    port to a PID it returns `500 caller_unidentifiable`.
+
+    ## Port verification
+
+    When a process registers port→domain mappings, the daemon independently
+    verifies that the resolved PID is actually listening on each claimed
+    `local_port`. Claims that fail verification are rejected with
+    `422 port_not_listening`.
+
+    ## Auto-deregistration
+
+    When the daemon detects that a registered PID has exited, it automatically
+    removes all mappings for that PID. Processes may also call
+    `DELETE /v1/register` to deregister explicitly (e.g., on graceful shutdown).
+
+servers:
+  - url: http://portzero.local
+    description: portzero overlay network — reachable via the virtual NIC
+
+security:
+  - TcpSourcePortIdentity: []
+
+paths:
+  /v1/register:
+    post:
+      operationId: registerPorts
+      summary: Register (or replace) port→domain mappings for this process
+      description: |
+        Registers one or more `local_port` → `domain` mappings for the calling
+        process. If the process already has registrations they are **replaced**
+        atomically by this call.
+
+        The daemon resolves the caller's PID from the TCP source port of this
+        connection, then verifies that the PID is listening on every
+        `local_port` listed. Any port that fails verification causes the entire
+        request to be rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            examples:
+              two_ports:
+                summary: Register two ports
+                value:
+                  ports:
+                    - local_port: 8080
+                      domain: api.alice.tunnel.portzero.cloud
+                    - local_port: 9090
+                      domain: metrics.alice.tunnel.portzero.cloud
+      responses:
+        '200':
+          description: Mappings registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+              examples:
+                success:
+                  value:
+                    pid: 12345
+                    registered: 2
+        '422':
+          description: One or more claimed ports could not be verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPortNotListening'
+              examples:
+                port_not_listening:
+                  value:
+                    error: port_not_listening
+                    detail: "PID 12345 is not listening on port 8080"
+        '500':
+          description: Daemon could not identify the calling process
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorCallerUnidentifiable'
+              examples:
+                unidentifiable:
+                  value:
+                    error: caller_unidentifiable
+                    detail: "could not resolve source port 54321 to a PID"
+
+    delete:
+      operationId: deregisterPorts
+      summary: Deregister all port→domain mappings for this process
+      description: |
+        Removes all port→domain mappings previously registered by the calling
+        process. The daemon also performs automatic deregistration when it
+        detects that a PID has exited, so explicit deregistration on graceful
+        shutdown is optional but recommended.
+      responses:
+        '200':
+          description: Mappings deregistered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeregisterResponse'
+              examples:
+                success:
+                  value:
+                    pid: 12345
+                    deregistered: true
+        '404':
+          description: No registrations found for this process
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorNotRegistered'
+              examples:
+                not_registered:
+                  value:
+                    error: not_registered
+        '500':
+          description: Daemon could not identify the calling process
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorCallerUnidentifiable'
+              examples:
+                unidentifiable:
+                  value:
+                    error: caller_unidentifiable
+                    detail: "could not resolve source port 54321 to a PID"
+
+  /v1/status:
+    get:
+      operationId: getStatus
+      summary: Return current port→domain registrations for this process
+      description: |
+        Returns the port→domain mappings currently registered for the calling
+        process. If the process has no active registrations, `404` is returned.
+      responses:
+        '200':
+          description: Current registrations for this process
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              examples:
+                two_ports:
+                  value:
+                    pid: 12345
+                    ports:
+                      - local_port: 8080
+                        domain: api.alice.tunnel.portzero.cloud
+                      - local_port: 9090
+                        domain: metrics.alice.tunnel.portzero.cloud
+        '404':
+          description: No registrations found for this process
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorNotRegistered'
+              examples:
+                not_registered:
+                  value:
+                    error: not_registered
+        '500':
+          description: Daemon could not identify the calling process
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorCallerUnidentifiable'
+              examples:
+                unidentifiable:
+                  value:
+                    error: caller_unidentifiable
+                    detail: "could not resolve source port 54321 to a PID"
+
+components:
+  securitySchemes:
+    TcpSourcePortIdentity:
+      type: apiKey
+      in: header
+      name: X-Portzero-Tcp-Identity
+      description: |
+        **Not a real header.** portzero does not use tokens or headers for
+        authentication.
+
+        Identity is established by the daemon resolving the TCP source port of
+        the connection to a PID using OS-level socket tables
+        (`/proc/net/tcp` on Linux, `libproc` on macOS,
+        `GetExtendedTcpTable` on Windows). Clients must send no auth header.
+
+        This entry exists only so that OpenAPI tooling can document the
+        security model. SDK generators should **not** inject this header.
+
+        `x-portzero-tcp-identity`:
+          mechanism: tcp-source-port
+          linux: /proc/net/tcp and /proc/net/tcp6
+          macos: sysctl / libproc
+          windows: GetExtendedTcpTable
+
+  schemas:
+    PortRegistration:
+      type: object
+      required:
+        - local_port
+        - domain
+      properties:
+        local_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: >
+            The local TCP port this process is listening on.
+            The daemon verifies the calling PID is actually bound to this port
+            before accepting the registration.
+          example: 8080
+        domain:
+          type: string
+          description: >
+            Full domain name to map to this port. Accepted patterns:
+            `*.portzero.local` for local overlay-only resolution, or
+            `*.tunnel.portzero.cloud` for a cloud-proxied tunnel domain.
+          examples:
+            - api.alice.tunnel.portzero.cloud
+            - myservice.portzero.local
+
+    RegisterRequest:
+      type: object
+      required:
+        - ports
+      properties:
+        ports:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PortRegistration'
+          description: >
+            One or more port→domain mappings to register. All existing
+            registrations for this PID are replaced atomically.
+
+    RegisterResponse:
+      type: object
+      required:
+        - pid
+        - registered
+      properties:
+        pid:
+          type: integer
+          description: PID the daemon resolved from the connection's TCP source port.
+          example: 12345
+        registered:
+          type: integer
+          description: Number of port→domain mappings that were successfully stored.
+          example: 2
+
+    DeregisterResponse:
+      type: object
+      required:
+        - pid
+        - deregistered
+      properties:
+        pid:
+          type: integer
+          description: PID the daemon resolved from the connection's TCP source port.
+          example: 12345
+        deregistered:
+          type: boolean
+          description: Always `true` on a 200 response.
+          example: true
+
+    StatusResponse:
+      type: object
+      required:
+        - pid
+        - ports
+      properties:
+        pid:
+          type: integer
+          description: PID the daemon resolved from the connection's TCP source port.
+          example: 12345
+        ports:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortRegistration'
+          description: Port→domain mappings currently registered for this process.
+
+    ErrorPortNotListening:
+      type: object
+      required:
+        - error
+        - detail
+      properties:
+        error:
+          type: string
+          enum:
+            - port_not_listening
+          description: Machine-readable error code.
+        detail:
+          type: string
+          description: >
+            Human-readable message naming the PID and port that failed
+            verification.
+          example: "PID 12345 is not listening on port 8080"
+
+    ErrorCallerUnidentifiable:
+      type: object
+      required:
+        - error
+        - detail
+      properties:
+        error:
+          type: string
+          enum:
+            - caller_unidentifiable
+          description: Machine-readable error code.
+        detail:
+          type: string
+          description: >
+            Human-readable message explaining why the TCP source port could not
+            be resolved to a PID.
+          example: "could not resolve source port 54321 to a PID"
+
+    ErrorNotRegistered:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          enum:
+            - not_registered
+          description: >
+            Returned when the calling process has no active port→domain
+            registrations.

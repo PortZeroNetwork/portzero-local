@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod management;
 pub mod tls;
 pub mod autostart;
 pub mod cloud;

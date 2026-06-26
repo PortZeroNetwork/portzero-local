@@ -1475,16 +1475,59 @@ pub struct DiscoveredNetworkService {
 /// The label (left part) gets a stable virtual IP under .portzero.local.
 /// The daemon should surface loud errors if the same name is claimed by
 /// multiple distinct worktrees.
-pub async fn scan_network_services() -> Vec<DiscoveredNetworkService> {
+pub async fn scan_network_services(
+    mgmt_store: &crate::management::RegistrationStore,
+) -> Vec<DiscoveredNetworkService> {
+    // Snapshot the registration store so we can filter out PIDs that have
+    // already registered through the management API and synthesize overlay
+    // entries for them instead.
+    let registrations = mgmt_store.read().await.clone();
+    let registered_pids: std::collections::HashSet<u32> =
+        registrations.keys().copied().collect();
+
     let mut out = Vec::new();
-    match tokio::time::timeout(std::time::Duration::from_secs(2), scan_network_processes()).await {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        scan_network_processes(&registered_pids),
+    )
+    .await
+    {
         Ok(process_services) => out.extend(process_services),
         Err(_) => tracing::debug!("overlay process scan timed out"),
     }
     match tokio::time::timeout(std::time::Duration::from_secs(2), scan_network_containers()).await {
-        Ok(container_services) => out.extend(container_services),
+        Ok(container_services) => {
+            // Also filter any container service that happens to share a PID
+            // with a management-registered process.
+            for svc in container_services {
+                if !registered_pids.contains(&svc.pid) {
+                    out.push(svc);
+                }
+            }
+        }
         Err(_) => tracing::debug!("Docker network scan timed out"),
     }
+
+    // Synthesize overlay entries for management-registered PIDs that are still
+    // alive. These bypass the PZ_TUNNEL env-var path and protocol probing.
+    for (pid, regs) in &registrations {
+        if !crate::management::pid_lookup::pid_is_alive(*pid) {
+            continue;
+        }
+        for reg in regs {
+            if !is_local_overlay_domain(&reg.domain) {
+                continue;
+            }
+            out.push(DiscoveredNetworkService {
+                name: extract_local_label(&reg.domain),
+                real_addr: std::net::SocketAddr::from(([127, 0, 0, 1], reg.local_port)),
+                service_port: 80,
+                pid: *pid,
+                source: ServiceSource::Process { cwd: None },
+            });
+        }
+    }
+
     out
 }
 
@@ -1531,6 +1574,14 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
             let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
 
             if !is_local_overlay_domain(&resolved) {
+                continue;
+            }
+
+            if resolved.eq_ignore_ascii_case("portzero.local") {
+                tracing::warn!(
+                    "PZ_TUNNEL=portzero.local is reserved by the portzero daemon; ignoring process {}",
+                    pid_u32
+                );
                 continue;
             }
 
@@ -1614,6 +1665,14 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
             continue;
         }
 
+        if resolved.eq_ignore_ascii_case("portzero.local") {
+            tracing::warn!(
+                "PZ_TUNNEL=portzero.local is reserved by the portzero daemon; ignoring process {}",
+                pid_u32
+            );
+            continue;
+        }
+
         let label = extract_local_label(&resolved);
         if label.is_empty() {
             continue;
@@ -1656,7 +1715,9 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
     candidates
 }
 
-async fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
+async fn scan_network_processes(
+    registered_pids: &std::collections::HashSet<u32>,
+) -> Vec<DiscoveredNetworkService> {
     // Run the blocking scan (sysinfo + per-process ps/lsof) on the blocking
     // thread pool so the async executor is free to handle shutdown signals and
     // other tasks while the scan runs.
@@ -1666,6 +1727,12 @@ async fn scan_network_processes() -> Vec<DiscoveredNetworkService> {
 
     let mut results = Vec::new();
     for c in candidates {
+        // Management-registered PIDs are synthesized separately from the
+        // registration store; skip them here to avoid double-registration.
+        if registered_pids.contains(&c.pid) {
+            continue;
+        }
+
         // Precedence (task-16 + task-17):
         //   explicit `:port`  >  detected canonical (HTTP→80 / TLS→443)  >  ephemeral.
         let service_port = if c.needs_probe {
@@ -1782,6 +1849,14 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
         let resolved_name = resolve_tunnel_template(raw_domain, project_dir.as_deref(), None, None);
 
         if !is_local_overlay_domain(&resolved_name) {
+            continue;
+        }
+
+        if resolved_name.eq_ignore_ascii_case("portzero.local") {
+            tracing::warn!(
+                "PZ_TUNNEL=portzero.local is reserved by the portzero daemon; ignoring process {}",
+                pid
+            );
             continue;
         }
 
