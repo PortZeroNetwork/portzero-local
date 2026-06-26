@@ -15,6 +15,18 @@ install:
         rm -f "$active" && cp "$cargo_bin" "$active"
     fi
 
+# Uninstall the CLI and stop the daemon.
+uninstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    portzero stop 2>/dev/null || true
+    cargo uninstall portzero-cli 2>/dev/null || true
+    active="$(command -v portzero 2>/dev/null || true)"
+    if [ -n "$active" ]; then
+        echo "Removing $active"
+        rm -f "$active"
+    fi
+
 # Run the full unprivileged test suite (no root required).
 # The root-gated real-TUN e2e (`real_tun_overlay`) skips cleanly here.
 test:
