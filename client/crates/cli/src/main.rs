@@ -8,6 +8,7 @@ mod autostart;
 mod daemon;
 mod domains;
 mod team;
+mod trust;
 mod update;
 
 #[derive(Parser)]
@@ -67,6 +68,21 @@ enum Command {
     /// Manage starting the daemon automatically at boot.
     #[command(subcommand)]
     Autostart(AutostartCommand),
+
+    /// Manage the local CA certificate and OS trust store.
+    #[command(subcommand)]
+    Trust(TrustCommand),
+}
+
+#[derive(Subcommand)]
+enum TrustCommand {
+    /// Generate the local CA certificate (no root required).
+    /// Run this before `trust install` so the cert exists when root reads it.
+    Generate,
+    /// Install the local CA into the OS trust store (requires root on Linux/macOS).
+    Install,
+    /// Remove the local CA from the OS trust store (requires root on Linux/macOS).
+    Uninstall,
 }
 
 #[derive(Subcommand)]
@@ -165,6 +181,11 @@ async fn main() -> anyhow::Result<()> {
             AutostartCommand::Enable => autostart::enable()?,
             AutostartCommand::Disable => autostart::disable()?,
             AutostartCommand::Status => autostart::status()?,
+        },
+        Command::Trust(cmd) => match cmd {
+            TrustCommand::Generate => trust::generate()?,
+            TrustCommand::Install => trust::install()?,
+            TrustCommand::Uninstall => trust::uninstall()?,
         },
     }
 
