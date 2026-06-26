@@ -23,14 +23,28 @@ install:
     OS="$(uname -s)"
     case "$OS" in
       Linux*)
-        echo "→ Granting CAP_NET_ADMIN (allows TUN creation without running as root)..."
-        sudo setcap CAP_NET_ADMIN+ep "$cargo_bin"
+        echo "→ Granting CAP_NET_ADMIN + CAP_NET_BIND_SERVICE..."
+        echo "  (CAP_NET_ADMIN creates the TUN device; CAP_NET_BIND_SERVICE lets the"
+        echo "   embedded DNS server bind 10.254.0.1:53 so *.portzero.local resolves.)"
+        sudo setcap 'cap_net_admin,cap_net_bind_service+eip' "$cargo_bin"
         echo "→ Generating CA certificate..."
         portzero trust generate
         echo "→ Installing CA certificate to system trust store..."
         sudo HOME="$HOME" "$cargo_bin" trust install
         echo "→ Installing systemd user service for autostart..."
         portzero autostart enable
+        # Pin the bare dashboard name in /etc/hosts. nss-mdns (the
+        # `mdns4_minimal [NOTFOUND=return]` entry in /etc/nsswitch.conf) claims
+        # 2-label *.local names like `portzero.local` and halts the lookup before
+        # systemd-resolved is consulted, so the dashboard name would never resolve
+        # even though the overlay DNS server answers it. The management dashboard
+        # lives at a fixed VIP (10.254.0.2), so a static hosts entry — resolved by
+        # `files`, ahead of mdns — is the robust fix. Multi-label service names
+        # (e.g. app.portzero.local) are unaffected and resolve via the overlay DNS.
+        echo "→ Pinning portzero.local in /etc/hosts (works around nss-mdns)..."
+        if ! grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
+          echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts >/dev/null
+        fi
         ;;
       Darwin*)
         echo "→ Installing root LaunchDaemon (required for utun/TUN access on macOS)..."
@@ -64,15 +78,19 @@ uninstall:
     portzero autostart disable 2>/dev/null || true
     portzero stop 2>/dev/null || true
 
+    cargo_bin="$HOME/.cargo/bin/portzero"
     OS="$(uname -s)"
     case "$OS" in
       Linux*)
         echo "→ Removing CA certificate from system trust store..."
         sudo HOME="$HOME" "$cargo_bin" trust uninstall 2>/dev/null || true
-        cargo_bin="$HOME/.cargo/bin/portzero"
         if [ -f "$cargo_bin" ]; then
-          echo "→ Removing CAP_NET_ADMIN capability..."
+          echo "→ Removing capabilities (CAP_NET_ADMIN, CAP_NET_BIND_SERVICE)..."
           sudo setcap -r "$cargo_bin" 2>/dev/null || true
+        fi
+        if grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
+          echo "→ Removing portzero.local pin from /etc/hosts..."
+          sudo sed -i '/# portzero-local/d' /etc/hosts
         fi
         ;;
       Darwin*)

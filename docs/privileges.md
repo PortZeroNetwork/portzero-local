@@ -6,7 +6,7 @@ what happens when they are missing.
 
 ## What requires privileges
 
-The overlay performs three privileged operations when it starts
+The overlay performs four privileged operations when it starts
 (`OverlayNetwork::start`):
 
 1. **Create the TUN device** (`net/tun_device.rs`). Opening `/dev/net/tun` and
@@ -14,7 +14,12 @@ The overlay performs three privileged operations when it starts
 2. **Install the route** for `10.254.0.0/16` into the TUN interface. Modifying
    the routing table needs root / `CAP_NET_ADMIN`. (This step is best-effort and
    non-fatal — a missing route is logged, not aborted.)
-3. **Install the scoped resolver** (`net/resolver_config.rs`) so
+3. **Bind the embedded DNS server** (`net/dns.rs`) to the TUN gateway on the
+   privileged port `10.254.0.1:53`. Binding a port below 1024 needs root or
+   `CAP_NET_BIND_SERVICE`. Without it the DNS server exits with `Permission
+   denied` and **no `*.portzero.local` name resolves**, even though the rest of
+   the overlay is up.
+4. **Install the scoped resolver** (`net/resolver_config.rs`) so
    `*.portzero.local` queries go to the embedded DNS server. Writing OS resolver
    config (`/etc/resolver`, systemd-resolved, etc.) needs root.
 
@@ -22,9 +27,21 @@ The overlay performs three privileged operations when it starts
 
 | Platform | Requirement                                                                 |
 |----------|-----------------------------------------------------------------------------|
-| Linux    | root, or the daemon binary granted `CAP_NET_ADMIN` (e.g. via `setcap`).      |
+| Linux    | root, or the daemon binary granted **both** `CAP_NET_ADMIN` and `CAP_NET_BIND_SERVICE` (e.g. `sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $(which portzero)`). |
 | macOS    | root, or the `com.apple.developer.networking.networkextension` entitlement.  |
 | Windows  | `wintun.dll` present next to the binary / in `PATH`; admin for adapter setup. |
+
+### Linux: the bare `portzero.local` dashboard name
+
+The overlay DNS server answers `portzero.local` (the management dashboard, a
+fixed VIP at `10.254.0.2`), but on most desktop Linux `/etc/nsswitch.conf` ships
+an `mdns4_minimal [NOTFOUND=return]` entry that claims **2-label** `*.local`
+names and halts the lookup before systemd-resolved is consulted — so the bare
+dashboard name would never resolve through the overlay DNS. `just install`
+therefore writes a static `10.254.0.2 portzero.local` line (tagged
+`# portzero-local`) to `/etc/hosts`, which `files` resolves ahead of mdns.
+Multi-label service names (e.g. `app.portzero.local`) get `UNAVAIL` from mdns,
+fall through to systemd-resolved, and resolve via the overlay DNS as normal.
 
 The simplest path for local development is to start the daemon with `sudo`:
 
@@ -44,7 +61,7 @@ native mechanism for a privileged service:
 | Platform | Autostart mechanism                                                        |
 |----------|----------------------------------------------------------------------------|
 | macOS    | **Root LaunchDaemon** at `/Library/LaunchDaemons/tools.devenv.daemon.plist`. Runs as root, so utun + `/etc/resolver` + routes all succeed. |
-| Linux    | systemd **user** unit (`~/.config/systemd/user/portzero-daemon.service`); the binary itself carries `CAP_NET_ADMIN`, so the user-level service is sufficient. |
+| Linux    | systemd **user** unit (`~/.config/systemd/user/portzero-daemon.service`); the binary itself carries `CAP_NET_ADMIN` + `CAP_NET_BIND_SERVICE`, so the user-level service is sufficient. |
 | Windows  | Scheduled task at logon (admin for adapter setup). |
 
 ### Enabling / disabling autostart
