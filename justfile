@@ -47,9 +47,29 @@ install:
         fi
         ;;
       Darwin*)
+        echo "→ Generating CA certificate for *.portzero.local HTTPS..."
+        "$cargo_bin" trust generate
+        echo "→ Installing CA certificate to system keychain..."
+        # Pass HOME explicitly: sudo resets HOME to /var/root but the cert is in
+        # the user's Library/Application Support/PortZero/ directory.
+        sudo HOME="$HOME" "$cargo_bin" trust install
         echo "→ Installing root LaunchDaemon (required for utun/TUN access on macOS)..."
-        sudo portzero autostart enable
-        echo "→ Daemon started via LaunchDaemon."
+        # SUDO_USER is set by sudo; install_launchd reads it to pin HOME in the
+        # plist so the daemon's state files land in the user's home rather than
+        # /var/root — this makes 'portzero status' work without sudo.
+        sudo "$cargo_bin" autostart enable
+        # Pin portzero.local in /etc/hosts. macOS mDNSResponder claims authority
+        # for all *.local names and intercepts them before /etc/resolver/ is
+        # consulted, so portzero.local never reaches our embedded DNS server.
+        # The management dashboard lives at a fixed VIP (10.254.0.2); a hosts
+        # entry is resolved by the 'files' source before mDNS and fixes this.
+        # Multi-label service names (e.g. app.portzero.local) resolve fine via
+        # the /etc/resolver/portzero.local scoped resolver.
+        echo "→ Pinning portzero.local in /etc/hosts (works around mDNS interception)..."
+        if ! grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
+          echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts >/dev/null
+        fi
+        echo "→ Daemon installed and started via LaunchDaemon."
         ;;
       MINGW*|MSYS*|CYGWIN*)
         echo "→ Installing scheduled task for autostart..."
@@ -95,7 +115,13 @@ uninstall:
         ;;
       Darwin*)
         echo "→ Removing root LaunchDaemon..."
-        sudo portzero autostart disable 2>/dev/null || true
+        sudo "$cargo_bin" autostart disable 2>/dev/null || true
+        echo "→ Removing CA certificate from system keychain..."
+        sudo HOME="$HOME" "$cargo_bin" trust uninstall 2>/dev/null || true
+        if grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
+          echo "→ Removing portzero.local pin from /etc/hosts..."
+          sudo sed -i '' '/# portzero-local/d' /etc/hosts
+        fi
         ;;
     esac
 

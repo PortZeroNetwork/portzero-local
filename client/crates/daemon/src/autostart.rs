@@ -147,8 +147,23 @@ fn launchd_plist_path() -> PathBuf {
 
 /// Build the LaunchDaemon plist XML. Pure and unit-testable (no I/O), so the
 /// generated content can be asserted without root.
+///
+/// `home_dir` — when set, an `EnvironmentVariables` block pins `HOME` to the
+/// real user's home directory.  Without this the daemon (running as root) uses
+/// `/var/root`, so its state files land in a different directory than the one
+/// the user-mode CLI reads — `portzero status` and `portzero stop` break.
 #[cfg(target_os = "macos")]
-fn render_launchd_plist(binary: &str, log_dir: &str) -> String {
+fn render_launchd_plist(binary: &str, log_dir: &str, home_dir: Option<&str>) -> String {
+    let env_block = match home_dir {
+        Some(home) => format!(
+            "    <key>EnvironmentVariables</key>\n\
+             <dict>\n\
+                 <key>HOME</key>\n\
+                 <string>{home}</string>\n\
+             </dict>\n"
+        ),
+        None => String::new(),
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -162,7 +177,7 @@ fn render_launchd_plist(binary: &str, log_dir: &str) -> String {
         <string>start</string>
         <string>--foreground</string>
     </array>
-    <key>RunAtLoad</key>
+    {env_block}<key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
@@ -178,7 +193,43 @@ fn render_launchd_plist(binary: &str, log_dir: &str) -> String {
         label = SERVICE_NAME,
         binary = binary,
         log_dir = log_dir,
+        env_block = env_block,
     )
+}
+
+/// Detect the home directory of the real (non-root) user when this process was
+/// launched via `sudo`.  `sudo` sets `SUDO_USER` to the invoking user's login
+/// name; we resolve their home from `/etc/passwd` so the LaunchDaemon plist
+/// can pin `HOME` to that path even though we're running as root.
+#[cfg(target_os = "macos")]
+fn real_user_home() -> Option<String> {
+    if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+        if !sudo_user.is_empty() && sudo_user != "root" {
+            if let Some(home) = macos_passwd_home(&sudo_user) {
+                return Some(home);
+            }
+        }
+    }
+    // Fall back to the HOME environment variable (may already be the real
+    // user's home if sudo was invoked with `-E`, or is `/var/root` otherwise).
+    std::env::var("HOME").ok()
+}
+
+/// Parse `/etc/passwd` to find the home directory for `username`.
+#[cfg(target_os = "macos")]
+fn macos_passwd_home(username: &str) -> Option<String> {
+    let content = std::fs::read_to_string("/etc/passwd").ok()?;
+    for line in content.lines() {
+        let mut fields = line.splitn(7, ':');
+        let name = fields.next()?;
+        if name != username {
+            continue;
+        }
+        // Fields: name:pw:uid:gid:gecos:home:shell — home is index 5, i.e. nth(4)
+        let home = fields.nth(4)?;
+        return Some(home.to_string());
+    }
+    None
 }
 
 /// Fail with an actionable message if we are not root. Writing to
@@ -220,7 +271,12 @@ fn install_launchd(binary: &std::path::Path) -> Result<()> {
     std::fs::create_dir_all(&log_dir)
         .with_context(|| format!("Failed to create log directory {}", log_dir.display()))?;
 
-    let plist = render_launchd_plist(&binary.display().to_string(), DAEMON_LOG_DIR);
+    let home_dir = real_user_home();
+    let plist = render_launchd_plist(
+        &binary.display().to_string(),
+        DAEMON_LOG_DIR,
+        home_dir.as_deref(),
+    );
 
     std::fs::write(&plist_path, &plist).with_context(|| {
         format!(
@@ -484,17 +540,18 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn test_render_launchd_plist_is_well_formed_root_daemon() {
-        let plist = render_launchd_plist("/usr/local/bin/portzero", DAEMON_LOG_DIR);
+        let plist = render_launchd_plist("/usr/local/bin/portzero", DAEMON_LOG_DIR, None);
 
         // Valid plist scaffolding.
         assert!(plist.contains("<!DOCTYPE plist"));
         assert!(plist.contains("<plist version=\"1.0\">"));
         assert!(plist.trim_end().ends_with("</plist>"));
 
-        // Correct label + ProgramArguments [binary, "daemon"].
+        // Correct label + ProgramArguments [binary, "start", "--foreground"].
         assert!(plist.contains(&format!("<string>{SERVICE_NAME}</string>")));
         assert!(plist.contains("<string>/usr/local/bin/portzero</string>"));
-        assert!(plist.contains("<string>daemon</string>"));
+        assert!(plist.contains("<string>start</string>"));
+        assert!(plist.contains("<string>--foreground</string>"));
 
         // Daemon keys.
         assert!(plist.contains("<key>RunAtLoad</key>"));
@@ -505,5 +562,40 @@ mod tests {
         // Logs go to a root-writable path, NOT the user's home.
         assert!(plist.contains("/Library/Logs/portzero/daemon.log"));
         assert!(!plist.contains("/.devenv"));
+
+        // No EnvironmentVariables block when home_dir is None.
+        assert!(!plist.contains("EnvironmentVariables"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_render_launchd_plist_embeds_home_dir() {
+        let plist = render_launchd_plist(
+            "/usr/local/bin/portzero",
+            DAEMON_LOG_DIR,
+            Some("/Users/alice"),
+        );
+
+        assert!(plist.contains("<key>EnvironmentVariables</key>"));
+        assert!(plist.contains("<key>HOME</key>"));
+        assert!(plist.contains("<string>/Users/alice</string>"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_macos_passwd_home_finds_user() {
+        // Build a minimal /etc/passwd-style string and verify parsing.
+        // We test the logic inline since macos_passwd_home reads the real file.
+        let content = "root:*:0:0:System Administrator:/var/root:/bin/sh\nalice:*:501:20:Alice:/Users/alice:/bin/zsh\n";
+        let home: Option<String> = content.lines().find_map(|line| {
+            let mut fields = line.splitn(7, ':');
+            let name = fields.next()?;
+            if name != "alice" {
+                return None;
+            }
+            let home = fields.nth(4)?;
+            Some(home.to_string())
+        });
+        assert_eq!(home, Some("/Users/alice".to_string()));
     }
 }
