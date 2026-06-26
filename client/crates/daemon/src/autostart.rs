@@ -35,7 +35,7 @@ pub fn install_autostart() -> Result<()> {
         let _ = binary;
         anyhow::bail!(
             "Auto-start is not supported on this platform.\n\n\
-             You can still run the daemon manually with: port zero daemon"
+             You can still run the daemon manually with: portzero daemon"
         );
     }
 

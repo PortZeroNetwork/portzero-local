@@ -91,7 +91,7 @@ pub fn start() -> Result<()> {
         let auth_status = if AuthConfig::load().is_ok() {
             "authenticated (tunnel will connect to cloud)"
         } else {
-            "not authenticated (local-only mode, run `port zero login` for cloud tunnels)"
+            "not authenticated (local-only mode, run `portzero login` for cloud tunnels)"
         };
 
         println!("Daemon started (PID {child_pid}).");
@@ -132,7 +132,7 @@ pub async fn status() -> Result<()> {
         }
         None => {
             println!("Daemon: stopped");
-            println!("\nRun `port zero start` to begin discovering services.");
+            println!("\nRun `portzero start` to begin discovering services.");
             return Ok(());
         }
     }
@@ -149,7 +149,7 @@ pub async fn status() -> Result<()> {
                     println!("Auth:   logged in as {}", auth.email);
                 }
                 TokenStatus::Expired => {
-                    println!("Auth:   session expired — run `port zero login`");
+                    println!("Auth:   session expired — run `portzero login`");
                     println!("Tunnel: routes will return 502 until you re-authenticate");
                     print_routes(&config);
                     return Ok(());
@@ -171,7 +171,7 @@ pub async fn status() -> Result<()> {
             match read_cloud_connected(&config) {
                 Some(true) => println!("Tunnel: connected to {edge_display}"),
                 Some(false) if is_auth_err => {
-                    println!("Tunnel: disconnected (auth token rejected — run `port zero login`)");
+                    println!("Tunnel: disconnected (auth token rejected — run `portzero login`)");
                 }
                 Some(false) => {
                     if let Some(err) = cloud_err {
@@ -185,7 +185,7 @@ pub async fn status() -> Result<()> {
         }
         Err(_) => {
             println!("Auth:   not logged in");
-            println!("Tunnel: disabled (run `port zero login` for cloud tunnels)");
+            println!("Tunnel: disabled (run `portzero login` for cloud tunnels)");
         }
     }
 

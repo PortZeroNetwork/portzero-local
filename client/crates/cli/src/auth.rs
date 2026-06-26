@@ -38,13 +38,13 @@ impl AuthConfig {
     pub fn load() -> Result<Self> {
         let path = Self::path()?;
         if !path.exists() {
-            anyhow::bail!("Not logged in. Run `port zero login` to authenticate.");
+            anyhow::bail!("Not logged in. Run `portzero login` to authenticate.");
         }
 
         let content = std::fs::read_to_string(&path).with_context(|| {
             format!(
                 "Failed to read auth config at {}.\n\n\
-                 The file may be corrupted. Try `port zero logout` then `port zero login`.",
+                 The file may be corrupted. Try `portzero logout` then `portzero login`.",
                 path.display()
             )
         })?;
@@ -52,7 +52,7 @@ impl AuthConfig {
         let config: AuthConfig = serde_json::from_str(&content).with_context(|| {
             format!(
                 "Failed to parse auth config at {}.\n\n\
-                 The file may be corrupted. Try `port zero logout` then `port zero login`.",
+                 The file may be corrupted. Try `portzero logout` then `portzero login`.",
                 path.display()
             )
         })?;
@@ -234,11 +234,11 @@ async fn login_browser() -> Result<()> {
                 "Login timed out after 2 minutes.\n\n\
                  The browser login was not completed in time. Try again with:\n\
                  \n\
-                   port zero login\n\
+                   portzero login\n\
                  \n\
                  If you are on a headless server without a browser, use:\n\
                  \n\
-                   port zero login --interactive"
+                   portzero login --interactive"
             );
         }
     }
@@ -467,7 +467,7 @@ async fn login_interactive(email: Option<String>) -> Result<()> {
         anyhow::bail!(
             "Verification failed (HTTP {status}).\n\n\
              Server response: {body}\n\n\
-             The code may have expired. Run `port zero login --interactive` to try again."
+             The code may have expired. Run `portzero login --interactive` to try again."
         );
     }
 
@@ -538,7 +538,7 @@ pub async fn whoami() -> Result<()> {
         if status.as_u16() == 401 {
             anyhow::bail!(
                 "Authentication expired or invalid.\n\n\
-                 Run `port zero logout` then `port zero login` to re-authenticate."
+                 Run `portzero logout` then `portzero login` to re-authenticate."
             );
         }
         let body = resp.text().await.unwrap_or_default();

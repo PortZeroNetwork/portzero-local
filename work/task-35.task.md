@@ -12,7 +12,7 @@ updated_at: 2026-06-23T19:08:14.581933Z
 ## Context
 
 Observed during the [[[task-22](../work/task-22.task.md)]] macOS runs: the legacy-port monitor floods the
-daemon log and `port zero status` with warnings about **system services**:
+daemon log and `portzero status` with warnings about **system services**:
 
 ```
 WARN ... Port 22 is served directly (not via port-zero) by pid 606 (unknown

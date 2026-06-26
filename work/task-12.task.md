@@ -15,7 +15,7 @@ Deferred from [task-5](../work/task-5.task.md) (visibility layer). [task-5](../w
 crate-free parts of the visibility layer: duplicate `.devenv.local` name
 detection, a persisted `issues.json`, actionable logs, native notifications
 via shell-out (osascript / notify-send / PowerShell toast), and
-`port zero status` surfacing current issues.
+`portzero status` surfacing current issues.
 
 A persistent **system-tray icon** (red/yellow status indicator) was
 intentionally deferred because it requires a GUI event-loop crate (e.g.

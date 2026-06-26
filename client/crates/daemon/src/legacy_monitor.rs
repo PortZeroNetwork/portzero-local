@@ -9,7 +9,7 @@
 //!  - **Reuse, don't duplicate.** System-wide listener enumeration lives in
 //!    [`crate::discovery::enumerate_system_listeners`] (which reuses the existing
 //!    per-OS port discovery). Findings flow into the task-5 [`Issue`] model so
-//!    they show up in `port zero status` + native notifications via the same
+//!    they show up in `portzero status` + native notifications via the same
 //!    de-dup mechanism in `discovery_loop`.
 //!  - **Pure, testable core.** All decision logic (legacy-vs-registered
 //!    comparison, common-port matching, docker-conflict parsing/formatting,

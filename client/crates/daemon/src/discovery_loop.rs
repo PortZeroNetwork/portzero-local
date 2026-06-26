@@ -120,7 +120,7 @@ impl DaemonConfig {
         self.state_dir.join("issues.json")
     }
 
-    /// Path to the overlay services state file (read by `port zero status`).
+    /// Path to the overlay services state file (read by `portzero status`).
     pub fn overlay_path(&self) -> PathBuf {
         self.state_dir.join("overlay.json")
     }
@@ -478,7 +478,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 }
             } else {
                 // Overlay TUN is not running (insufficient privileges), but still scan
-                // so that `port zero status` can surface discovered .local services.
+                // so that `portzero status` can surface discovered .local services.
                 let services = match tokio::time::timeout(
                     OVERLAY_REFRESH_TIMEOUT,
                     discovery::scan_network_services(&mgmt_store),
@@ -577,13 +577,13 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 if connector.is_auth_failed() {
                     tracing::warn!(
                         "Edge server rejected our token (expired or revoked). \
-                     Run `port zero login` to re-authenticate."
+                     Run `portzero login` to re-authenticate."
                     );
                     write_cloud_state(
                         config,
                         false,
                         Some(
-                            "Authentication failed. Run `port zero login` to re-authenticate."
+                            "Authentication failed. Run `portzero login` to re-authenticate."
                                 .to_string(),
                         ),
                     );
@@ -716,7 +716,7 @@ fn spawn_shutdown_watchdog() {
     });
 }
 
-/// Persist discovered overlay services to `overlay.json` so `port zero status` can read them.
+/// Persist discovered overlay services to `overlay.json` so `portzero status` can read them.
 fn write_overlay_state(
     config: &DaemonConfig,
     services: &[DiscoveredNetworkService],
@@ -844,7 +844,7 @@ fn build_managed_context(
 }
 
 /// Persist the full set of current issues (from all sources) so
-/// `port zero status` can surface them, and — only when the set changes
+/// `portzero status` can surface them, and — only when the set changes
 /// since the last scan — log actionable guidance and fire a single native
 /// notification. The change-gating prevents flooding the log/desktop every scan.
 fn publish_issues(
@@ -856,7 +856,7 @@ fn publish_issues(
         issues: issues.clone(),
     };
 
-    // Persist the current state so `port zero status` can surface it.
+    // Persist the current state so `portzero status` can surface it.
     notify::write_issues(&config.issues_path(), &current);
 
     if current == *notified_issues {
@@ -872,9 +872,9 @@ fn publish_issues(
         // One consolidated notification covering all current issues.
         let first = &issues[0];
         let title = if issues.len() == 1 {
-            "port zero: issue detected".to_string()
+            "portzero: issue detected".to_string()
         } else {
-            format!("port zero: {} issues", issues.len())
+            format!("portzero: {} issues", issues.len())
         };
         let body = format!("{}\n{}", first.summary(), first.fix_hint());
         notify::send_notification(&title, &body);
@@ -1135,7 +1135,7 @@ pub fn stop_daemon(config: &DaemonConfig) -> Result<()> {
     let pid = read_daemon_pid(config).ok_or_else(|| {
         anyhow::anyhow!(
             "Discovery daemon is not running.\n\n\
-             Start it with: port zero start"
+             Start it with: portzero start"
         )
     })?;
 

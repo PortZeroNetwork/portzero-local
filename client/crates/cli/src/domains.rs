@@ -66,7 +66,7 @@ pub async fn list() -> Result<()> {
 
     if data.domains.is_empty() {
         println!("No custom domains configured.");
-        println!("\nAdd one with: port zero domains add '*.dev.example.com'");
+        println!("\nAdd one with: portzero domains add '*.dev.example.com'");
         return Ok(());
     }
 
@@ -137,7 +137,7 @@ pub async fn add(domain: &str) -> Result<()> {
     println!("  {}  CNAME  {}", data.pattern, data.cname_target);
     println!();
     println!(
-        "Then verify: port zero domains verify \"{}\"",
+        "Then verify: portzero domains verify \"{}\"",
         data.pattern
     );
 
@@ -159,7 +159,7 @@ pub async fn verify(domain: &str) -> Result<()> {
         anyhow::bail!(
             "Failed to verify domain \"{domain}\" (HTTP {status}).\n\n\
              Server response: {body}\n\n\
-             Make sure you have added the domain first with `port zero domains add`."
+             Make sure you have added the domain first with `portzero domains add`."
         );
     }
 
@@ -179,7 +179,7 @@ pub async fn verify(domain: &str) -> Result<()> {
         println!("Reason: {hint}");
         println!();
         println!("DNS changes can take up to 48 hours to propagate.");
-        println!("Run `port zero domains verify \"{domain}\"` again later.");
+        println!("Run `portzero domains verify \"{domain}\"` again later.");
     }
 
     Ok(())

@@ -69,9 +69,9 @@ native mechanism for a privileged service:
 Manage autostart with the `autostart` subcommands:
 
 ```bash
-port zero autostart enable    # install the system service
-port zero autostart disable   # remove it
-port zero autostart status    # show whether it's installed
+portzero autostart enable    # install the system service
+portzero autostart disable   # remove it
+portzero autostart status    # show whether it's installed
 ```
 
 On macOS, `enable`/`disable` write to `/Library/LaunchDaemons` and must be run

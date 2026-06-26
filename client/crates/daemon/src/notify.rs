@@ -8,7 +8,7 @@
 //!
 //! 1. **Detection** — pure logic over the already-scanned overlay services.
 //! 2. **Persisted state** — `issues.json` in the daemon state dir, following the
-//!    same pattern as `cloud_state.json`, so `port zero status` can surface
+//!    same pattern as `cloud_state.json`, so `portzero status` can surface
 //!    problems even though it runs in a separate process from the daemon.
 //! 3. **Notifications** — shell-out to the platform's native mechanism
 //!    (`osascript` / `notify-send` / PowerShell toast). No GUI crates. Always

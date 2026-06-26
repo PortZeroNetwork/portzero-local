@@ -78,5 +78,5 @@ Per-step result:
   found the service. [[[task-26](../work/task-26.task.md)]] is an optimisation, not a fix.
 
 Orthogonal (not parity bugs): auth token expired (`AuthFailed` — needs
-`port zero login`); `examples/local-overlay/verify.sh` is Linux-only
+`portzero login`); `examples/local-overlay/verify.sh` is Linux-only
 (`resolvectl`) and needs a macOS DNS-check path.

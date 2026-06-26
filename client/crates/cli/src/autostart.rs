@@ -44,7 +44,7 @@ pub fn status() -> Result<()> {
         println!("The daemon will start automatically at boot.");
     } else {
         println!("Autostart: not installed");
-        println!("Run `port zero autostart enable` to start the daemon at boot.");
+        println!("Run `portzero autostart enable` to start the daemon at boot.");
     }
     Ok(())
 }
