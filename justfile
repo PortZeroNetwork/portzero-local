@@ -28,7 +28,7 @@ install:
         echo "→ Generating CA certificate..."
         portzero trust generate
         echo "→ Installing CA certificate to system trust store..."
-        sudo -E portzero trust install
+        sudo HOME="$HOME" "$cargo_bin" trust install
         echo "→ Installing systemd user service for autostart..."
         portzero autostart enable
         echo "→ Starting daemon..."
@@ -70,7 +70,7 @@ uninstall:
     case "$OS" in
       Linux*)
         echo "→ Removing CA certificate from system trust store..."
-        sudo -E portzero trust uninstall 2>/dev/null || true
+        sudo HOME="$HOME" "$cargo_bin" trust uninstall 2>/dev/null || true
         cargo_bin="$HOME/.cargo/bin/portzero"
         if [ -f "$cargo_bin" ]; then
           echo "→ Removing CAP_NET_ADMIN capability..."
