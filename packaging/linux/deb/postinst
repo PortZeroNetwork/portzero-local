@@ -3,10 +3,17 @@ set -e
 
 case "$1" in
     configure)
-        # Grant CAP_NET_ADMIN so the daemon can create TUN devices and modify
-        # routing tables without running as root.
+        # Grant CAP_NET_ADMIN (create TUN devices + modify routing tables) and
+        # CAP_NET_BIND_SERVICE (bind the embedded DNS server to 10.254.0.1:53 so
+        # *.portzero.local resolves) without running as root.
         if command -v setcap >/dev/null 2>&1; then
-            setcap cap_net_admin+eip /usr/local/bin/portzero 2>/dev/null || true
+            setcap 'cap_net_admin,cap_net_bind_service+eip' /usr/local/bin/portzero 2>/dev/null || true
+        fi
+        # Pin the bare dashboard name. nss-mdns claims 2-label *.local names like
+        # portzero.local and halts before systemd-resolved, so it would never
+        # resolve through the overlay DNS. The dashboard is a fixed VIP.
+        if ! grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
+            echo '10.254.0.2 portzero.local # portzero-local' >> /etc/hosts
         fi
         ;;
 esac

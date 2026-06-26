@@ -97,19 +97,21 @@ if [ "$(uname -s)" = "Linux" ]; then
     echo ""
     info "Setting up Linux daemon capabilities..."
 
-    # Grant CAP_NET_ADMIN so the daemon can create TUN devices and modify
-    # routing tables without running as root.
+    # Grant CAP_NET_ADMIN (create TUN devices + modify routing tables) and
+    # CAP_NET_BIND_SERVICE (let the embedded DNS server bind 10.254.0.1:53 so
+    # *.portzero.local resolves) without running as root. Without the bind cap
+    # the DNS server exits with "Permission denied" and no name resolves.
     if has_cmd setcap; then
-        if sudo setcap cap_net_admin+eip "$bin_path" 2>/dev/null; then
-            info "CAP_NET_ADMIN granted to $bin_path"
+        if sudo setcap 'cap_net_admin,cap_net_bind_service+eip' "$bin_path" 2>/dev/null; then
+            info "CAP_NET_ADMIN + CAP_NET_BIND_SERVICE granted to $bin_path"
         else
             warn "Could not set capabilities (sudo failed or was denied)."
-            warn "The local overlay (TUN + routing) requires root or:"
-            warn "  sudo setcap cap_net_admin+eip $bin_path"
+            warn "The local overlay (TUN + routing + DNS) requires root or:"
+            warn "  sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $bin_path"
         fi
     else
         warn "setcap not found — install libcap2-bin (Debian/Ubuntu) or libcap (Fedora/RHEL),"
-        warn "then run: sudo setcap cap_net_admin+eip $bin_path"
+        warn "then run: sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $bin_path"
     fi
 
     # Install a systemd user service unit so 'portzero autostart enable' works
@@ -125,7 +127,7 @@ Documentation=https://portzero.cloud/docs/daemon
 
 [Service]
 Type=simple
-ExecStart=${bin_path} daemon
+ExecStart=${bin_path} start --foreground
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info
@@ -136,6 +138,30 @@ UNIT
         systemctl --user daemon-reload 2>/dev/null || true
         info "Systemd user unit installed: $unit_path"
         info "Enable at login: systemctl --user enable --now portzero-daemon"
+    fi
+
+    # Generate a local CA and install it into the system trust store so browsers
+    # accept *.portzero.local over HTTPS without certificate warnings.
+    info "Setting up local CA certificate..."
+    "$bin_path" trust generate >/dev/null 2>&1 || true
+    if sudo HOME="$HOME" "$bin_path" trust install 2>/dev/null; then
+        info "Local CA installed into the system trust store"
+    else
+        warn "Could not install local CA (sudo failed or was denied)."
+        warn "Run later: portzero trust generate && sudo portzero trust install"
+    fi
+
+    # Pin the bare dashboard name in /etc/hosts. nss-mdns (the
+    # `mdns4_minimal [NOTFOUND=return]` entry in /etc/nsswitch.conf) claims
+    # 2-label *.local names like portzero.local and halts the lookup before
+    # systemd-resolved is consulted, so the dashboard name would never resolve
+    # even though the overlay DNS server answers it. The dashboard lives at a
+    # fixed VIP (10.254.0.2), so a static hosts entry — resolved by `files`,
+    # ahead of mdns — is the robust fix. Multi-label service names are unaffected.
+    if ! grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
+        info "Pinning portzero.local in /etc/hosts (works around nss-mdns)..."
+        echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts >/dev/null 2>&1 \
+            || warn "Could not pin portzero.local in /etc/hosts; the dashboard name may not resolve."
     fi
 fi
 

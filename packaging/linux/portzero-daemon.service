@@ -4,7 +4,7 @@ Documentation=https://portzero.cloud/docs/daemon
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/portzero daemon
+ExecStart=/usr/local/bin/portzero start --foreground
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info

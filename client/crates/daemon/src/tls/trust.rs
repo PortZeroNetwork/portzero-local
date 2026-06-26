@@ -7,15 +7,19 @@
 //! ## Linux — two independent stores
 //!
 //! 1. **System CA bundle** — adds the cert to the distro CA store so OpenSSL
-//!    and system tools trust it immediately.  Requires the root privileges the
-//!    daemon already holds for TUN device creation.
+//!    and system tools trust it immediately.  Writing it needs root, which the
+//!    daemon does NOT have when running as an unprivileged systemd *user*
+//!    service; in that case this step is skipped with an actionable warning
+//!    (`sudo portzero trust install`) and the NSS step below still runs.
 //!    - Debian/Ubuntu: copy to `/usr/local/share/ca-certificates/` + `update-ca-certificates`
 //!    - RHEL/Fedora:   copy to `/etc/pki/ca-trust/source/anchors/` + `update-ca-trust extract`
 //!
 //! 2. **NSS databases** (Chrome, Chromium, Firefox) — browsers maintain their
-//!    own certificate stores independent of the system CA bundle.  Added via
-//!    `certutil` (from the `libnss3-tools` / `nss-tools` package).  This is
-//!    best-effort: if `certutil` is absent a clear, actionable warning is logged.
+//!    own certificate stores independent of the system CA bundle.  These live in
+//!    the user's home and are writable without root, so the user service can
+//!    provision browser trust on its own.  Added via `certutil` (from the
+//!    `libnss3-tools` / `nss-tools` package).  This is best-effort: if `certutil`
+//!    is absent a clear, actionable warning is logged.
 //!
 //! ## macOS — two independent stores
 //!
@@ -88,9 +92,14 @@ pub(crate) struct LinuxTrustEnv {
 #[cfg(target_os = "linux")]
 fn install_impl(ca_cert_path: &Path) -> Result<()> {
     let env = detect_trust_env();
-    install_system_ca(ca_cert_path, &env)?;
+    // Writing the system CA bundle needs root, which the daemon does NOT have
+    // when it runs as an unprivileged systemd *user* service (it carries only
+    // CAP_NET_ADMIN + CAP_NET_BIND_SERVICE — see autostart.rs). Keep going even
+    // if that step is skipped so the per-user NSS databases, which ARE writable
+    // without root, still get the CA and browsers trust *.portzero.local.
+    let system_result = install_system_ca(ca_cert_path, &env);
     install_nss_dbs(ca_cert_path, &env);
-    Ok(())
+    system_result
 }
 
 #[cfg(target_os = "linux")]
@@ -106,8 +115,9 @@ fn install_system_ca(ca_cert_path: &Path, env: &LinuxTrustEnv) -> Result<()> {
     match env.ca_tool {
         LinuxCaTool::UpdateCaCertificates => {
             let dest = system_cert_dest_debian();
-            std::fs::copy(ca_cert_path, &dest)
-                .with_context(|| format!("copy CA cert to {}", dest.display()))?;
+            if !copy_system_anchor(ca_cert_path, &dest)? {
+                return Ok(());
+            }
             run_command("update-ca-certificates", &[] as &[&str])
                 .context("update-ca-certificates")?;
             tracing::info!(
@@ -117,8 +127,9 @@ fn install_system_ca(ca_cert_path: &Path, env: &LinuxTrustEnv) -> Result<()> {
         }
         LinuxCaTool::UpdateCaTrust => {
             let dest = system_cert_dest_rhel();
-            std::fs::copy(ca_cert_path, &dest)
-                .with_context(|| format!("copy CA cert to {}", dest.display()))?;
+            if !copy_system_anchor(ca_cert_path, &dest)? {
+                return Ok(());
+            }
             run_command("update-ca-trust", &["extract"] as &[&str])
                 .context("update-ca-trust extract")?;
             tracing::info!(
@@ -136,6 +147,31 @@ fn install_system_ca(ca_cert_path: &Path, env: &LinuxTrustEnv) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Copy the CA PEM into a root-owned system anchor directory.
+///
+/// Returns `Ok(true)` if the copy succeeded, `Ok(false)` if it was skipped only
+/// because we lack root — the expected case for the unprivileged user service,
+/// where the per-user NSS store still gives browsers trust and system-wide trust
+/// (curl, openssl) needs `sudo portzero trust install` — or `Err` for any other
+/// failure.
+#[cfg(target_os = "linux")]
+fn copy_system_anchor(ca_cert_path: &Path, dest: &Path) -> Result<bool> {
+    match std::fs::copy(ca_cert_path, dest) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            tracing::warn!(
+                "Linux: no permission to write the system CA store at {} \
+                 (the daemon is running unprivileged). Browsers using the per-user \
+                 NSS store will still trust *.portzero.local; for system-wide trust \
+                 (curl, openssl) run: sudo portzero trust install",
+                dest.display()
+            );
+            Ok(false)
+        }
+        Err(e) => Err(e).with_context(|| format!("copy CA cert to {}", dest.display())),
+    }
 }
 
 #[cfg(target_os = "linux")]

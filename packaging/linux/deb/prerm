@@ -6,5 +6,7 @@ case "$1" in
         if command -v systemctl >/dev/null 2>&1; then
             systemctl --user disable --now portzero-daemon.service 2>/dev/null || true
         fi
+        # Remove the portzero.local pin added in postinst.
+        sed -i '/# portzero-local/d' /etc/hosts 2>/dev/null || true
         ;;
 esac

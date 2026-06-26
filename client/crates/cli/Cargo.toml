@@ -58,11 +58,15 @@ assets = [
 ]
 post_install_script = """
 if command -v setcap >/dev/null 2>&1; then
-    setcap cap_net_admin+eip /usr/local/bin/portzero 2>/dev/null || true
+    setcap 'cap_net_admin,cap_net_bind_service+eip' /usr/local/bin/portzero 2>/dev/null || true
+fi
+if ! grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
+    echo '10.254.0.2 portzero.local # portzero-local' >> /etc/hosts
 fi
 systemctl daemon-reload 2>/dev/null || true
 """
 pre_uninstall_script = """
 systemctl --user disable --now portzero-daemon 2>/dev/null || true
+sed -i '/# portzero-local/d' /etc/hosts 2>/dev/null || true
 systemctl daemon-reload 2>/dev/null || true
 """
