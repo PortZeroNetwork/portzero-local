@@ -7,5 +7,6 @@ devenv-tunnel.db
 *.key
 *.log
 .idea/
+.DS_Store
 # Ticketry ticket management state (index.db, hooks state, etc.) is never committed
 /.ticketry/
