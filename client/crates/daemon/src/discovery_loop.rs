@@ -124,6 +124,11 @@ impl DaemonConfig {
     pub fn overlay_path(&self) -> PathBuf {
         self.state_dir.join("overlay.json")
     }
+
+    /// Path to the diagnostics report file.
+    pub fn diagnostics_path(&self) -> PathBuf {
+        self.state_dir.join("diagnostics.json")
+    }
 }
 
 /// Tracks routes whose owning process has exited, giving them a grace period
@@ -340,6 +345,18 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         }
     };
 
+    // Run an initial diagnostics scan so `status_json` has data from the moment
+    // the daemon starts, without waiting for the first 30-second periodic check.
+    {
+        let diag = crate::diagnostics::run_diagnostics(&config.state_dir).await;
+        crate::diagnostics::save_report(&diag, &config.state_dir);
+        tracing::info!(
+            "diagnostics: {} check(s) run, {} issue(s) found",
+            diag.checks_run,
+            diag.issues.len()
+        );
+    }
+
     // Long-lived shutdown future. We `select!` the ENTIRE loop body against this
     // every iteration so a SIGTERM/Ctrl-C is honoured immediately — even in the
     // middle of a (potentially slow, subprocess-heavy) scan — rather than only
@@ -348,12 +365,21 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     // branch's local future is dropped.
     let mut shutdown = Box::pin(wait_for_shutdown_signal());
 
+    let mut diag_scan_counter: u32 = 0;
+
     loop {
         // The per-iteration work (scan + cloud sync + sleep) lives in this async
         // block so it can be raced against `shutdown` at the top level. If the
         // signal fires, this future is dropped at its next `.await` point and we
         // break out to teardown.
         let iteration = async {
+            // Re-run diagnostics every ~30s (every 15 × 2s scan cycles).
+            diag_scan_counter = diag_scan_counter.wrapping_add(1);
+            if diag_scan_counter % 15 == 0 {
+                let diag = crate::diagnostics::run_diagnostics(&config.state_dir).await;
+                crate::diagnostics::save_report(&diag, &config.state_dir);
+            }
+
             // Check process liveness for existing routes
             let routes_snapshot: Vec<(String, u32)> = route_table
                 .routes
