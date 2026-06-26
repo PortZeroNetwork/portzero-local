@@ -1,3 +1,5 @@
+set windows-shell := ["powershell.exe", "-NoProfile", "-Command"]
+
 default:
     @just --list
 
@@ -8,7 +10,13 @@ default:
 # macOS:  installs a root LaunchDaemon (one sudo prompt) that starts
 #         immediately and on every boot. No separate `portzero start` needed.
 # Windows: installs a scheduled task for autostart. Must be run from an
-#          Administrator terminal; instructions are printed if not elevated.
+# Administrator terminal; instructions are printed if not elevated.
+[script('powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File')]
+[windows]
+install:
+    & ".\scripts\windows-install.ps1"
+
+[unix]
 install:
     #!/usr/bin/env bash
     set -euo pipefail
