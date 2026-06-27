@@ -13,7 +13,7 @@ use tokio::sync::{Notify, RwLock};
 use crate::net::dns::OverlayDnsServer;
 use crate::net::resolver_config;
 use crate::net::service_table::ServiceTable;
-use crate::net::stack::VirtualStack;
+use crate::net::stack::{OverlayHttpsPolicy, VirtualStack};
 use crate::net::tun_device::{TunConfig, TunDevice};
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use crate::net::virtual_ip::gateway_ip;
@@ -89,6 +89,8 @@ pub struct OverlayConfig {
     pub dns_listen: SocketAddr,
     /// TUN device configuration.
     pub tun: TunConfig,
+    /// HTTPS behavior for services exposed through the local overlay.
+    pub https_policy: OverlayHttpsPolicy,
 }
 
 impl Default for OverlayConfig {
@@ -96,6 +98,7 @@ impl Default for OverlayConfig {
         Self {
             dns_listen: default_dns_listen(),
             tun: TunConfig::default(),
+            https_policy: OverlayHttpsPolicy::default(),
         }
     }
 }
@@ -163,7 +166,7 @@ impl OverlayNetwork {
 
         // Start the TCP stack
         let initial = ServiceTable::new();
-        let stack = VirtualStack::spawn(tun, initial, tls_config).await?;
+        let stack = VirtualStack::spawn(tun, initial, tls_config, config.https_policy).await?;
 
         // Start DNS server. It pings `dns_rescan` on a miss and waits on
         // `dns_updated` for the table to refresh so the first query for a

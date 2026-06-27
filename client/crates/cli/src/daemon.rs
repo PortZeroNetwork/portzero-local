@@ -20,7 +20,7 @@ const LOCAL_DASHBOARD_URL: &str = "http://portzero.local";
 /// If the daemon is already running, prints its PID and exits.
 /// Otherwise spawns a new background process.
 pub fn start() -> Result<()> {
-    let config = DaemonConfig::default();
+    let config = DaemonConfig::load();
 
     // Check if already running.
     if let Some(pid) = read_daemon_pid(&config) {
@@ -122,13 +122,13 @@ fn open_local_dashboard() {
 
 /// Run the daemon in the foreground (called internally by `start --foreground`).
 pub async fn start_foreground() -> Result<()> {
-    let config = DaemonConfig::default();
+    let config = DaemonConfig::load();
     portzero_daemon::discovery_loop::run_discovery_loop(&config).await
 }
 
 /// Stop the daemon.
 pub fn stop() -> Result<()> {
-    let config = DaemonConfig::default();
+    let config = DaemonConfig::load();
     portzero_daemon::discovery_loop::stop_daemon(&config)?;
     println!("Daemon stopped.");
     Ok(())
@@ -136,7 +136,7 @@ pub fn stop() -> Result<()> {
 
 /// Show daemon and route status.
 pub async fn status() -> Result<()> {
-    let config = DaemonConfig::default();
+    let config = DaemonConfig::load();
 
     match read_daemon_pid(&config) {
         Some(pid) => {
@@ -402,7 +402,7 @@ async fn verify_token() -> TokenStatus {
 
 /// Restart the daemon (stop + start).
 pub fn restart() -> Result<()> {
-    let config = DaemonConfig::default();
+    let config = DaemonConfig::load();
 
     // Stop if running, ignore error if not.
     if read_daemon_pid(&config).is_some() {

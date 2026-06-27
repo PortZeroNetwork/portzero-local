@@ -56,6 +56,29 @@ const PROXY_CHUNK: usize = 16 * 1024;
 /// How often the stack loop wakes up even with no I/O, to drive smoltcp timers.
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
+/// Configurable HTTPS behavior for `.portzero.local` overlay services.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverlayHttpsPolicy {
+    /// When a service is exposed on virtual port 80, also expose HTTPS on 443
+    /// with daemon-side TLS termination to the same plaintext backend.
+    pub enable_for_port_80: bool,
+    /// Redirect HTTP requests on virtual port 80 to HTTPS.
+    pub redirect_port_80: bool,
+    /// When a service is exposed on virtual port 443, pass TLS through to the
+    /// backend because the process already speaks HTTPS.
+    pub passthrough_port_443: bool,
+}
+
+impl Default for OverlayHttpsPolicy {
+    fn default() -> Self {
+        Self {
+            enable_for_port_80: true,
+            redirect_port_80: true,
+            passthrough_port_443: true,
+        }
+    }
+}
+
 pub enum StackCommand {
     UpdateServices(ServiceTable),
     Shutdown,
@@ -88,6 +111,7 @@ impl VirtualStack {
         tun: crate::net::tun_device::TunDevice,
         initial: ServiceTable,
         tls_config: Option<Arc<ServerConfig>>,
+        https_policy: OverlayHttpsPolicy,
     ) -> Result<Self> {
         let (cmd_tx, cmd_rx) = mpsc::channel::<StackCommand>(16);
 
@@ -132,7 +156,7 @@ impl VirtualStack {
         });
 
         let device = ChannelDevice::new(inbound_rx, outbound_tx);
-        StackEngine::spawn(device, initial, cmd_rx, tls_config);
+        StackEngine::spawn(device, initial, cmd_rx, tls_config, https_policy);
 
         Ok(Self {
             cmd_tx,
@@ -149,12 +173,13 @@ impl VirtualStack {
         device: D,
         initial: ServiceTable,
         tls_config: Option<Arc<ServerConfig>>,
+        https_policy: OverlayHttpsPolicy,
     ) -> Self
     where
         D: Device + Pumpable + Send + 'static,
     {
         let (cmd_tx, cmd_rx) = mpsc::channel::<StackCommand>(16);
-        StackEngine::spawn(device, initial, cmd_rx, tls_config);
+        StackEngine::spawn(device, initial, cmd_rx, tls_config, https_policy);
         // The mock-device test path drives no real TUN, so there are no
         // reader/writer tasks to track or abort.
         Self {
@@ -322,6 +347,14 @@ struct StackEngine<D: Device> {
     /// When present, port-443 connections are TLS-terminated with this config
     /// and forwarded as plaintext to the service's real backend.
     tls_config: Option<Arc<ServerConfig>>,
+    https_policy: OverlayHttpsPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionAction {
+    PlainProxy(std::net::SocketAddr),
+    TlsTerminate(std::net::SocketAddr),
+    RedirectToHttps,
 }
 
 impl<D> StackEngine<D>
@@ -333,6 +366,7 @@ where
         initial: ServiceTable,
         cmd_rx: mpsc::Receiver<StackCommand>,
         tls_config: Option<Arc<ServerConfig>>,
+        https_policy: OverlayHttpsPolicy,
     ) {
         // The interface uses our virtual gateway IP and covers the entire
         // 10.254.0.0/16 block via a route so that AnyIP accepts every VIP.
@@ -359,6 +393,7 @@ where
             connections: HashMap::new(),
             cmd_rx,
             tls_config,
+            https_policy,
         };
         engine.apply_services(initial);
 
@@ -371,9 +406,13 @@ where
     /// listening socket per distinct service port.
     fn apply_services(&mut self, table: ServiceTable) {
         let mut wanted_ports: Vec<u16> = table.all().map(|s| s.service_port).collect();
-        // Always hold a port-443 listener for TLS termination when configured,
-        // regardless of whether any service explicitly registered on 443.
-        if self.tls_config.is_some() {
+        // Hold a port-443 listener only when at least one HTTP service should
+        // receive daemon-terminated HTTPS. Explicit 443 services already add
+        // this listener through `service_port` and are passed through by default.
+        if self.tls_config.is_some()
+            && self.https_policy.enable_for_port_80
+            && table.all().any(|s| s.service_port == 80)
+        {
             wanted_ports.push(443);
         }
         wanted_ports.sort_unstable();
@@ -497,28 +536,22 @@ where
             // Resolve which VIP the client connected to.
             let local = self.sockets.get::<tcp::Socket>(handle).local_endpoint();
 
-            let backend = match local {
+            let action = match local {
                 Some(ep) => match ep.addr {
-                    IpAddress::Ipv4(v4) => {
-                        if port == 443 {
-                            // For TLS termination, route to whatever service is on
-                            // this VIP regardless of its registered service_port.
-                            // Services register on their HTTP port (e.g. 80); we
-                            // terminate TLS and forward the plaintext to them.
-                            self.services.get_by_vip(v4).map(|s| s.real_addr)
-                        } else {
-                            self.services
-                                .resolve_for_connect(v4, port)
-                                .map(|s| s.real_addr)
-                        }
-                    }
+                    IpAddress::Ipv4(v4) => select_connection_action(
+                        &self.services,
+                        self.tls_config.is_some(),
+                        self.https_policy,
+                        v4,
+                        port,
+                    ),
                     #[allow(unreachable_patterns)]
                     _ => None,
                 },
                 None => None,
             };
 
-            let Some(real_addr) = backend else {
+            let Some(action) = action else {
                 tracing::warn!(
                     "no backend for accepted connection on port {port} (local={local:?}); aborting"
                 );
@@ -528,26 +561,32 @@ where
                 continue;
             };
 
-            tracing::debug!("accepted virtual connection on port {port} -> backend {real_addr}");
+            tracing::debug!("accepted virtual connection on port {port} -> {action:?}");
 
             // Spawn backend connection plumbing.
             let (to_backend_tx, to_backend_rx) = mpsc::channel::<Vec<u8>>(16);
             let (from_backend_tx, from_backend_rx) = mpsc::channel::<Vec<u8>>(16);
-            if port == 443 {
-                if let Some(ref tls) = self.tls_config {
-                    crate::tls::stack::spawn_tls_backend(
-                        tls.clone(),
-                        real_addr,
-                        to_backend_rx,
-                        from_backend_tx,
-                    );
-                } else {
-                    // TLS config disappeared between apply_services and accept;
-                    // fall back to plain proxy.
+            match action {
+                ConnectionAction::PlainProxy(real_addr) => {
                     spawn_backend(real_addr, to_backend_rx, from_backend_tx);
                 }
-            } else {
-                spawn_backend(real_addr, to_backend_rx, from_backend_tx);
+                ConnectionAction::TlsTerminate(real_addr) => {
+                    if let Some(ref tls) = self.tls_config {
+                        crate::tls::stack::spawn_tls_backend(
+                            tls.clone(),
+                            real_addr,
+                            to_backend_rx,
+                            from_backend_tx,
+                        );
+                    } else {
+                        self.sockets.get_mut::<tcp::Socket>(handle).abort();
+                        self.replace_listener(idx, port);
+                        continue;
+                    }
+                }
+                ConnectionAction::RedirectToHttps => {
+                    spawn_https_redirect(to_backend_rx, from_backend_tx);
+                }
             }
 
             self.connections.insert(
@@ -736,6 +775,71 @@ pub fn new_tcp_socket() -> tcp::Socket<'static> {
     let rx = tcp::SocketBuffer::new(vec![0u8; SOCKET_BUF]);
     let tx = tcp::SocketBuffer::new(vec![0u8; SOCKET_BUF]);
     tcp::Socket::new(rx, tx)
+}
+
+fn select_connection_action(
+    services: &ServiceTable,
+    tls_available: bool,
+    policy: OverlayHttpsPolicy,
+    vip: Ipv4Address,
+    port: u16,
+) -> Option<ConnectionAction> {
+    let service = services.get_by_vip(vip)?;
+
+    match port {
+        80 if service.service_port == 80
+            && policy.enable_for_port_80
+            && policy.redirect_port_80
+            && tls_available =>
+        {
+            Some(ConnectionAction::RedirectToHttps)
+        }
+        443 if service.service_port == 443 && policy.passthrough_port_443 => {
+            Some(ConnectionAction::PlainProxy(service.real_addr))
+        }
+        443 if service.service_port == 80 && policy.enable_for_port_80 && tls_available => {
+            Some(ConnectionAction::TlsTerminate(service.real_addr))
+        }
+        _ if service.service_port == port => Some(ConnectionAction::PlainProxy(service.real_addr)),
+        _ => None,
+    }
+}
+
+fn spawn_https_redirect(
+    mut to_backend_rx: mpsc::Receiver<Vec<u8>>,
+    from_backend_tx: mpsc::Sender<Vec<u8>>,
+) {
+    tokio::spawn(async move {
+        let first = to_backend_rx.recv().await.unwrap_or_default();
+        let location = redirect_location(&first);
+        let response = format!(
+            "HTTP/1.1 308 Permanent Redirect\r\n\
+             Location: {location}\r\n\
+             Connection: close\r\n\
+             Content-Length: 0\r\n\r\n"
+        );
+        let _ = from_backend_tx.send(response.into_bytes()).await;
+    });
+}
+
+fn redirect_location(request: &[u8]) -> String {
+    let request = String::from_utf8_lossy(request);
+    let mut lines = request.lines();
+    let path = lines
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .filter(|path| path.starts_with('/'))
+        .unwrap_or("/");
+    let host = lines
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("host").then(|| value.trim())
+        })
+        .filter(|host| !host.is_empty())
+        .unwrap_or("portzero.local");
+    let host = host.strip_suffix(":80").unwrap_or(host);
+
+    format!("https://{host}{path}")
 }
 
 /// Spawn the async tasks that own the real backend `TcpStream`. One task reads
@@ -968,7 +1072,8 @@ mod tests {
 
         // 3. Spawn the stack on one half of a mock device pair.
         let (stack_dev, mut client_dev) = MockDevice::pair();
-        let stack = VirtualStack::spawn_with_device(stack_dev, table, None);
+        let stack =
+            VirtualStack::spawn_with_device(stack_dev, table, None, OverlayHttpsPolicy::default());
 
         // 4. Build a client smoltcp interface on the other half and connect to
         //    VIP:5432 from a client IP in the same subnet.
@@ -1042,7 +1147,8 @@ mod tests {
         assert_eq!(svc_a.service_port, svc_b.service_port);
 
         let (stack_dev, mut client_dev) = MockDevice::pair();
-        let stack = VirtualStack::spawn_with_device(stack_dev, table, None);
+        let stack =
+            VirtualStack::spawn_with_device(stack_dev, table, None, OverlayHttpsPolicy::default());
 
         let client_ip = Ipv4Address::new(10, 254, 9, 9);
         let mut client_iface = client_iface(&mut client_dev, client_ip);
@@ -1081,7 +1187,8 @@ mod tests {
     async fn shutdown_is_graceful() {
         let (stack_dev, _client_dev) = MockDevice::pair();
         let table = ServiceTable::new();
-        let stack = VirtualStack::spawn_with_device(stack_dev, table, None);
+        let stack =
+            VirtualStack::spawn_with_device(stack_dev, table, None, OverlayHttpsPolicy::default());
 
         stack.shutdown().await.unwrap();
         // Give the task a moment to exit.
@@ -1096,7 +1203,12 @@ mod tests {
     #[tokio::test]
     async fn update_services_adds_ports() {
         let (stack_dev, _client_dev) = MockDevice::pair();
-        let stack = VirtualStack::spawn_with_device(stack_dev, ServiceTable::new(), None);
+        let stack = VirtualStack::spawn_with_device(
+            stack_dev,
+            ServiceTable::new(),
+            None,
+            OverlayHttpsPolicy::default(),
+        );
 
         let mut table = ServiceTable::new();
         table.register("svc-a".to_string(), "127.0.0.1:1".parse().unwrap(), 8080, 0);
@@ -1104,6 +1216,65 @@ mod tests {
         stack.update_services(table).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         stack.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn port_80_service_redirects_http_and_terminates_https() {
+        let mut table = ServiceTable::new();
+        let svc = table.register("web".to_string(), "127.0.0.1:49152".parse().unwrap(), 80, 0);
+
+        assert_eq!(
+            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 80),
+            Some(ConnectionAction::RedirectToHttps)
+        );
+        assert_eq!(
+            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 443),
+            Some(ConnectionAction::TlsTerminate(svc.real_addr))
+        );
+    }
+
+    #[test]
+    fn port_443_service_passes_https_through() {
+        let mut table = ServiceTable::new();
+        let svc = table.register(
+            "secure".to_string(),
+            "127.0.0.1:49153".parse().unwrap(),
+            443,
+            0,
+        );
+
+        assert_eq!(
+            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 443),
+            Some(ConnectionAction::PlainProxy(svc.real_addr))
+        );
+    }
+
+    #[test]
+    fn disabled_port_80_https_keeps_http_plain() {
+        let mut table = ServiceTable::new();
+        let svc = table.register("web".to_string(), "127.0.0.1:49152".parse().unwrap(), 80, 0);
+        let policy = OverlayHttpsPolicy {
+            enable_for_port_80: false,
+            ..OverlayHttpsPolicy::default()
+        };
+
+        assert_eq!(
+            select_connection_action(&table, true, policy, svc.vip, 80),
+            Some(ConnectionAction::PlainProxy(svc.real_addr))
+        );
+        assert_eq!(
+            select_connection_action(&table, true, policy, svc.vip, 443),
+            None
+        );
+    }
+
+    #[test]
+    fn redirect_location_uses_host_and_path() {
+        let req = b"GET /docs?q=1 HTTP/1.1\r\nHost: app.portzero.local:80\r\n\r\n";
+        assert_eq!(
+            redirect_location(req),
+            "https://app.portzero.local/docs?q=1"
+        );
     }
 
     fn tracing_subscriber_try_init() {}

@@ -198,8 +198,8 @@ async fn unprivileged_overlay_round_trip() {
 #[tokio::test]
 async fn unprivileged_vip_byte_proxy() {
     use portzero_daemon::net::stack::{
-        client_iface, new_tcp_socket, test_tcp, MockDevice, TestInstant, TestIpAddress,
-        TestIpv4Address, TestSocketSet, VirtualStack,
+        client_iface, new_tcp_socket, test_tcp, MockDevice, OverlayHttpsPolicy, TestInstant,
+        TestIpAddress, TestIpv4Address, TestSocketSet, VirtualStack,
     };
 
     tokio::time::timeout(TEST_TIMEOUT, async {
@@ -214,7 +214,8 @@ async fn unprivileged_vip_byte_proxy() {
 
         // 3. Spawn the real stack engine on one half of an in-memory device pair.
         let (stack_dev, mut client_dev) = MockDevice::pair();
-        let stack = VirtualStack::spawn_with_device(stack_dev, table, None);
+        let stack =
+            VirtualStack::spawn_with_device(stack_dev, table, None, OverlayHttpsPolicy::default());
 
         // 4. Build a client smoltcp interface on the other half and open a TCP
         //    connection to VIP:5432 from a client IP in the same subnet.
@@ -291,8 +292,8 @@ async fn unprivileged_tls_vip_proxy() {
     use std::io::Write as _;
 
     use portzero_daemon::net::stack::{
-        client_iface, new_tcp_socket, test_tcp, MockDevice, TestInstant, TestIpAddress,
-        TestIpv4Address, TestSocketSet, VirtualStack,
+        client_iface, new_tcp_socket, test_tcp, MockDevice, OverlayHttpsPolicy, TestInstant,
+        TestIpAddress, TestIpv4Address, TestSocketSet, VirtualStack,
     };
     use portzero_daemon::tls::{ca::LocalCa, stack::build_server_config};
     use rustls::pki_types::ServerName;
@@ -338,7 +339,12 @@ async fn unprivileged_tls_vip_proxy() {
 
         // 5. Spawn the stack engine with TLS enabled.
         let (stack_dev, mut client_dev) = MockDevice::pair();
-        let stack = VirtualStack::spawn_with_device(stack_dev, table, Some(server_config));
+        let stack = VirtualStack::spawn_with_device(
+            stack_dev,
+            table,
+            Some(server_config),
+            OverlayHttpsPolicy::default(),
+        );
 
         // 6. Build a smoltcp client interface and open a TCP connection to VIP:443.
         let client_ip = TestIpv4Address::new(10, 254, 9, 9);

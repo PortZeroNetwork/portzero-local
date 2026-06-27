@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
 use tokio::sync::Notify;
 
 const RECONNECT_BASE_DELAY_SECS: u64 = 1;
@@ -66,6 +67,7 @@ use crate::discovery::{self, DiscoveredNetworkService};
 use crate::docker_events::{self, ConflictRegistry};
 use crate::net::overlay::{OverlayConfig, OverlayNetwork};
 use crate::net::service_table::ServiceTable;
+use crate::net::stack::OverlayHttpsPolicy;
 use crate::notify::{self, IssuesState};
 use crate::route_table::{OverlayRoute, OverlayState, RouteChanges, RouteTable};
 
@@ -80,6 +82,8 @@ pub struct DaemonConfig {
     pub state_dir: PathBuf,
     /// How often to scan for services, in seconds.
     pub scan_interval_secs: u64,
+    /// HTTPS behavior for `.portzero.local` overlay services.
+    pub overlay_https: OverlayHttpsPolicy,
 }
 
 impl Default for DaemonConfig {
@@ -91,11 +95,36 @@ impl Default for DaemonConfig {
         Self {
             state_dir,
             scan_interval_secs: 2,
+            overlay_https: OverlayHttpsPolicy::default(),
         }
     }
 }
 
 impl DaemonConfig {
+    /// Load daemon configuration from `~/.portzero/config.toml`, falling back to
+    /// defaults when the file is absent or invalid.
+    pub fn load() -> Self {
+        let mut config = Self::default();
+        let path = config.config_path();
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            return config;
+        };
+
+        match toml::from_str::<FileConfig>(&raw) {
+            Ok(file) => file.apply_to(&mut config),
+            Err(e) => tracing::warn!("Ignoring invalid daemon config {}: {e}", path.display()),
+        }
+        config
+    }
+
+    /// Path to the user-editable TOML config file.
+    pub fn config_path(&self) -> PathBuf {
+        self.state_dir
+            .parent()
+            .map(|p| p.join("config.toml"))
+            .unwrap_or_else(|| PathBuf::from(".portzero/config.toml"))
+    }
+
     /// Path to the routes file.
     pub fn routes_path(&self) -> PathBuf {
         self.state_dir.join("routes.json")
@@ -130,6 +159,58 @@ impl DaemonConfig {
     pub fn diagnostics_path(&self) -> PathBuf {
         self.state_dir.join("diagnostics.json")
     }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct FileConfig {
+    daemon: Option<FileDaemonConfig>,
+    overlay: Option<FileOverlayConfig>,
+}
+
+impl FileConfig {
+    fn apply_to(self, config: &mut DaemonConfig) {
+        if let Some(daemon) = self.daemon {
+            if let Some(scan_interval_secs) = daemon.scan_interval_secs {
+                config.scan_interval_secs = scan_interval_secs;
+            }
+        }
+        if let Some(overlay) = self.overlay {
+            overlay.apply_to(config);
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct FileDaemonConfig {
+    scan_interval_secs: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct FileOverlayConfig {
+    https: Option<FileOverlayHttpsConfig>,
+}
+
+impl FileOverlayConfig {
+    fn apply_to(self, config: &mut DaemonConfig) {
+        if let Some(https) = self.https {
+            if let Some(v) = https.enable_for_port_80 {
+                config.overlay_https.enable_for_port_80 = v;
+            }
+            if let Some(v) = https.redirect_port_80 {
+                config.overlay_https.redirect_port_80 = v;
+            }
+            if let Some(v) = https.passthrough_port_443 {
+                config.overlay_https.passthrough_port_443 = v;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct FileOverlayHttpsConfig {
+    enable_for_port_80: Option<bool>,
+    redirect_port_80: Option<bool>,
+    passthrough_port_443: Option<bool>,
 }
 
 /// Tracks routes whose owning process has exited, giving them a grace period
@@ -309,7 +390,10 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     tokio::spawn(mgmt_server.serve(mgmt_listener));
 
     let overlay: Option<Arc<OverlayNetwork>> = match OverlayNetwork::start(
-        OverlayConfig::default(),
+        OverlayConfig {
+            https_policy: config.overlay_https,
+            ..OverlayConfig::default()
+        },
         dns_rescan.clone(),
     )
     .await
@@ -1415,6 +1499,7 @@ mod tests {
         let config = DaemonConfig {
             state_dir: PathBuf::from("/nonexistent/path"),
             scan_interval_secs: 2,
+            overlay_https: OverlayHttpsPolicy::default(),
         };
         assert!(read_daemon_pid(&config).is_none());
     }
@@ -1424,6 +1509,7 @@ mod tests {
         let config = DaemonConfig {
             state_dir: dir.path().to_path_buf(),
             scan_interval_secs: 2,
+            overlay_https: OverlayHttpsPolicy::default(),
         };
         (config, dir)
     }
@@ -1478,8 +1564,28 @@ mod tests {
         let config = DaemonConfig {
             state_dir: PathBuf::from("/nonexistent/path"),
             scan_interval_secs: 2,
+            overlay_https: OverlayHttpsPolicy::default(),
         };
         assert_eq!(read_cloud_connected(&config), None);
         assert_eq!(read_cloud_error(&config), None);
+    }
+
+    #[test]
+    fn test_file_config_overrides_https_policy() {
+        let file: FileConfig = toml::from_str(
+            r#"
+            [overlay.https]
+            enable_for_port_80 = false
+            redirect_port_80 = false
+            passthrough_port_443 = true
+            "#,
+        )
+        .unwrap();
+        let mut config = DaemonConfig::default();
+        file.apply_to(&mut config);
+
+        assert!(!config.overlay_https.enable_for_port_80);
+        assert!(!config.overlay_https.redirect_port_80);
+        assert!(config.overlay_https.passthrough_port_443);
     }
 }
