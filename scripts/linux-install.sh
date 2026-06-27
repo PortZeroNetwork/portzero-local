@@ -163,6 +163,9 @@ UNIT
         echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts >/dev/null 2>&1 \
             || warn "Could not pin portzero.local in /etc/hosts; the dashboard name may not resolve."
     fi
+
+    info "Starting portzero and opening http://portzero.local..."
+    "$bin_path" start || warn "Could not start portzero automatically. Run later: portzero start"
 fi
 
 echo ""
@@ -177,4 +180,4 @@ case ":${PATH}:" in
 esac
 
 echo ""
-echo "Next: ${BOLD}portzero login${RESET}  then  ${BOLD}portzero start${RESET}"
+echo "Next: ${BOLD}portzero login${RESET}  when you want cloud tunnels"

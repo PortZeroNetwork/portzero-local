@@ -48,22 +48,20 @@ pub struct ErrorResponse {
 
 /// Resolve the source port from the connecting address to a PID.
 /// Returns an error response tuple on failure.
-fn resolve_pid(
-    addr: &SocketAddr,
-) -> Result<u32, (StatusCode, Json<ErrorResponse>)> {
+fn resolve_pid(addr: &SocketAddr) -> Result<u32, (StatusCode, Json<ErrorResponse>)> {
     let source_port = addr.port();
     match pid_lookup::pid_for_source_port(source_port) {
         Some(pid) => Ok(pid),
         None => {
-            tracing::warn!("management: could not identify caller on port {}", source_port);
+            tracing::warn!(
+                "management: could not identify caller on port {}",
+                source_port
+            );
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
                     error: "caller_unidentifiable",
-                    detail: format!(
-                        "Could not identify the PID for source port {}",
-                        source_port
-                    ),
+                    detail: format!("Could not identify the PID for source port {}", source_port),
                 }),
             ))
         }
@@ -97,9 +95,120 @@ fn read_cloud_state(state_dir: &std::path::Path) -> (bool, Option<String>) {
         Ok(v) => v,
         Err(_) => return (false, None),
     };
-    let connected = v.get("connected").and_then(|c| c.as_bool()).unwrap_or(false);
-    let error = v.get("error").and_then(|e| e.as_str()).map(|s| s.to_string());
+    let connected = v
+        .get("connected")
+        .and_then(|c| c.as_bool())
+        .unwrap_or(false);
+    let error = v
+        .get("error")
+        .and_then(|e| e.as_str())
+        .map(|s| s.to_string());
     (connected, error)
+}
+
+fn command_on_path(program: &str) -> bool {
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&paths).any(|dir| {
+        let candidate = dir.join(program);
+        if candidate.is_file() {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            dir.join(format!("{program}.exe")).is_file()
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    })
+}
+
+fn detected_languages() -> serde_json::Value {
+    let languages = [
+        ("typescript", "TypeScript", &["node", "nodejs", "npm"][..]),
+        ("javascript", "JavaScript", &["node", "nodejs"][..]),
+        ("python", "Python", &["python3", "python"][..]),
+        ("java", "Java", &["java", "javac"][..]),
+        ("go", "Go", &["go"][..]),
+        ("rust", "Rust", &["cargo", "rustc"][..]),
+        ("csharp", "C#", &["dotnet"][..]),
+        ("php", "PHP", &["php", "composer"][..]),
+        ("ruby", "Ruby", &["ruby", "bundle"][..]),
+        (
+            "cpp",
+            "C/C++",
+            &["cc", "gcc", "clang", "g++", "clang++"][..],
+        ),
+        ("swift", "Swift", &["swift"][..]),
+        ("kotlin", "Kotlin", &["kotlin", "kotlinc"][..]),
+        ("dart", "Dart", &["dart"][..]),
+        ("elixir", "Elixir", &["elixir", "mix"][..]),
+        ("scala", "Scala", &["scala", "sbt"][..]),
+        ("r", "R", &["R", "Rscript"][..]),
+        ("julia", "Julia", &["julia"][..]),
+        ("lua", "Lua", &["lua", "luajit"][..]),
+        ("perl", "Perl", &["perl"][..]),
+        ("zig", "Zig", &["zig"][..]),
+        ("haskell", "Haskell", &["ghc", "cabal", "stack"][..]),
+        ("shell", "Shell", &["bash", "sh"][..]),
+    ];
+
+    let detected: Vec<serde_json::Value> = languages
+        .iter()
+        .map(|(id, label, tools)| {
+            let installed_tools: Vec<&str> = tools
+                .iter()
+                .copied()
+                .filter(|tool| command_on_path(tool))
+                .collect();
+            serde_json::json!({
+                "id": id,
+                "label": label,
+                "installed": !installed_tools.is_empty(),
+                "tools": installed_tools,
+            })
+        })
+        .collect();
+
+    let default_language = detected
+        .iter()
+        .find(|lang| {
+            lang.get("id").and_then(|v| v.as_str()) != Some("shell")
+                && lang
+                    .get("installed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+        })
+        .and_then(|lang| lang.get("id").and_then(|v| v.as_str()))
+        .unwrap_or("typescript");
+
+    serde_json::json!({
+        "default": default_language,
+        "items": detected,
+    })
+}
+
+fn display_substitutions(
+    substitutions: &std::collections::BTreeMap<String, String>,
+    source: &crate::discovery::ServiceSource,
+) -> serde_json::Value {
+    let mut values = substitutions.clone();
+    if !values.contains_key("folder-name") {
+        let folder_name = match source {
+            crate::discovery::ServiceSource::Process { cwd } => cwd
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            crate::discovery::ServiceSource::Container { name, .. } => name.clone(),
+        };
+        values.insert("folder-name".to_string(), folder_name);
+    }
+    serde_json::json!(values)
 }
 
 // ─── Management API handlers ──────────────────────────────────────────────────
@@ -123,10 +232,7 @@ pub async fn register(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Json(ErrorResponse {
                     error: "port_not_listening",
-                    detail: format!(
-                        "PID {} is not listening on port {}",
-                        pid, reg.local_port
-                    ),
+                    detail: format!("PID {} is not listening on port {}", pid, reg.local_port),
                 }),
             ));
         }
@@ -136,7 +242,13 @@ pub async fn register(
     state.store.write().await.insert(pid, body.ports);
     tracing::debug!("management: registered {} port(s) for PID {}", count, pid);
 
-    Ok((StatusCode::OK, Json(RegisterResponse { pid, registered: count })))
+    Ok((
+        StatusCode::OK,
+        Json(RegisterResponse {
+            pid,
+            registered: count,
+        }),
+    ))
 }
 
 /// DELETE /v1/register — remove the registration for the calling process.
@@ -158,7 +270,13 @@ pub async fn deregister(
     }
 
     tracing::debug!("management: deregistered PID {}", pid);
-    Ok((StatusCode::OK, Json(DeregisterResponse { pid, deregistered: true })))
+    Ok((
+        StatusCode::OK,
+        Json(DeregisterResponse {
+            pid,
+            deregistered: true,
+        }),
+    ))
 }
 
 /// GET /v1/status — return the current registration for the calling process.
@@ -192,65 +310,218 @@ pub async fn status_ui() -> Html<&'static str> {
     Html(STATUS_UI_HTML)
 }
 
-const STATUS_UI_HTML: &str = r#"<!DOCTYPE html>
+const STATUS_UI_HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>portzero local</title>
+<title>portzero.local</title>
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-body{background:#0d1117;color:#c9d1d9;font-family:ui-monospace,'Courier New',monospace;font-size:13px;line-height:1.6}
-a{color:#00ff88;text-decoration:none}
-.header{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #21262d;background:#161b22}
-.logo{font-size:15px;font-weight:700;color:#00ff88;letter-spacing:.05em}
-.badge{font-size:10px;font-weight:700;padding:2px 6px;border-radius:3px;background:#b8860b;color:#0d1117;letter-spacing:.08em}
-.pid{color:#6e7681;font-size:11px}
-.content{padding:16px;max-width:960px}
-.section{margin-bottom:24px}
-.section-title{color:#8b949e;font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px;border-bottom:1px solid #21262d;padding-bottom:4px}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{text-align:left;color:#8b949e;font-weight:400;padding:4px 8px;border-bottom:1px solid #21262d}
-td{padding:4px 8px;border-bottom:1px solid #161b22;word-break:break-all}
-tr:hover td{background:#161b22}
-.empty{color:#6e7681;font-size:12px;padding:4px 0}
-.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;vertical-align:middle}
-.green{background:#3fb950}.red{background:#f85149}.yellow{background:#d29922}
-.status-row{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:12px}
-/* diagnostics */
-.diag{margin-bottom:6px;padding:8px 10px;border-radius:4px;border-left:3px solid}
-.diag-critical{background:#2d1010;border-color:#f85149}
-.diag-error{background:#1f1810;border-color:#d29922}
-.diag-warning{background:#1a1a10;border-color:#ffd700}
-.diag-info{background:#0d1520;border-color:#388bfd}
-.diag-title{font-weight:600;margin-bottom:2px}
-.diag-detail{color:#8b949e;font-size:12px;margin-bottom:4px}
-.diag-fix{font-size:11px;color:#6e7681}
-.diag-fix code{background:#161b22;padding:1px 4px;border-radius:2px;color:#c9d1d9}
-.sev-critical{color:#f85149}.sev-error{color:#d29922}.sev-warning{color:#ffd700}.sev-info{color:#388bfd}
-.no-issues{color:#3fb950;font-size:12px}
-#root .loading{color:#6e7681;padding:32px 0}
-.ts{color:#6e7681;font-size:10px;margin-left:auto}
+:root{color-scheme:light dark;--bg:#fdfdfd;--fg:#1f2328;--muted:#6b7280;--soft:#f3f4f6;--line:#e5e7eb;--accent:#2563eb;--accent-soft:#dbeafe;--ok:#16833a;--warn:#a16207;--bad:#c2410c;--code:#111827;--code-fg:#f9fafb}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e5e7eb;--muted:#9ca3af;--soft:#171a21;--line:#2b303b;--accent:#7dd3fc;--accent-soft:#102a3a;--ok:#86efac;--warn:#facc15;--bad:#fb923c;--code:#05070a;--code-fg:#f3f4f6}}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px;line-height:1.65}
+a{color:inherit;text-decoration:none}
+a:hover{color:var(--accent)}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.shell{width:min(100% - 32px,980px);margin:0 auto}
+.topbar{position:sticky;top:0;z-index:3;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.nav{display:flex;align-items:center;gap:18px;min-height:62px}
+.brand{font-size:18px;font-weight:800}
+.navlinks{display:flex;gap:14px;margin-left:auto;color:var(--muted);font-size:14px}
+.meta{color:var(--muted);font-size:13px;white-space:nowrap}
+.hero{padding:58px 0 24px}
+.eyebrow{color:var(--accent);font-size:13px;font-weight:700;margin:0 0 10px}
+h1{font-size:clamp(34px,6vw,64px);line-height:1.05;margin:0 0 18px;max-width:760px}
+.lede{max-width:680px;color:var(--muted);font-size:19px;margin:0}
+.section{padding:30px 0;border-top:1px solid var(--line)}
+.section-head{display:flex;align-items:end;gap:16px;justify-content:space-between;margin-bottom:18px}
+h2{font-size:28px;line-height:1.2;margin:0}
+.section-note{color:var(--muted);font-size:14px;margin:0}
+.steps{display:grid;gap:12px}
+.step{display:grid;grid-template-columns:40px minmax(0,1fr);gap:14px;padding:18px 0;border-bottom:1px solid var(--line)}
+.step:last-child{border-bottom:0}
+.num{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-weight:800;font-size:14px}
+.step h3,.example h3{font-size:18px;margin:0 0 8px}
+.placeholder{color:var(--muted);margin:0}
+.code-row{margin-top:12px;background:var(--code);color:var(--code-fg);border-radius:8px;padding:12px 14px;overflow:auto;font-size:14px}
+.examples{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.example{border-top:2px solid var(--line);padding-top:14px}
+.tag{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:2px 9px;color:var(--muted);font-size:12px;margin-bottom:10px}
+.picker{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.picker select{appearance:none;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 34px 8px 10px;font:inherit;font-size:14px}
+.detected{color:var(--muted);font-size:13px}
+.status-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+.status-card{min-width:0}
+.status-row{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:14px;margin-bottom:12px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--bad);flex:0 0 auto}
+.dot.ok{background:var(--ok)}
+.dot.warn{background:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;color:var(--muted);font-weight:600;border-bottom:1px solid var(--line);padding:8px 6px}
+td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-break:break-word}
+.domain-stack{display:grid;gap:2px}
+.domain-stack code{font-size:13px}
+.substitutions{display:flex;gap:6px;flex-wrap:wrap}
+.substitutions code{background:var(--soft);border-radius:999px;padding:2px 7px;color:var(--fg);font-size:12px}
+.empty{color:var(--muted);font-size:14px;margin:0}
+.diag{border-left:3px solid var(--line);padding:10px 0 10px 14px;margin-bottom:10px}
+.diag-critical,.diag-error{border-color:var(--bad)}
+.diag-warning{border-color:var(--warn)}
+.diag-info{border-color:var(--accent)}
+.diag-title{font-weight:700}
+.diag-detail,.diag-fix{color:var(--muted);font-size:14px}
+.diag-fix code{background:var(--soft);color:var(--fg);padding:1px 5px;border-radius:4px}
+.no-issues{color:var(--ok);font-size:14px;margin:0}
+.loading{color:var(--muted);padding:32px 0}
+@media (max-width:760px){.nav{align-items:flex-start;flex-direction:column;gap:6px;padding:12px 0}.navlinks{margin-left:0;flex-wrap:wrap}.hero{padding-top:36px}.examples,.status-grid{grid-template-columns:1fr}.section-head{display:block}.step{grid-template-columns:1fr}.num{margin-bottom:4px}}
 </style>
 </head>
 <body>
-<div class="header">
-  <span class="logo">⬡ portzero</span>
-  <span class="badge">LOCAL</span>
-  <span class="pid" id="hdr-pid"></span>
-  <span class="ts" id="hdr-ts"></span>
-</div>
-<div class="content" id="root"><p class="loading">connecting…</p></div>
+<header class="topbar">
+  <nav class="shell nav" aria-label="Main">
+    <a class="brand" href="/">portzero.local</a>
+    <div class="navlinks">
+      <a href="#getting-started">Getting Started</a>
+      <a href="#examples">Examples</a>
+      <a href="#tunnels">Tunnels</a>
+      <a href="#diagnostics">Diagnostics</a>
+    </div>
+    <span class="meta" id="hdr-meta"></span>
+  </nav>
+</header>
+<main class="shell">
+  <section class="hero" id="getting-started">
+    <p class="eyebrow">Local developer guide</p>
+    <h1>Getting Started</h1>
+    <p class="lede">TODO: replace this intro with the first-run path for getting an app running and mapped to a .local DNS name.</p>
+  </section>
+
+  <section class="section" aria-labelledby="quickstart-title">
+    <div class="section-head">
+      <h2 id="quickstart-title">Quickstart</h2>
+      <p class="section-note">Short steps first. Details can live below.</p>
+    </div>
+    <div class="steps">
+      <article class="step">
+        <span class="num">1</span>
+        <div>
+          <h3>Run something locally</h3>
+          <p class="placeholder">TODO: one-liner for starting a tiny local service.</p>
+          <pre class="code-row"><code>[TODO: command]</code></pre>
+        </div>
+      </article>
+      <article class="step">
+        <span class="num">2</span>
+        <div>
+          <h3>Point a .local name at it</h3>
+          <p class="placeholder">TODO: one-liner for exposing that service through portzero.local DNS.</p>
+          <pre class="code-row"><code>[TODO: command]</code></pre>
+        </div>
+      </article>
+      <article class="step">
+        <span class="num">3</span>
+        <div>
+          <h3>Open the local URL</h3>
+          <p class="placeholder">TODO: final URL/check command.</p>
+          <pre class="code-row"><code>[TODO: command]</code></pre>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="section" id="examples" aria-labelledby="examples-title">
+    <div class="section-head">
+      <h2 id="examples-title">Examples</h2>
+      <div class="picker">
+        <label class="section-note" for="language-picker">Language</label>
+        <select id="language-picker"></select>
+        <span class="detected" id="language-detected"></span>
+      </div>
+    </div>
+    <div class="examples" id="language-examples"></div>
+  </section>
+
+  <section class="section" id="tunnels" aria-labelledby="tunnels-title">
+    <div class="section-head">
+      <h2 id="tunnels-title">Tunnels</h2>
+      <p class="section-note" id="hdr-ts"></p>
+    </div>
+    <div id="status-root"><p class="loading">Connecting to daemon...</p></div>
+  </section>
+</main>
 <script>
+const LANGUAGE_EXAMPLES={
+  typescript:[['Run a server','TODO: TypeScript one-liner that starts a local service.'],['Expose it','TODO: TypeScript command with PZ_TUNNEL.'],['Download example','TODO: TypeScript downloadable example link.']],
+  javascript:[['Run a server','TODO: JavaScript one-liner that starts a local service.'],['Expose it','TODO: JavaScript command with PZ_TUNNEL.'],['Download example','TODO: JavaScript downloadable example link.']],
+  python:[['Run a server','TODO: Python one-liner that starts a local service.'],['Expose it','TODO: Python command with PZ_TUNNEL.'],['Download example','TODO: Python downloadable example link.']],
+  java:[['Run a server','TODO: Java one-liner that starts a local service.'],['Expose it','TODO: Java command with PZ_TUNNEL.'],['Download example','TODO: Java downloadable example link.']],
+  go:[['Run a server','TODO: Go one-liner that starts a local service.'],['Expose it','TODO: Go command with PZ_TUNNEL.'],['Download example','TODO: Go downloadable example link.']],
+  rust:[['Run a server','TODO: Rust one-liner that starts a local service.'],['Expose it','TODO: Rust command with PZ_TUNNEL.'],['Download example','TODO: Rust downloadable example link.']],
+  csharp:[['Run a server','TODO: C# one-liner that starts a local service.'],['Expose it','TODO: C# command with PZ_TUNNEL.'],['Download example','TODO: C# downloadable example link.']],
+  php:[['Run a server','TODO: PHP one-liner that starts a local service.'],['Expose it','TODO: PHP command with PZ_TUNNEL.'],['Download example','TODO: PHP downloadable example link.']],
+  ruby:[['Run a server','TODO: Ruby one-liner that starts a local service.'],['Expose it','TODO: Ruby command with PZ_TUNNEL.'],['Download example','TODO: Ruby downloadable example link.']],
+  cpp:[['Run a server','TODO: C/C++ one-liner that starts a local service.'],['Expose it','TODO: C/C++ command with PZ_TUNNEL.'],['Download example','TODO: C/C++ downloadable example link.']],
+  swift:[['Run a server','TODO: Swift one-liner that starts a local service.'],['Expose it','TODO: Swift command with PZ_TUNNEL.'],['Download example','TODO: Swift downloadable example link.']],
+  kotlin:[['Run a server','TODO: Kotlin one-liner that starts a local service.'],['Expose it','TODO: Kotlin command with PZ_TUNNEL.'],['Download example','TODO: Kotlin downloadable example link.']],
+  dart:[['Run a server','TODO: Dart one-liner that starts a local service.'],['Expose it','TODO: Dart command with PZ_TUNNEL.'],['Download example','TODO: Dart downloadable example link.']],
+  elixir:[['Run a server','TODO: Elixir one-liner that starts a local service.'],['Expose it','TODO: Elixir command with PZ_TUNNEL.'],['Download example','TODO: Elixir downloadable example link.']],
+  scala:[['Run a server','TODO: Scala one-liner that starts a local service.'],['Expose it','TODO: Scala command with PZ_TUNNEL.'],['Download example','TODO: Scala downloadable example link.']],
+  r:[['Run a server','TODO: R one-liner that starts a local service.'],['Expose it','TODO: R command with PZ_TUNNEL.'],['Download example','TODO: R downloadable example link.']],
+  julia:[['Run a server','TODO: Julia one-liner that starts a local service.'],['Expose it','TODO: Julia command with PZ_TUNNEL.'],['Download example','TODO: Julia downloadable example link.']],
+  lua:[['Run a server','TODO: Lua one-liner that starts a local service.'],['Expose it','TODO: Lua command with PZ_TUNNEL.'],['Download example','TODO: Lua downloadable example link.']],
+  perl:[['Run a server','TODO: Perl one-liner that starts a local service.'],['Expose it','TODO: Perl command with PZ_TUNNEL.'],['Download example','TODO: Perl downloadable example link.']],
+  zig:[['Run a server','TODO: Zig one-liner that starts a local service.'],['Expose it','TODO: Zig command with PZ_TUNNEL.'],['Download example','TODO: Zig downloadable example link.']],
+  haskell:[['Run a server','TODO: Haskell one-liner that starts a local service.'],['Expose it','TODO: Haskell command with PZ_TUNNEL.'],['Download example','TODO: Haskell downloadable example link.']],
+  shell:[['Run a server','TODO: shell one-liner that starts a local service.'],['Expose it','TODO: shell command with PZ_TUNNEL.'],['Download example','TODO: shell downloadable example link.']]
+};
+let selectedLanguage=null;
+let languagePickerReady=false;
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-function dot(ok){return '<span class="dot '+(ok?'green':'red')+'"></span>'}
+function dot(ok){return '<span class="dot '+(ok?'ok':'')+'"></span>'}
+function renderLanguageExamples(id){
+  const picker=document.getElementById('language-picker');
+  if(picker&&picker.value!==id) picker.value=id;
+  selectedLanguage=id;
+  const examples=LANGUAGE_EXAMPLES[id]||LANGUAGE_EXAMPLES.typescript;
+  document.getElementById('language-examples').innerHTML=examples.map(function(ex){
+    return '<article class="example"><span class="tag">'+esc(id)+'</span><h3>'+esc(ex[0])+'</h3><p class="placeholder">'+esc(ex[1])+'</p></article>';
+  }).join('');
+}
+function renderLanguagePicker(languages){
+  if(!languages||!languages.items) return;
+  if(!selectedLanguage) selectedLanguage=languages.default||'typescript';
+  const picker=document.getElementById('language-picker');
+  if(!languagePickerReady){
+    picker.innerHTML=languages.items.map(function(lang){
+      return '<option value="'+esc(lang.id)+'">'+esc(lang.label)+(lang.installed?'':'')+'</option>';
+    }).join('');
+    picker.addEventListener('change',function(){renderLanguageExamples(picker.value);});
+    languagePickerReady=true;
+  }
+  const current=languages.items.find(function(lang){return lang.id===selectedLanguage;});
+  const detected=languages.items.filter(function(lang){return lang.installed;}).map(function(lang){return lang.label;});
+  document.getElementById('language-detected').textContent=detected.length?'Detected: '+detected.slice(0,4).join(', '):'Defaulting to Node.js / TypeScript';
+  renderLanguageExamples(current?selectedLanguage:(languages.default||'typescript'));
+}
+function renderSubstitutions(values){
+  const entries=Object.entries(values||{});
+  if(!entries.length) return '<span class="empty">none detected</span>';
+  return '<div class="substitutions">'+entries.map(function(pair){
+    return '<code>{'+esc(pair[0])+'}='+esc(pair[1])+'</code>';
+  }).join('')+'</div>';
+}
+function domainCell(row){
+  return '<div class="domain-stack"><strong>'+esc(row.domain)+'</strong><code>template: '+esc(row.domain_template||row.domain)+'</code><code>materialized: '+esc(row.domain)+'</code></div>';
+}
 
 function renderDiag(d){
   const sev=d.severity.toLowerCase();
   let fix='';
   if(d.fix){
     fix='<div class="diag-fix">'+esc(d.fix.description);
-    if(d.fix.command) fix+=' — <code>'+esc(d.fix.command)+'</code>';
+    if(d.fix.command) fix+=' - <code>'+esc(d.fix.command)+'</code>';
     fix+='</div>';
   }
   return '<div class="diag diag-'+sev+'"><div class="diag-title"><span class="sev-'+sev+'">['+sev.toUpperCase()+']</span> '+esc(d.title)+'</div>'
@@ -258,54 +529,43 @@ function renderDiag(d){
 }
 
 function render(d){
-  document.getElementById('hdr-pid').textContent=d.daemon_pid?'pid '+d.daemon_pid:'';
-  document.getElementById('hdr-ts').textContent='updated '+new Date().toLocaleTimeString();
+  document.getElementById('hdr-meta').textContent=d.daemon_pid?'pid '+d.daemon_pid:'local daemon';
+  document.getElementById('hdr-ts').textContent='Updated '+new Date().toLocaleTimeString();
+  renderLanguagePicker(d.languages);
 
   let html='';
 
-  // diagnostics
-  html+='<div class="section"><div class="section-title">diagnostics</div>';
-  const diags=d.diagnostics&&d.diagnostics.issues;
-  if(!diags||diags.length===0){
-    const ran=d.diagnostics?d.diagnostics.checks_run:0;
-    html+='<p class="no-issues">✓ all '+(ran||'')+'checks passed</p>';
-  } else {
-    diags.forEach(function(i){html+=renderDiag(i);});
-  }
-  html+='</div>';
-
-  // overlay status
-  html+='<div class="section"><div class="section-title">local overlay</div>';
+  html+='<div class="status-grid">';
+  html+='<section class="status-card"><h3>Local .local services</h3>';
   html+='<div class="status-row">'+dot(d.overlay_active)+(d.overlay_active?'active':'inactive')+'</div>';
   if(d.local_services&&d.local_services.length>0){
-    html+='<table><thead><tr><th>domain</th><th>real addr</th><th>pid</th></tr></thead><tbody>';
+    html+='<table><thead><tr><th>domain</th><th>substitutions</th><th>real addr</th><th>port</th><th>pid</th></tr></thead><tbody>';
     d.local_services.forEach(function(s){
-      html+='<tr><td>'+esc(s.domain)+'</td><td>'+esc(s.real_addr)+'</td><td>'+esc(s.pid)+'</td></tr>';
+      html+='<tr><td>'+domainCell(s)+'</td><td>'+renderSubstitutions(s.substitutions)+'</td><td>'+esc(s.real_addr)+'</td><td>'+esc(s.service_port)+'</td><td>'+esc(s.pid)+'</td></tr>';
     });
     html+='</tbody></table>';
   } else {
     html+='<p class="empty">no local services</p>';
   }
-  html+='</div>';
+  html+='</section>';
 
-  // cloud tunnel
-  html+='<div class="section"><div class="section-title">cloud tunnel</div>';
+  html+='<section class="status-card"><h3>Cloud routes</h3>';
   html+='<div class="status-row">'+dot(d.cloud_connected)+(d.cloud_connected?'connected':'disconnected');
-  if(d.cloud_error) html+=' <span style="color:#f85149;font-size:11px">— '+esc(d.cloud_error)+'</span>';
+  if(d.cloud_error) html+=' <span style="color:var(--bad);font-size:13px">- '+esc(d.cloud_error)+'</span>';
   html+='</div>';
   if(d.cloud_routes&&d.cloud_routes.length>0){
-    html+='<table><thead><tr><th>domain</th><th>port</th><th>pid</th></tr></thead><tbody>';
+    html+='<table><thead><tr><th>domain</th><th>substitutions</th><th>port</th><th>pid</th></tr></thead><tbody>';
     d.cloud_routes.forEach(function(r){
-      html+='<tr><td>'+esc(r.domain)+'</td><td>'+esc(r.port)+'</td><td>'+esc(r.pid)+'</td></tr>';
+      html+='<tr><td>'+domainCell(r)+'</td><td>'+renderSubstitutions(r.substitutions)+'</td><td>'+esc(r.port)+'</td><td>'+esc(r.pid)+'</td></tr>';
     });
     html+='</tbody></table>';
   } else {
     html+='<p class="empty">no cloud routes</p>';
   }
+  html+='</section>';
   html+='</div>';
 
-  // management registrations
-  html+='<div class="section"><div class="section-title">api registrations</div>';
+  html+='<section class="section"><div class="section-head"><h2>API registrations</h2></div>';
   if(d.management_registrations&&d.management_registrations.length>0){
     html+='<table><thead><tr><th>pid</th><th>local port</th><th>domain</th></tr></thead><tbody>';
     d.management_registrations.forEach(function(r){
@@ -315,9 +575,19 @@ function render(d){
   } else {
     html+='<p class="empty">none</p>';
   }
-  html+='</div>';
+  html+='</section>';
 
-  document.getElementById('root').innerHTML=html;
+  html+='<section class="section" id="diagnostics"><div class="section-head"><h2>Diagnostics</h2></div>';
+  const diags=d.diagnostics&&d.diagnostics.issues;
+  if(!diags||diags.length===0){
+    const ran=d.diagnostics?d.diagnostics.checks_run:0;
+    html+='<p class="no-issues">all '+(ran||'')+' checks passed</p>';
+  } else {
+    diags.forEach(function(i){html+=renderDiag(i);});
+  }
+  html+='</section>';
+
+  document.getElementById('status-root').innerHTML=html;
 }
 
 async function load(){
@@ -325,14 +595,14 @@ async function load(){
     const r=await fetch('/status.json');
     if(r.ok) render(await r.json());
   }catch(e){
-    document.getElementById('root').innerHTML='<p class="loading">waiting for daemon…</p>';
+    document.getElementById('status-root').innerHTML='<p class="loading">Waiting for daemon...</p>';
   }
 }
 load();
 setInterval(load,3000);
 </script>
 </body>
-</html>"#;
+</html>"##;
 
 /// GET /status.json — machine-readable snapshot of all daemon state.
 pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -362,7 +632,10 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         .map(|r| {
             serde_json::json!({
                 "domain": r.domain,
+                "domain_template": if r.domain_template.is_empty() { &r.domain } else { &r.domain_template },
+                "substitutions": display_substitutions(&r.substitutions, &r.source),
                 "real_addr": r.real_addr,
+                "service_port": r.service_port,
                 "pid": r.pid,
             })
         })
@@ -374,6 +647,8 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         .map(|r| {
             serde_json::json!({
                 "domain": r.domain,
+                "domain_template": if r.domain_template.is_empty() { &r.domain } else { &r.domain_template },
+                "substitutions": display_substitutions(&r.substitutions, &r.source),
                 "port": r.port,
                 "pid": r.pid,
             })
@@ -389,6 +664,6 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         "cloud_routes": cloud_routes,
         "management_registrations": management_registrations,
         "diagnostics": diagnostics,
+        "languages": detected_languages(),
     }))
 }
-

@@ -11,6 +11,9 @@ use portzero_daemon::notify::read_issues;
 use portzero_daemon::route_table::{OverlayState, RouteTable};
 
 use crate::auth::AuthConfig;
+use crate::browser::open_browser;
+
+const LOCAL_DASHBOARD_URL: &str = "http://portzero.local";
 
 /// Start the discovery daemon in the background.
 ///
@@ -22,6 +25,7 @@ pub fn start() -> Result<()> {
     // Check if already running.
     if let Some(pid) = read_daemon_pid(&config) {
         println!("Daemon is already running (PID {pid}).");
+        open_local_dashboard();
         return Ok(());
     }
 
@@ -97,6 +101,7 @@ pub fn start() -> Result<()> {
         println!("Daemon started (PID {child_pid}).");
         println!("Auth: {auth_status}");
         println!("Log:  {}", log_path.display());
+        open_local_dashboard();
     } else {
         println!(
             "Daemon process spawned (PID {child_pid}) but did not confirm startup.\n\
@@ -106,6 +111,13 @@ pub fn start() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn open_local_dashboard() {
+    println!("Dashboard: {LOCAL_DASHBOARD_URL}");
+    if !open_browser(LOCAL_DASHBOARD_URL) {
+        println!("Could not open a browser automatically.");
+    }
 }
 
 /// Run the daemon in the foreground (called internally by `start --foreground`).

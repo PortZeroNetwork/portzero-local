@@ -11,6 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use crate::api_client::ApiClient;
+use crate::browser::open_browser;
 
 /// Stored auth credentials at ~/.portzero/auth.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,42 +243,6 @@ async fn login_browser() -> Result<()> {
             );
         }
     }
-}
-
-/// Try to open the given URL in the default browser.
-/// Returns true if the command was spawned successfully.
-fn open_browser(url: &str) -> bool {
-    #[cfg(target_os = "linux")]
-    let result = std::process::Command::new("xdg-open")
-        .arg(url)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open")
-        .arg(url)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-
-    #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let result: Result<std::process::Child, std::io::Error> = Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "unsupported platform",
-    ));
-
-    result.is_ok()
 }
 
 /// Accept a single HTTP request on the listener, parse the callback, and

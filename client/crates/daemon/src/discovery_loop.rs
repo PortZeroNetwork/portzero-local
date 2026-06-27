@@ -299,9 +299,10 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         docker_shutdown.clone(),
     ));
 
-    let (mgmt_server, mgmt_listener) = crate::management::ManagementServer::bind(config.state_dir.clone())
-        .await
-        .expect("failed to bind management API server");
+    let (mgmt_server, mgmt_listener) =
+        crate::management::ManagementServer::bind(config.state_dir.clone())
+            .await
+            .expect("failed to bind management API server");
     let mgmt_port = mgmt_server.bound_port;
     let mgmt_store = mgmt_server.store.clone();
     tokio::spawn(mgmt_server.serve(mgmt_listener));
@@ -316,16 +317,18 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             tracing::info!("Virtual overlay network started (.portzero.local)");
             // Seed the overlay immediately so existing services are reachable
             // without waiting for the first scan cycle.
-            let (overlay_issues, overlay_services) =
-                match tokio::time::timeout(OVERLAY_REFRESH_TIMEOUT, refresh_overlay_services(&ov, mgmt_port, &mgmt_store))
-                    .await
-                {
-                    Ok(result) => result,
-                    Err(_) => {
-                        tracing::warn!("Initial overlay service refresh timed out; continuing");
-                        (Vec::new(), Vec::new())
-                    }
-                };
+            let (overlay_issues, overlay_services) = match tokio::time::timeout(
+                OVERLAY_REFRESH_TIMEOUT,
+                refresh_overlay_services(&ov, mgmt_port, &mgmt_store),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    tracing::warn!("Initial overlay service refresh timed out; continuing");
+                    (Vec::new(), Vec::new())
+                }
+            };
             write_overlay_state(config, &overlay_services, true);
             let docker_conflicts = conflicts.snapshot().await;
             gather_and_publish_issues(
@@ -427,6 +430,8 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 if let Some(route) = route_table.routes.get(domain) {
                     discovered.push(crate::discovery::DiscoveredService {
                         domain: route.domain.clone(),
+                        domain_template: route.domain_template.clone(),
+                        substitutions: route.substitutions.clone(),
                         port: route.port,
                         extra_ports: route.extra_ports.clone(),
                         pid: route.pid,
@@ -464,8 +469,11 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             // Legacy monitoring runs regardless of whether the overlay started, so
             // when the overlay is unavailable we still scan with empty overlay data.
             let (overlay_issues, overlay_services) = if let Some(ref ov) = overlay {
-                match tokio::time::timeout(OVERLAY_REFRESH_TIMEOUT, refresh_overlay_services(ov, mgmt_port, &mgmt_store))
-                    .await
+                match tokio::time::timeout(
+                    OVERLAY_REFRESH_TIMEOUT,
+                    refresh_overlay_services(ov, mgmt_port, &mgmt_store),
+                )
+                .await
                 {
                     Ok(result) => {
                         write_overlay_state(config, &result.1, true);
@@ -726,6 +734,8 @@ fn write_overlay_state(
         .iter()
         .map(|s| OverlayRoute {
             domain: format!("{}.portzero.local", s.name),
+            domain_template: s.domain_template.clone(),
+            substitutions: s.substitutions.clone(),
             service_port: s.service_port,
             real_addr: s.real_addr.to_string(),
             pid: s.pid,
@@ -1291,6 +1301,8 @@ mod tests {
         let changes = RouteChanges {
             added: vec![Route {
                 domain: "api.test.portzero.cloud".to_string(),
+                domain_template: "api.test.portzero.cloud".to_string(),
+                substitutions: Default::default(),
                 host: "127.0.0.1".to_string(),
                 port: 8080,
                 extra_ports: vec![],
@@ -1314,6 +1326,8 @@ mod tests {
         let services = vec![
             DiscoveredNetworkService {
                 name: "my-db".to_string(),
+                domain_template: "my-db.portzero.local".to_string(),
+                substitutions: Default::default(),
                 real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 32768),
                 service_port: 5432,
                 pid: 100,
@@ -1321,6 +1335,8 @@ mod tests {
             },
             DiscoveredNetworkService {
                 name: "my-api".to_string(),
+                domain_template: "my-api.portzero.local".to_string(),
+                substitutions: Default::default(),
                 real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000),
                 service_port: 8080,
                 pid: 101,

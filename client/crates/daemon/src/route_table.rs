@@ -3,7 +3,7 @@
 //! The route table is the output of discovery. It is persisted to
 //! `~/.portzero/daemon/routes.json` and consumed by the tunnel client.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -17,6 +17,12 @@ use crate::discovery::{DiscoveredService, PortMapping, ServiceSource};
 pub struct Route {
     /// The full PZ_TUNNEL value (e.g. "api-myapp-main-alice.tunnel.portzero.cloud").
     pub domain: String,
+    /// Original PZ_TUNNEL domain value before template substitution.
+    #[serde(default)]
+    pub domain_template: String,
+    /// Values available for template substitution when this route was found.
+    #[serde(default)]
+    pub substitutions: BTreeMap<String, String>,
     /// Host to forward to (usually "127.0.0.1").
     pub host: String,
     /// Port to forward to.
@@ -94,6 +100,8 @@ impl RouteTable {
                 if existing.port != svc.port || existing.pid != svc.pid {
                     let route = Route {
                         domain: domain.clone(),
+                        domain_template: svc.domain_template.clone(),
+                        substitutions: svc.substitutions.clone(),
                         host: "127.0.0.1".to_string(),
                         port: svc.port,
                         extra_ports: svc.extra_ports.clone(),
@@ -112,6 +120,8 @@ impl RouteTable {
             } else {
                 let route = Route {
                     domain: domain.clone(),
+                    domain_template: svc.domain_template.clone(),
+                    substitutions: svc.substitutions.clone(),
                     host: "127.0.0.1".to_string(),
                     port: svc.port,
                     extra_ports: svc.extra_ports.clone(),
@@ -184,6 +194,12 @@ impl RouteTable {
 pub struct OverlayRoute {
     /// Full domain name (e.g. "web-main.portzero.local").
     pub domain: String,
+    /// Original PZ_TUNNEL domain value before template substitution.
+    #[serde(default)]
+    pub domain_template: String,
+    /// Values available for template substitution when this route was found.
+    #[serde(default)]
+    pub substitutions: BTreeMap<String, String>,
     /// Port clients are expected to connect to on the virtual IP (e.g. 8080).
     pub service_port: u16,
     /// Actual host address the daemon proxies to (e.g. "127.0.0.1:32771").
@@ -244,6 +260,8 @@ mod tests {
     fn make_service(domain: &str, port: u16, pid: u32) -> DiscoveredService {
         DiscoveredService {
             domain: domain.to_string(),
+            domain_template: domain.to_string(),
+            substitutions: Default::default(),
             port,
             extra_ports: vec![],
             pid,
@@ -312,8 +330,7 @@ mod tests {
 
     #[test]
     fn test_save_and_load() {
-        let dir =
-            std::env::temp_dir().join(format!("portzero-route-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("portzero-route-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("routes.json");
 

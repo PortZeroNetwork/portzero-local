@@ -340,6 +340,8 @@ mod tests {
     fn proc_svc(name: &str, pid: u32, cwd: Option<&str>) -> DiscoveredNetworkService {
         DiscoveredNetworkService {
             name: name.to_string(),
+            domain_template: format!("{name}.portzero.local"),
+            substitutions: Default::default(),
             real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 30000),
             service_port: 5432,
             pid,
@@ -352,6 +354,8 @@ mod tests {
     fn container_svc(name: &str, id: &str) -> DiscoveredNetworkService {
         DiscoveredNetworkService {
             name: name.to_string(),
+            domain_template: format!("{name}.portzero.local"),
+            substitutions: Default::default(),
             real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 30000),
             service_port: 5432,
             pid: 0,
@@ -498,10 +502,7 @@ mod tests {
         let issues = detect_duplicate_names(&svcs);
         assert_eq!(issues.len(), 2);
         match (&issues[0], &issues[1]) {
-            (
-                Issue::DuplicateName { name: n0, .. },
-                Issue::DuplicateName { name: n1, .. },
-            ) => {
+            (Issue::DuplicateName { name: n0, .. }, Issue::DuplicateName { name: n1, .. }) => {
                 assert_eq!(n0, "alpha");
                 assert_eq!(n1, "zebra");
             }

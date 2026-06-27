@@ -18,6 +18,7 @@
 //! - Windows: full for same-bitness/readable processes (reads the target PEB
 //!   environment block and uses `Get-NetTCPConnection` for port ownership)
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -75,6 +76,10 @@ pub fn extract_local_label(name: &str) -> String {
 pub struct DiscoveredService {
     /// Resolved full PZ_TUNNEL value (must be a complete domain name).
     pub domain: String,
+    /// Original PZ_TUNNEL domain value before template substitution.
+    pub domain_template: String,
+    /// Values available for template substitution when this service was found.
+    pub substitutions: BTreeMap<String, String>,
     /// Selected HTTP port (0 if not determinable).
     pub port: u16,
     /// Additional port mappings from PZ_TUNNEL_PORTS.
@@ -246,6 +251,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
             // On the cloud path the edge assigns the URL, so the port is ignored.
             let (raw_domain, _canonical_port) = split_tunnel_port(&raw);
             warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
+            let substitutions = template_substitutions(cwd.as_deref(), account_id, username, None);
             let domain = resolve_tunnel_template(raw_domain, cwd.as_deref(), account_id, username);
 
             if is_local_overlay_domain(&domain) {
@@ -322,6 +328,8 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
 
             services.push(DiscoveredService {
                 domain,
+                domain_template: raw_domain.to_string(),
+                substitutions,
                 port,
                 extra_ports,
                 pid: pid_u32,
@@ -359,6 +367,7 @@ fn scan_processes_windows(
             .and_then(|process| process.cwd().map(|p| p.to_path_buf()));
         let (raw_domain, _canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
+        let substitutions = template_substitutions(cwd.as_deref(), account_id, username, None);
         let domain = resolve_tunnel_template(raw_domain, cwd.as_deref(), account_id, username);
 
         if is_local_overlay_domain(&domain) {
@@ -422,6 +431,8 @@ fn scan_processes_windows(
 
         services.push(DiscoveredService {
             domain,
+            domain_template: raw_domain.to_string(),
+            substitutions,
             port,
             extra_ports,
             pid: pid_u32,
@@ -470,6 +481,46 @@ fn resolve_tunnel_template(
     let dir = project_dir.unwrap_or(Path::new("."));
     let ctx = DomainContext::from_environment("", dir, account_id, username);
     ctx.resolve(raw)
+}
+
+fn template_substitutions(
+    project_dir: Option<&Path>,
+    account_id: Option<&str>,
+    username: Option<&str>,
+    source_name: Option<&str>,
+) -> BTreeMap<String, String> {
+    let dir = project_dir.unwrap_or(Path::new("."));
+    let ctx = DomainContext::from_environment("", dir, account_id, username);
+    let folder_name = source_name
+        .map(|s| s.trim_start_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            project_dir
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let mut values = BTreeMap::new();
+    values.insert("branch".to_string(), ctx.branch);
+    values.insert(
+        "worktree".to_string(),
+        ctx.worktree.unwrap_or_else(|| "unknown".to_string()),
+    );
+    values.insert("folder-name".to_string(), folder_name);
+    values.insert("project".to_string(), ctx.project);
+    values.insert("user".to_string(), ctx.user);
+    values.insert("machine".to_string(), ctx.machine);
+    values.insert(
+        "uid".to_string(),
+        ctx.uid.unwrap_or_else(|| "unknown".to_string()),
+    );
+    values.insert(
+        "username".to_string(),
+        ctx.username.unwrap_or_else(|| "unknown".to_string()),
+    );
+    values
 }
 
 // ---------------------------------------------------------------------------
@@ -1314,6 +1365,8 @@ fn inspect_container(
     // On the cloud path the edge assigns the URL, so the port is ignored.
     let (raw_domain, canonical_port) = split_tunnel_port(&raw);
     warn_if_port_like_rejected(&raw, canonical_port, container_pid);
+    let substitutions =
+        template_substitutions(project_dir.as_deref(), account_id, username, Some(name));
     let domain = resolve_tunnel_template(raw_domain, project_dir.as_deref(), account_id, username);
 
     if is_local_overlay_domain(&domain) {
@@ -1355,6 +1408,8 @@ fn inspect_container(
 
     Ok(Some(DiscoveredService {
         domain,
+        domain_template: raw_domain.to_string(),
+        substitutions,
         port,
         extra_ports,
         pid: container_pid,
@@ -1460,6 +1515,10 @@ pub struct DiscoveredNetworkService {
     /// Owning PID.
     pub pid: u32,
     pub source: ServiceSource,
+    /// Original PZ_TUNNEL domain value before template substitution.
+    pub domain_template: String,
+    /// Values available for template substitution when this service was found.
+    pub substitutions: BTreeMap<String, String>,
 }
 
 /// Scan for services that should participate in the virtual overlay.
@@ -1482,8 +1541,7 @@ pub async fn scan_network_services(
     // already registered through the management API and synthesize overlay
     // entries for them instead.
     let registrations = mgmt_store.read().await.clone();
-    let registered_pids: std::collections::HashSet<u32> =
-        registrations.keys().copied().collect();
+    let registered_pids: std::collections::HashSet<u32> = registrations.keys().copied().collect();
 
     let mut out = Vec::new();
     match tokio::time::timeout(
@@ -1520,6 +1578,8 @@ pub async fn scan_network_services(
             }
             out.push(DiscoveredNetworkService {
                 name: extract_local_label(&reg.domain),
+                domain_template: reg.domain.clone(),
+                substitutions: BTreeMap::new(),
                 real_addr: std::net::SocketAddr::from(([127, 0, 0, 1], reg.local_port)),
                 service_port: 80,
                 pid: *pid,
@@ -1533,6 +1593,8 @@ pub async fn scan_network_services(
 
 struct NetProcessCandidate {
     label: String,
+    domain_template: String,
+    substitutions: BTreeMap<String, String>,
     real_addr: std::net::SocketAddr,
     port: u16,
     needs_probe: bool,
@@ -1571,6 +1633,7 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
             let process_cwd = process.cwd().map(|p| p.to_path_buf());
             let (raw_domain, canonical_port) = split_tunnel_port(&raw);
             warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
+            let substitutions = template_substitutions(process_cwd.as_deref(), None, None, None);
             let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
 
             if !is_local_overlay_domain(&resolved) {
@@ -1629,6 +1692,8 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
 
             candidates.push(NetProcessCandidate {
                 label,
+                domain_template: raw_domain.to_string(),
+                substitutions,
                 real_addr,
                 port,
                 needs_probe,
@@ -1667,6 +1732,7 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
             .and_then(|process| process.cwd().map(|p| p.to_path_buf()));
         let (raw_domain, canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
+        let substitutions = template_substitutions(process_cwd.as_deref(), None, None, None);
         let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
 
         if !is_local_overlay_domain(&resolved) {
@@ -1720,6 +1786,8 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
 
         candidates.push(NetProcessCandidate {
             label,
+            domain_template: raw_domain.to_string(),
+            substitutions,
             real_addr,
             port,
             needs_probe,
@@ -1761,6 +1829,8 @@ async fn scan_network_processes(
 
         results.push(DiscoveredNetworkService {
             name: c.label,
+            domain_template: c.domain_template,
+            substitutions: c.substitutions,
             real_addr: c.real_addr,
             service_port,
             pid: c.pid,
@@ -1862,6 +1932,7 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
         let (raw_domain, canonical_port) = split_tunnel_port(&raw_name);
         warn_if_port_like_rejected(&raw_name, canonical_port, pid);
         let project_dir = find_host_project_dir_for_container(mounts_json, labels_json);
+        let substitutions = template_substitutions(project_dir.as_deref(), None, None, Some(_name));
         let resolved_name = resolve_tunnel_template(raw_domain, project_dir.as_deref(), None, None);
 
         if !is_local_overlay_domain(&resolved_name) {
@@ -1909,6 +1980,8 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
         let container_name = label.clone();
         out.push(DiscoveredNetworkService {
             name: label,
+            domain_template: raw_domain.to_string(),
+            substitutions,
             real_addr,
             service_port: svc_port,
             pid,

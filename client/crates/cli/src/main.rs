@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 mod api_client;
 mod auth;
 mod autostart;
+mod browser;
 mod daemon;
 mod domains;
 mod team;
