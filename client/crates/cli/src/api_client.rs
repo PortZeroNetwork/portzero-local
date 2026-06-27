@@ -36,9 +36,9 @@ impl ApiClient {
 
     /// Require that auth is loaded, returning a helpful error if not.
     pub fn require_auth(&self) -> Result<&AuthConfig> {
-        self.auth.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("Not logged in. Run `portzero login` to authenticate.")
-        })
+        self.auth
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Not logged in. Run `portzero login` to authenticate."))
     }
 
     /// Send a GET request to the given API path (e.g. "/auth/me").

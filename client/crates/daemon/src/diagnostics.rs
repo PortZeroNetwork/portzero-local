@@ -124,11 +124,7 @@ fn check_state_dir_writable(state_dir: &Path) -> Option<Diagnostic> {
                 severity: Severity::Error,
                 category: "system".into(),
                 title: "State directory is not writable".to_string(),
-                detail: format!(
-                    "Cannot write to {}: {}",
-                    state_dir.display(),
-                    e
-                ),
+                detail: format!("Cannot write to {}: {}", state_dir.display(), e),
                 fix: Some(Fix {
                     kind: FixKind::Manual,
                     description: "Check permissions on the state directory".to_string(),
@@ -162,7 +158,10 @@ fn check_state_files_valid(state_dir: &Path) -> Option<Diagnostic> {
             severity: Severity::Warning,
             category: "system".into(),
             title: "State file corrupted".to_string(),
-            detail: format!("The following state files failed to parse: {}", failed.join(", ")),
+            detail: format!(
+                "The following state files failed to parse: {}",
+                failed.join(", ")
+            ),
             fix: Some(Fix {
                 kind: FixKind::Auto,
                 description: "Restart the daemon to reinitialize state files".to_string(),
@@ -233,7 +232,10 @@ fn check_etc_hosts_override() -> Option<Diagnostic> {
     if offending.is_empty() {
         None
     } else {
-        tracing::debug!("check_etc_hosts_override: found {} offending lines", offending.len());
+        tracing::debug!(
+            "check_etc_hosts_override: found {} offending lines",
+            offending.len()
+        );
         Some(Diagnostic {
             id: "etc_hosts_override".into(),
             severity: Severity::Warning,
@@ -262,7 +264,8 @@ fn check_dev_net_tun() -> Option<Diagnostic> {
             severity: Severity::Critical,
             category: "network".into(),
             title: "/dev/net/tun is not available".to_string(),
-            detail: "The TUN kernel module is required to create virtual network devices.".to_string(),
+            detail: "The TUN kernel module is required to create virtual network devices."
+                .to_string(),
             fix: Some(Fix {
                 kind: FixKind::Manual,
                 description: "Load the tun kernel module.".to_string(),
@@ -289,10 +292,9 @@ fn check_cap_net_admin() -> Option<Diagnostic> {
         }
     };
 
-    let cap_eff_hex = content.lines().find_map(|line| {
-        line.strip_prefix("CapEff:")
-            .map(|v| v.trim().to_string())
-    });
+    let cap_eff_hex = content
+        .lines()
+        .find_map(|line| line.strip_prefix("CapEff:").map(|v| v.trim().to_string()));
 
     let cap_eff = match cap_eff_hex
         .as_deref()
@@ -307,7 +309,10 @@ fn check_cap_net_admin() -> Option<Diagnostic> {
 
     const CAP_NET_ADMIN: u64 = 1 << 12;
     if cap_eff & CAP_NET_ADMIN == 0 {
-        tracing::debug!("check_cap_net_admin: CAP_NET_ADMIN not set (CapEff={:#x})", cap_eff);
+        tracing::debug!(
+            "check_cap_net_admin: CAP_NET_ADMIN not set (CapEff={:#x})",
+            cap_eff
+        );
         let exe_path = std::env::current_exe()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "/path/to/portzero".to_string());
@@ -618,7 +623,8 @@ fn check_auth_token(state_dir: &Path) -> Option<Diagnostic> {
                         severity: Severity::Warning,
                         category: "auth".into(),
                         title: "Cloud auth token expires soon (within 24 hours)".to_string(),
-                        detail: "Re-authenticate soon to avoid losing cloud tunnel access.".to_string(),
+                        detail: "Re-authenticate soon to avoid losing cloud tunnel access."
+                            .to_string(),
                         fix: Some(Fix {
                             kind: FixKind::Manual,
                             description: "Re-authenticate with portzero.cloud.".to_string(),
@@ -635,7 +641,10 @@ fn check_auth_token(state_dir: &Path) -> Option<Diagnostic> {
 fn check_ca_cert_exists() -> Option<Diagnostic> {
     match crate::tls::ca::LocalCa::ca_cert_path() {
         Ok(path) if !path.exists() => {
-            tracing::debug!("check_ca_cert_exists: CA cert missing at {}", path.display());
+            tracing::debug!(
+                "check_ca_cert_exists: CA cert missing at {}",
+                path.display()
+            );
             Some(Diagnostic {
                 id: "ca_cert_missing".into(),
                 severity: Severity::Error,

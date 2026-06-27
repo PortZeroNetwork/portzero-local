@@ -115,8 +115,7 @@ fn save(ca: &LocalCa, expiry: OffsetDateTime, dir: &Path) -> Result<()> {
     // files are never written so the bundle stays consistent on retry.
     write_private(&dir.join(WILDCARD_KEY), ca.wildcard_key_pem.as_bytes())?;
     std::fs::write(dir.join(CA_CERT), &ca.ca_cert_pem).context("write ca.crt")?;
-    std::fs::write(dir.join(WILDCARD_CERT), &ca.wildcard_cert_pem)
-        .context("write wildcard.crt")?;
+    std::fs::write(dir.join(WILDCARD_CERT), &ca.wildcard_cert_pem).context("write wildcard.crt")?;
     std::fs::write(
         dir.join(WILDCARD_EXPIRY),
         expiry.format(&Rfc3339).context("format expiry timestamp")?,
@@ -194,8 +193,7 @@ fn write_private(path: &Path, content: &[u8]) -> Result<()> {
     }
     #[cfg(not(unix))]
     {
-        std::fs::write(path, content)
-            .with_context(|| format!("write {}", path.display()))?;
+        std::fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
     }
     Ok(())
 }
@@ -263,6 +261,10 @@ mod tests {
         let path = dir.path().join("key.pem");
         write_private(&path, b"test").unwrap();
         let mode = std::fs::metadata(&path).unwrap().mode();
-        assert_eq!(mode & 0o777, 0o600, "key file must be owner-read/write only");
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "key file must be owner-read/write only"
+        );
     }
 }

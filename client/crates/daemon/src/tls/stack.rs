@@ -60,14 +60,13 @@ pub fn build_server_config(ca: &LocalCa) -> Result<Arc<ServerConfig>> {
             .context("parse wildcard key PEM")?
             .context("no private key found in wildcard PEM")?;
 
-    let config = ServerConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .context("configure TLS protocol versions")?
-    .with_no_client_auth()
-    .with_single_cert(certs, key)
-    .context("build rustls ServerConfig")?;
+    let config =
+        ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .context("configure TLS protocol versions")?
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .context("build rustls ServerConfig")?;
 
     Ok(Arc::new(config))
 }
@@ -87,9 +86,7 @@ pub(crate) fn spawn_tls_backend(
     from_backend_tx: mpsc::Sender<Vec<u8>>,
 ) {
     tokio::spawn(async move {
-        if let Err(e) =
-            tls_proxy(server_config, real_addr, to_backend_rx, from_backend_tx).await
-        {
+        if let Err(e) = tls_proxy(server_config, real_addr, to_backend_rx, from_backend_tx).await {
             tracing::warn!("TLS proxy for {real_addr}: {e:#}");
         }
     });
@@ -133,10 +130,7 @@ async fn tls_proxy(
 
     // Run the TLS handshake on the `tls_io` end of the duplex.
     let acceptor = TlsAcceptor::from(server_config);
-    let tls_stream = acceptor
-        .accept(tls_io)
-        .await
-        .context("TLS handshake")?;
+    let tls_stream = acceptor.accept(tls_io).await.context("TLS handshake")?;
 
     // Connect to the real backend service (plain TCP).
     let backend = tokio::net::TcpStream::connect(real_addr)

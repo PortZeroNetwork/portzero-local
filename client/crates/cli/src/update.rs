@@ -172,9 +172,7 @@ pub async fn check_for_update() {
         return;
     };
 
-    if let Ok(Ok(Some(latest))) =
-        timeout(REQUEST_TIMEOUT, fetch_latest_version()).await
-    {
+    if let Ok(Ok(Some(latest))) = timeout(REQUEST_TIMEOUT, fetch_latest_version()).await {
         record_check();
 
         if let Some(latest_version) = parse_semver(&latest) {

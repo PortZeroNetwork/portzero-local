@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use axum::{Router, routing};
+use axum::{routing, Router};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -50,7 +50,11 @@ impl ManagementServer {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let bound_port = listener.local_addr()?.port();
         let store: RegistrationStore = Arc::new(RwLock::new(HashMap::new()));
-        let server = ManagementServer { store, bound_port, state_dir };
+        let server = ManagementServer {
+            store,
+            bound_port,
+            state_dir,
+        };
         Ok((server, listener))
     }
 
@@ -76,7 +80,10 @@ impl ManagementServer {
 fn build_router(state: AppState) -> Router {
     Router::new()
         // Management REST API (served at api.portzero.local)
-        .route("/v1/register", routing::post(handlers::register).delete(handlers::deregister))
+        .route(
+            "/v1/register",
+            routing::post(handlers::register).delete(handlers::deregister),
+        )
         .route("/v1/status", routing::get(handlers::status))
         // Status UI (served at portzero.local)
         .route("/", routing::get(handlers::status_ui))

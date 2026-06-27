@@ -1566,9 +1566,47 @@ pub async fn scan_network_services(
         Err(_) => tracing::debug!("Docker network scan timed out"),
     }
 
+    append_registered_network_services(&mut out, &registrations);
+
+    out
+}
+
+/// Fast overlay-only scan used on first DNS hit for an unknown
+/// `*.portzero.local` name.
+///
+/// This intentionally skips Docker and issue detection so a browser/curl lookup
+/// can be satisfied as soon as the local process appears, while the normal
+/// periodic scan still performs the full reconciliation.
+pub async fn scan_network_process_services(
+    mgmt_store: &crate::management::RegistrationStore,
+) -> Option<Vec<DiscoveredNetworkService>> {
+    let registrations = mgmt_store.read().await.clone();
+    let registered_pids: std::collections::HashSet<u32> = registrations.keys().copied().collect();
+
+    let mut out = match tokio::time::timeout(
+        std::time::Duration::from_millis(750),
+        scan_network_processes(&registered_pids),
+    )
+    .await
+    {
+        Ok(process_services) => process_services,
+        Err(_) => {
+            tracing::debug!("fast overlay process scan timed out");
+            return None;
+        }
+    };
+
+    append_registered_network_services(&mut out, &registrations);
+    Some(out)
+}
+
+fn append_registered_network_services(
+    out: &mut Vec<DiscoveredNetworkService>,
+    registrations: &std::collections::HashMap<u32, Vec<crate::management::PortRegistration>>,
+) {
     // Synthesize overlay entries for management-registered PIDs that are still
     // alive. These bypass the PZ_TUNNEL env-var path and protocol probing.
-    for (pid, regs) in &registrations {
+    for (pid, regs) in registrations {
         if !crate::management::pid_lookup::pid_is_alive(*pid) {
             continue;
         }
@@ -1587,8 +1625,6 @@ pub async fn scan_network_services(
             });
         }
     }
-
-    out
 }
 
 struct NetProcessCandidate {

@@ -8,9 +8,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use futures_util::{SinkExt, StreamExt};
 use portzero_proto::{ClientMessage, ServerMessage};
 use portzero_tunnel_client::domain_router::DomainRouter;
-use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -471,7 +471,9 @@ mod tests {
     #[tokio::test]
     async fn test_unregister_route_not_connected() {
         let conn = CloudConnector::new("tok_test".to_string());
-        let result = conn.unregister_route("api-test.tunnel.portzero.cloud").await;
+        let result = conn
+            .unregister_route("api-test.tunnel.portzero.cloud")
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Not connected"));
     }

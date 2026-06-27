@@ -158,10 +158,7 @@ pub enum CacheDecision {
 
 /// PURE cache-lookup decision over a borrowed map. Separated from the global
 /// cache so the (pid, real_port) decision logic is unit-testable.
-pub fn cache_lookup(
-    cache: &HashMap<CacheKey, Option<u16>>,
-    key: CacheKey,
-) -> CacheDecision {
+pub fn cache_lookup(cache: &HashMap<CacheKey, Option<u16>>, key: CacheKey) -> CacheDecision {
     match cache.get(&key) {
         Some(v) => CacheDecision::Hit(*v),
         None => CacheDecision::Miss,
@@ -325,7 +322,10 @@ mod tests {
     fn http_response_line_classifies_as_http() {
         let bytes = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
         assert_eq!(classify(bytes), Some(Canonical::Http));
-        assert_eq!(classify(b"HTTP/1.0 404 Not Found\r\n"), Some(Canonical::Http));
+        assert_eq!(
+            classify(b"HTTP/1.0 404 Not Found\r\n"),
+            Some(Canonical::Http)
+        );
     }
 
     #[test]
@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(classify(&[0xff, 0x00, 0x13, 0x37]), None);
         assert_eq!(classify(&[0x16]), None); // too short to be a TLS record
         assert_eq!(classify(&[0x16, 0x03]), None); // still too short
-        // 0x16 but wrong version bytes (not 0x03 0x0X) → not TLS.
+                                                   // 0x16 but wrong version bytes (not 0x03 0x0X) → not TLS.
         assert_eq!(classify(&[0x16, 0xff, 0xff]), None);
         // Looks HTTP-ish but isn't the status line.
         assert_eq!(classify(b"HELLO HTTP"), None);
@@ -412,10 +412,7 @@ mod tests {
 
         // A cached "nothing detected" is still a hit (don't re-probe).
         cache.insert((1234, 6000), None);
-        assert_eq!(
-            cache_lookup(&cache, (1234, 6000)),
-            CacheDecision::Hit(None)
-        );
+        assert_eq!(cache_lookup(&cache, (1234, 6000)), CacheDecision::Hit(None));
 
         // Different pid/port → miss (backend changed → re-probe).
         assert_eq!(cache_lookup(&cache, (9999, 5000)), CacheDecision::Miss);

@@ -29,15 +29,15 @@ pub const DEFAULT_TEMPLATE: &str = "{service}-{project}-{branch}-{user}.tunnel.p
 /// Reads `PZ_TUNNEL_BASE_DOMAIN` from the environment, falling back to
 /// `portzero.cloud`.
 pub fn default_template() -> String {
-    let base = std::env::var("PZ_TUNNEL_BASE_DOMAIN")
-        .unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
+    let base =
+        std::env::var("PZ_TUNNEL_BASE_DOMAIN").unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
     format!("{{service}}-{{project}}-{{branch}}-{{user}}.{TUNNEL_SUBDOMAIN}.{base}")
 }
 
 /// The tunnel base domain (e.g. `tunnel.portzero.cloud`), respecting overrides.
 pub fn tunnel_base() -> String {
-    let base = std::env::var("PZ_TUNNEL_BASE_DOMAIN")
-        .unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
+    let base =
+        std::env::var("PZ_TUNNEL_BASE_DOMAIN").unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
     format!("{TUNNEL_SUBDOMAIN}.{base}")
 }
 
@@ -457,7 +457,10 @@ mod tests {
         };
 
         let result = ctx.resolve("{service}-{project}-{branch}-{user}-{uid}.tunnel.portzero.cloud");
-        assert_eq!(result, "api-myapp-main-alice-abc12345.tunnel.portzero.cloud");
+        assert_eq!(
+            result,
+            "api-myapp-main-alice-abc12345.tunnel.portzero.cloud"
+        );
     }
 
     #[test]
@@ -648,7 +651,10 @@ mod tests {
             ("db.portzero.local", Some(5432))
         );
         // Lowest and highest valid ports.
-        assert_eq!(split_tunnel_port("x.portzero.local:1"), ("x.portzero.local", Some(1)));
+        assert_eq!(
+            split_tunnel_port("x.portzero.local:1"),
+            ("x.portzero.local", Some(1))
+        );
         assert_eq!(
             split_tunnel_port("x.portzero.local:65535"),
             ("x.portzero.local", Some(65535))

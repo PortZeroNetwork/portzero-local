@@ -60,7 +60,12 @@ impl VirtualIpAllocator {
         // Find a free slot (very simple linear scan; 64k is tiny).
         let mut candidate = self.next;
         loop {
-            let ip = Ipv4Addr::new(VNET_PREFIX[0], VNET_PREFIX[1], (candidate >> 8) as u8, (candidate & 0xff) as u8);
+            let ip = Ipv4Addr::new(
+                VNET_PREFIX[0],
+                VNET_PREFIX[1],
+                (candidate >> 8) as u8,
+                (candidate & 0xff) as u8,
+            );
 
             if self.is_reserved(ip) || self.ip_to_name.contains_key(&ip) {
                 candidate = candidate.wrapping_add(1);
@@ -108,7 +113,12 @@ impl VirtualIpAllocator {
 
 /// Return the conventional gateway address for the virtual net (if ever needed).
 pub fn gateway_ip() -> Ipv4Addr {
-    Ipv4Addr::new(VNET_PREFIX[0], VNET_PREFIX[1], VNET_GATEWAY_OCTET3, VNET_GATEWAY_OCTET4)
+    Ipv4Addr::new(
+        VNET_PREFIX[0],
+        VNET_PREFIX[1],
+        VNET_GATEWAY_OCTET3,
+        VNET_GATEWAY_OCTET4,
+    )
 }
 
 #[cfg(test)]

@@ -74,8 +74,7 @@ fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
     }
     let path = dir.join("portzero.local");
     let content = macos_resolver_file_content(dns_addr);
-    fs::write(&path, content)
-        .with_context(|| format!("writing {}", path.display()))?;
+    fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
     info!("macOS: wrote scoped resolver {}", path.display());
     Ok(())
 }
@@ -189,15 +188,13 @@ fn install_impl(dns_addr: SocketAddr, link_name: &str) -> Result<()> {
     let env = detect_resolver_env();
     match classify_resolver(&env) {
         LinuxResolver::SystemdResolved => {
-            let ifindex = read_ifindex(link_name).with_context(|| {
-                format!("reading ifindex for TUN link {link_name}")
-            })?;
+            let ifindex = read_ifindex(link_name)
+                .with_context(|| format!("reading ifindex for TUN link {link_name}"))?;
             // resolve1 SetLinkDNS + SetLinkDomains, addressed by ifindex. This
             // talks to systemd-resolved directly and does NOT involve networkd.
             run_busctl(&busctl_set_link_dns_args(ifindex, dns_addr))
                 .context("busctl SetLinkDNS")?;
-            run_busctl(&busctl_set_link_domains_args(ifindex))
-                .context("busctl SetLinkDomains")?;
+            run_busctl(&busctl_set_link_domains_args(ifindex)).context("busctl SetLinkDomains")?;
             info!(
                 "Linux: configured systemd-resolved for {} on link {} (ifindex {}) via resolve1 D-Bus",
                 SCOPED_DOMAIN, link_name, ifindex
@@ -236,11 +233,9 @@ fn uninstall_impl(link_name: &str) -> Result<()> {
         LinuxResolver::SystemdResolved => {
             // Revert the per-link config we set. RevertLink restores defaults for
             // exactly this link, so no global resolver state is disturbed.
-            let ifindex = read_ifindex(link_name).with_context(|| {
-                format!("reading ifindex for TUN link {link_name}")
-            })?;
-            run_busctl(&busctl_revert_link_args(ifindex))
-                .context("busctl RevertLink")?;
+            let ifindex = read_ifindex(link_name)
+                .with_context(|| format!("reading ifindex for TUN link {link_name}"))?;
+            run_busctl(&busctl_revert_link_args(ifindex)).context("busctl RevertLink")?;
             info!(
                 "Linux: reverted systemd-resolved settings for link {} (ifindex {})",
                 link_name, ifindex
@@ -253,7 +248,10 @@ fn uninstall_impl(link_name: &str) -> Result<()> {
                 let path = dnsmasq_snippet_path(nm);
                 if path.exists() {
                     if let Err(e) = std::fs::remove_file(&path) {
-                        warn!("Linux: failed to remove dnsmasq snippet {}: {e}", path.display());
+                        warn!(
+                            "Linux: failed to remove dnsmasq snippet {}: {e}",
+                            path.display()
+                        );
                     } else {
                         info!("Linux: removed dnsmasq snippet {}", path.display());
                         reload_dnsmasq(nm);
@@ -405,8 +403,7 @@ pub(crate) fn parse_ifindex(contents: &str) -> Result<u32> {
 #[cfg(target_os = "linux")]
 fn read_ifindex(link_name: &str) -> Result<u32> {
     let path = format!("/sys/class/net/{link_name}/ifindex");
-    let contents = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading {path}"))?;
+    let contents = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
     parse_ifindex(&contents)
 }
 
@@ -454,7 +451,10 @@ fn reload_dnsmasq(nm: bool) {
         ("systemctl", &["reload-or-restart", "dnsmasq"])
     };
     if let Err(e) = std::process::Command::new(program).args(args).status() {
-        warn!("Linux: failed to reload resolver ({program} {}): {e}", args.join(" "));
+        warn!(
+            "Linux: failed to reload resolver ({program} {}): {e}",
+            args.join(" ")
+        );
     }
 }
 
@@ -490,7 +490,10 @@ const fn libc_af_inet6() -> i32 {
 fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
     let script = powershell_add_nrpt_script(dns_addr);
     run_powershell(&script).context("Add-DnsClientNrptRule")?;
-    info!("Windows: added NRPT rule for portzero.local -> {}", dns_addr);
+    info!(
+        "Windows: added NRPT rule for portzero.local -> {}",
+        dns_addr
+    );
     Ok(())
 }
 
@@ -574,21 +577,33 @@ mod tests {
     #[test]
     fn macos_content_standard_port() {
         let content = macos_resolver_file_content(addr("127.0.0.1", 53));
-        assert!(content.contains("nameserver 127.0.0.1\n"), "missing nameserver line");
-        assert!(!content.contains("\nport "), "should not emit port line for port 53");
+        assert!(
+            content.contains("nameserver 127.0.0.1\n"),
+            "missing nameserver line"
+        );
+        assert!(
+            !content.contains("\nport "),
+            "should not emit port line for port 53"
+        );
     }
 
     #[test]
     fn macos_content_custom_port() {
         let content = macos_resolver_file_content(addr("127.0.0.1", 5300));
         assert!(content.contains("nameserver 127.0.0.1\n"));
-        assert!(content.contains("port 5300\n"), "should emit port line for non-53 port");
+        assert!(
+            content.contains("port 5300\n"),
+            "should emit port line for non-53 port"
+        );
     }
 
     #[test]
     fn macos_content_comment() {
         let content = macos_resolver_file_content(addr("127.0.0.1", 5300));
-        assert!(content.contains("port-zero"), "should have management comment");
+        assert!(
+            content.contains("port-zero"),
+            "should have management comment"
+        );
     }
 
     // --- Linux ---
@@ -606,7 +621,10 @@ mod tests {
         let args = resolvectl_domain_args("lo");
         assert_eq!(args[0], "domain");
         assert_eq!(args[1], "lo");
-        assert_eq!(args[2], "~portzero.local", "must use routing-domain tilde prefix");
+        assert_eq!(
+            args[2], "~portzero.local",
+            "must use routing-domain tilde prefix"
+        );
     }
 
     #[test]
@@ -625,9 +643,18 @@ mod tests {
     #[test]
     fn powershell_add_script_contains_namespace() {
         let script = powershell_add_nrpt_script(addr("127.0.0.1", 5300));
-        assert!(script.contains(".portzero.local"), "must reference .portzero.local namespace");
-        assert!(script.contains("127.0.0.1"), "must reference the DNS server IP");
-        assert!(script.contains("Add-DnsClientNrptRule"), "must call Add-DnsClientNrptRule");
+        assert!(
+            script.contains(".portzero.local"),
+            "must reference .portzero.local namespace"
+        );
+        assert!(
+            script.contains("127.0.0.1"),
+            "must reference the DNS server IP"
+        );
+        assert!(
+            script.contains("Add-DnsClientNrptRule"),
+            "must call Add-DnsClientNrptRule"
+        );
     }
 
     #[test]
@@ -663,7 +690,11 @@ mod tests {
     fn resolvectl_args_scope_only_portzero_local() {
         let domain_args = resolvectl_domain_args("lo");
         // Only one domain listed, and it must be ~portzero.local.
-        assert_eq!(domain_args.len(), 3, "exactly [domain, link, ~portzero.local]");
+        assert_eq!(
+            domain_args.len(),
+            3,
+            "exactly [domain, link, ~portzero.local]"
+        );
         assert_eq!(domain_args[2], "~portzero.local");
     }
 
@@ -675,7 +706,10 @@ mod tests {
         // The fix attaches to the overlay's own TUN link, never `lo`.
         let args = resolvectl_dns_args("deven0", addr("127.0.0.1", 5300));
         assert_eq!(args, vec!["dns", "deven0", "127.0.0.1:5300"]);
-        assert_ne!(args[1], "lo", "must not attach scoped DNS to the loopback link");
+        assert_ne!(
+            args[1], "lo",
+            "must not attach scoped DNS to the loopback link"
+        );
     }
 
     // --- Linux: resolve1 / busctl argument builders ---

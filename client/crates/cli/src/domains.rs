@@ -136,10 +136,7 @@ pub async fn add(domain: &str) -> Result<()> {
     println!();
     println!("  {}  CNAME  {}", data.pattern, data.cname_target);
     println!();
-    println!(
-        "Then verify: portzero domains verify \"{}\"",
-        data.pattern
-    );
+    println!("Then verify: portzero domains verify \"{}\"", data.pattern);
 
     Ok(())
 }

@@ -381,7 +381,9 @@ async fn unprivileged_tls_vip_proxy() {
                     if n > 0 {
                         buf.truncate(n);
                         tls_conn.read_tls(&mut buf.as_slice()).unwrap();
-                        tls_conn.process_new_packets().expect("TLS processing error");
+                        tls_conn
+                            .process_new_packets()
+                            .expect("TLS processing error");
                     }
                 }
             }
@@ -461,9 +463,10 @@ async fn real_tun_overlay() {
             ..Default::default()
         };
 
-        let overlay = OverlayNetwork::start(config, std::sync::Arc::new(tokio::sync::Notify::new()))
-            .await
-            .expect("overlay start failed under root");
+        let overlay =
+            OverlayNetwork::start(config, std::sync::Arc::new(tokio::sync::Notify::new()))
+                .await
+                .expect("overlay start failed under root");
 
         // Register a service so the stack installs a listener and DNS answers.
         let backend_addr = spawn_echo_backend().await;

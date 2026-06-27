@@ -7,9 +7,7 @@
 
 use anyhow::Result;
 
-use portzero_daemon::autostart::{
-    install_autostart, is_autostart_installed, uninstall_autostart,
-};
+use portzero_daemon::autostart::{install_autostart, is_autostart_installed, uninstall_autostart};
 
 /// Enable autostart: install the daemon as a system service that starts at boot.
 pub fn enable() -> Result<()> {

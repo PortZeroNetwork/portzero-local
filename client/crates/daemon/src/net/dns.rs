@@ -6,10 +6,10 @@
 //!
 //! We use hickory-proto for clean DNS message handling.
 
-use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::Arc;
 #[cfg(target_os = "windows")]
 use std::net::UdpSocket as StdUdpSocket;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 #[cfg(target_os = "windows")]
 use std::time::Duration;
 
@@ -147,7 +147,7 @@ impl OverlayDnsServer {
         // briefly hold the query open, so a service that was just started resolves
         // on the first attempt rather than returning NXDOMAIN.
         if let (Some(rescan), Some(updated)) = (&self.dns_rescan, &self.dns_updated) {
-            rescan.notify_one();
+            rescan.notify_waiters();
             let _ = tokio::time::timeout(DNS_FIRST_HIT_WAIT, updated.notified()).await;
         }
 
@@ -332,7 +332,12 @@ mod tests {
 
     fn table_with(name: &str) -> ServiceTable {
         let mut t = ServiceTable::new();
-        t.register(name.to_string(), "127.0.0.1:9000".parse().unwrap(), 80, 1234);
+        t.register(
+            name.to_string(),
+            "127.0.0.1:9000".parse().unwrap(),
+            80,
+            1234,
+        );
         t
     }
 
@@ -363,8 +368,11 @@ mod tests {
 
     #[test]
     fn nxdomain_for_unknown_subdomain_carries_zero_ttl_soa() {
-        let resp = handle_query_with_services(&a_query_bytes("ghost.portzero.local."), &ServiceTable::new())
-            .expect("response");
+        let resp = handle_query_with_services(
+            &a_query_bytes("ghost.portzero.local."),
+            &ServiceTable::new(),
+        )
+        .expect("response");
         let msg = Message::from_bytes(&resp).unwrap();
         assert_eq!(msg.response_code(), ResponseCode::NXDomain);
         let soa = msg
@@ -372,7 +380,11 @@ mod tests {
             .iter()
             .find(|r| r.record_type() == RecordType::SOA)
             .expect("NXDOMAIN must include an SOA so the miss is not negatively cached");
-        assert_eq!(soa.ttl(), 0, "SOA TTL must be 0 to disable negative caching");
+        assert_eq!(
+            soa.ttl(),
+            0,
+            "SOA TTL must be 0 to disable negative caching"
+        );
     }
 
     #[test]
@@ -383,7 +395,9 @@ mod tests {
         let msg = Message::from_bytes(&resp).unwrap();
         assert_eq!(msg.response_code(), ResponseCode::NoError);
         assert!(
-            msg.answers().iter().any(|r| r.record_type() == RecordType::A),
+            msg.answers()
+                .iter()
+                .any(|r| r.record_type() == RecordType::A),
             "a registered service must return an A record"
         );
     }

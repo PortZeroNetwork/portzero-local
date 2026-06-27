@@ -468,7 +468,10 @@ fn run_route_command(action: &str, program: &str, args: &[String]) -> bool {
         // An "already exists" result on add means the route is present (e.g. a
         // leftover from a previous run killed before teardown). Treat as success
         // so the route is still recorded/usable and reruns are idempotent.
-        Ok(out) if action == "add" && route_add_already_exists(&String::from_utf8_lossy(&out.stderr)) => {
+        Ok(out)
+            if action == "add"
+                && route_add_already_exists(&String::from_utf8_lossy(&out.stderr)) =>
+        {
             tracing::info!(
                 "route add already present (treated as success): {program} {}",
                 args.join(" ")
@@ -1045,9 +1048,7 @@ mod tests {
     fn route_add_already_exists_classifier() {
         // Linux `ip route add` and macOS `route add` both report "File exists"
         // when the route is already present; that must be treated as success.
-        assert!(route_add_already_exists(
-            "RTNETLINK answers: File exists"
-        ));
+        assert!(route_add_already_exists("RTNETLINK answers: File exists"));
         assert!(route_add_already_exists(
             "route: writing to routing socket: File exists\nadd net 10.254.0.0: gateway deven0: File exists"
         ));
@@ -1085,5 +1086,4 @@ mod tests {
         assert!(!device_busy_or_exists("Permission denied"));
         assert!(!device_busy_or_exists(""));
     }
-
 }

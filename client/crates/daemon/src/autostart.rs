@@ -7,9 +7,9 @@
 //! - Windows: scheduled task (start at logon)
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
 #[cfg(target_os = "windows")]
 use std::path::Path;
+use std::path::PathBuf;
 
 /// Service label / unit name used across platforms.
 #[allow(dead_code)]

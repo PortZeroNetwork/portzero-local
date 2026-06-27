@@ -328,7 +328,12 @@ impl<D> StackEngine<D>
 where
     D: Device + Pumpable + Send + 'static,
 {
-    fn spawn(mut device: D, initial: ServiceTable, cmd_rx: mpsc::Receiver<StackCommand>, tls_config: Option<Arc<ServerConfig>>) {
+    fn spawn(
+        mut device: D,
+        initial: ServiceTable,
+        cmd_rx: mpsc::Receiver<StackCommand>,
+        tls_config: Option<Arc<ServerConfig>>,
+    ) {
         // The interface uses our virtual gateway IP and covers the entire
         // 10.254.0.0/16 block via a route so that AnyIP accepts every VIP.
         let gateway = crate::net::virtual_ip::gateway_ip();
@@ -502,7 +507,9 @@ where
                             // terminate TLS and forward the plaintext to them.
                             self.services.get_by_vip(v4).map(|s| s.real_addr)
                         } else {
-                            self.services.resolve_for_connect(v4, port).map(|s| s.real_addr)
+                            self.services
+                                .resolve_for_connect(v4, port)
+                                .map(|s| s.real_addr)
                         }
                     }
                     #[allow(unreachable_patterns)]

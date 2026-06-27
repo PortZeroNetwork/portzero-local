@@ -15,9 +15,9 @@ use crate::net::resolver_config;
 use crate::net::service_table::ServiceTable;
 use crate::net::stack::VirtualStack;
 use crate::net::tun_device::{TunConfig, TunDevice};
-use crate::tls::{stack as tls_stack, trust, LocalCa};
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use crate::net::virtual_ip::gateway_ip;
+use crate::tls::{stack as tls_stack, trust, LocalCa};
 
 /// macOS loopback port for the embedded DNS server. A high, non-privileged
 /// port that won't collide with anything; change here if it ever conflicts.
@@ -71,7 +71,10 @@ fn resolver_dns_addr(listen_addr: SocketAddr) -> SocketAddr {
     #[cfg(target_os = "windows")]
     {
         if listen_addr.ip().is_unspecified() {
-            return SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), listen_addr.port());
+            return SocketAddr::new(
+                IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                listen_addr.port(),
+            );
         }
     }
     listen_addr
@@ -221,7 +224,7 @@ impl OverlayNetwork {
     }
 
     /// Shutdown the overlay components.
-    pub async fn shutdown(self) {
+    pub async fn shutdown(&self) {
         // Remove the scoped OS resolver before tearing down DNS.
         if let Err(e) = resolver_config::uninstall(&self.link_name).await {
             tracing::warn!("scoped resolver teardown failed: {:#}", e);

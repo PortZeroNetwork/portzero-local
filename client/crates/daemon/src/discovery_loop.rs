@@ -74,6 +74,7 @@ use crate::route_table::{OverlayRoute, OverlayState, RouteChanges, RouteTable};
 const PROCESS_EXIT_GRACE_SECS: u64 = 5;
 
 /// Configuration for the discovery daemon.
+#[derive(Clone)]
 pub struct DaemonConfig {
     /// Directory for daemon state files (routes.json, daemon.pid, daemon.log).
     pub state_dir: PathBuf,
@@ -307,7 +308,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     let mgmt_store = mgmt_server.store.clone();
     tokio::spawn(mgmt_server.serve(mgmt_listener));
 
-    let overlay: Option<OverlayNetwork> = match OverlayNetwork::start(
+    let overlay: Option<Arc<OverlayNetwork>> = match OverlayNetwork::start(
         OverlayConfig::default(),
         dns_rescan.clone(),
     )
@@ -340,7 +341,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 &mut notified_issues,
             )
             .await;
-            Some(ov)
+            Some(Arc::new(ov))
         }
         Err(e) => {
             tracing::warn!(
@@ -374,6 +375,15 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     let mut shutdown = Box::pin(wait_for_shutdown_signal());
 
     let mut diag_scan_counter: u32 = 0;
+    let overlay_fast_refresh = overlay.as_ref().map(|ov| {
+        tokio::spawn(run_dns_fast_overlay_refresh(
+            config.clone(),
+            ov.clone(),
+            mgmt_port,
+            mgmt_store.clone(),
+            dns_rescan.clone(),
+        ))
+    });
 
     loop {
         // The per-iteration work (scan + cloud sync + sleep) lives in this async
@@ -679,6 +689,9 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     // Stop the Docker event monitor cleanly alongside the overlay teardown.
     docker_shutdown.notify_one();
     docker_monitor.abort();
+    if let Some(task) = overlay_fast_refresh {
+        task.abort();
+    }
 
     // Graceful shutdown: tear down the overlay (removes the scoped resolver
     // config and the TUN device) before exiting so we don't leave the system's
@@ -792,6 +805,39 @@ async fn refresh_overlay_services(
         tracing::warn!("Failed to update overlay services: {:#}", e);
     }
     (issues, services)
+}
+
+/// Low-latency path for first DNS hits on unknown `*.portzero.local` names.
+///
+/// The main discovery loop performs full reconciliation, including Docker scans,
+/// cloud sync, diagnostics, and issue publishing. That is correct but too much
+/// work to put on the critical path of a browser's first DNS lookup. This task
+/// reacts to DNS misses independently and refreshes only local process overlay
+/// routes, which is the common `PZ_TUNNEL=foo.portzero.local cargo run` case.
+async fn run_dns_fast_overlay_refresh(
+    config: DaemonConfig,
+    overlay: Arc<OverlayNetwork>,
+    mgmt_port: u16,
+    mgmt_store: crate::management::RegistrationStore,
+    dns_rescan: Arc<Notify>,
+) {
+    loop {
+        dns_rescan.notified().await;
+
+        let Some(services) = discovery::scan_network_process_services(&mgmt_store).await else {
+            continue;
+        };
+        let table = build_overlay_table(&services, mgmt_port);
+        if let Err(e) = overlay.update_services(table).await {
+            tracing::warn!("Fast overlay refresh failed to update services: {e:#}");
+            continue;
+        }
+        write_overlay_state(&config, &services, true);
+        tracing::trace!(
+            "Fast overlay refresh complete: {} process service(s)",
+            services.len()
+        );
+    }
 }
 
 /// Gather all current issues from every source and publish them once.

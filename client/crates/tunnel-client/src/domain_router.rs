@@ -77,7 +77,10 @@ mod tests {
     fn test_add_and_resolve() {
         let router = DomainRouter::new();
         router.add_route("api-myapp.tunnel.portzero.cloud".into(), 8080);
-        assert_eq!(router.resolve("api-myapp.tunnel.portzero.cloud"), Some(8080));
+        assert_eq!(
+            router.resolve("api-myapp.tunnel.portzero.cloud"),
+            Some(8080)
+        );
         assert_eq!(router.resolve("unknown-svc.tunnel.portzero.cloud"), None);
     }
 
