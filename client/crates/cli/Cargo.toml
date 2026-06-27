@@ -36,7 +36,7 @@ extended-description = """Eliminate port conflicts in your dev environment by le
 random available ports, then forwarding those ports to virtual domains
 on a virtual NIC. Run multiple branches simultaneously without clashing."""
 depends = "$auto"
-recommends = "libcap2-bin"
+recommends = "libcap2-bin, libnss3-tools"
 section = "net"
 priority = "optional"
 assets = [

@@ -28,6 +28,33 @@ success() { printf "${GREEN}${BOLD}%s${RESET}\n" "$1"; }
 
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+install_linux_certutil() {
+    if has_cmd certutil; then
+        return 0
+    fi
+
+    info "Installing NSS certutil so browsers trust *.portzero.local..."
+    if has_cmd apt-get; then
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 \
+            && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y libnss3-tools >/dev/null 2>&1 \
+            && return 0
+    elif has_cmd dnf; then
+        sudo dnf install -y nss-tools >/dev/null 2>&1 && return 0
+    elif has_cmd yum; then
+        sudo yum install -y nss-tools >/dev/null 2>&1 && return 0
+    elif has_cmd zypper; then
+        sudo zypper --non-interactive install mozilla-nss-tools >/dev/null 2>&1 && return 0
+    elif has_cmd pacman; then
+        sudo pacman -S --noconfirm --needed nss >/dev/null 2>&1 && return 0
+    elif has_cmd apk; then
+        sudo apk add nss-tools >/dev/null 2>&1 && return 0
+    fi
+
+    warn "Could not install NSS certutil automatically."
+    warn "Browsers with NSS stores may not trust *.portzero.local until you install libnss3-tools (Debian/Ubuntu) or nss-tools (Fedora/RHEL)."
+    return 1
+}
+
 # --- Detect platform ---
 case "$(uname -s)" in
     Linux*)  os="linux" ;;
@@ -143,6 +170,7 @@ UNIT
     # Generate a local CA and install it into the system trust store so browsers
     # accept *.portzero.local over HTTPS without certificate warnings.
     info "Setting up local CA certificate..."
+    install_linux_certutil || true
     "$bin_path" trust generate >/dev/null 2>&1 || true
     if sudo HOME="$HOME" "$bin_path" trust install 2>/dev/null; then
         info "Local CA installed into the system trust store"

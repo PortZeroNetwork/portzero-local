@@ -20,6 +20,34 @@ install:
 install:
     #!/usr/bin/env bash
     set -euo pipefail
+    has_cmd() { command -v "$1" >/dev/null 2>&1; }
+    install_linux_certutil() {
+      if has_cmd certutil; then
+        return 0
+      fi
+
+      echo "→ Installing NSS certutil so browsers trust *.portzero.local..."
+      if has_cmd apt-get; then
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 \
+          && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y libnss3-tools >/dev/null 2>&1 \
+          && return 0
+      elif has_cmd dnf; then
+        sudo dnf install -y nss-tools >/dev/null 2>&1 && return 0
+      elif has_cmd yum; then
+        sudo yum install -y nss-tools >/dev/null 2>&1 && return 0
+      elif has_cmd zypper; then
+        sudo zypper --non-interactive install mozilla-nss-tools >/dev/null 2>&1 && return 0
+      elif has_cmd pacman; then
+        sudo pacman -S --noconfirm --needed nss >/dev/null 2>&1 && return 0
+      elif has_cmd apk; then
+        sudo apk add nss-tools >/dev/null 2>&1 && return 0
+      fi
+
+      echo "warning: Could not install NSS certutil automatically." >&2
+      echo "warning: Browsers with NSS stores may not trust *.portzero.local until you install libnss3-tools (Debian/Ubuntu) or nss-tools (Fedora/RHEL)." >&2
+      return 1
+    }
+
     cargo install --path client/crates/cli
     cargo_bin="$HOME/.cargo/bin/portzero"
     active="$(command -v portzero 2>/dev/null || true)"
@@ -35,6 +63,7 @@ install:
         echo "  (CAP_NET_ADMIN creates the TUN device; CAP_NET_BIND_SERVICE lets the"
         echo "   embedded DNS server bind 10.254.0.1:53 so *.portzero.local resolves.)"
         sudo setcap 'cap_net_admin,cap_net_bind_service+eip' "$cargo_bin"
+        install_linux_certutil || true
         echo "→ Generating CA certificate..."
         portzero trust generate
         echo "→ Installing CA certificate to system trust store..."
