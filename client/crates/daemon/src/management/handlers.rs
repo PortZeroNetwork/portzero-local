@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, State};
 use axum::http::StatusCode;
-use axum::response::Html;
+use axum::response::{Html, IntoResponse};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -310,6 +310,235 @@ pub async fn status_ui() -> Html<&'static str> {
     Html(STATUS_UI_HTML)
 }
 
+/// GET /openapi.json — read-only OpenAPI document for local process clients.
+pub async fn openapi_json() -> impl IntoResponse {
+    ([("content-type", "application/json")], OPENAPI_SPEC_JSON)
+}
+
+const OPENAPI_SPEC_JSON: &str = r##"{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PortZero Local Management API",
+    "version": "1.0.0",
+    "description": "Local process API served by the PortZero daemon. This API is intended for local processes that are listening on ports, not for browser-origin request forwarding."
+  },
+  "servers": [
+    {
+      "url": "http://api.portzero.local",
+      "description": "PortZero local management API"
+    }
+  ],
+  "paths": {
+    "/v1/register": {
+      "post": {
+        "summary": "Register local ports for the calling process",
+        "description": "Registers one or more local port/domain mappings for the process that opened the TCP connection. Each call replaces any prior registration for that process.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ports registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The caller is not listening on a requested port",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The daemon could not identify the calling process",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove registrations for the calling process",
+        "responses": {
+          "200": {
+            "description": "Registration removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeregisterResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No active registration exists for the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The daemon could not identify the calling process",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "summary": "Return registration state for the calling process",
+        "responses": {
+          "200": {
+            "description": "Current registration for the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No active registration exists for the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The daemon could not identify the calling process",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PortRegistration": {
+        "type": "object",
+        "required": ["local_port", "domain"],
+        "properties": {
+          "local_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "example": 3000
+          },
+          "domain": {
+            "type": "string",
+            "example": "web.portzero.local"
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["ports"],
+        "properties": {
+          "ports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortRegistration"
+            }
+          }
+        }
+      },
+      "RegisterResponse": {
+        "type": "object",
+        "required": ["pid", "registered"],
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "format": "uint32"
+          },
+          "registered": {
+            "type": "integer"
+          }
+        }
+      },
+      "DeregisterResponse": {
+        "type": "object",
+        "required": ["pid", "deregistered"],
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "format": "uint32"
+          },
+          "deregistered": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StatusResponse": {
+        "type": "object",
+        "required": ["pid", "ports"],
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "format": "uint32"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortRegistration"
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error", "detail"],
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": ["caller_unidentifiable", "port_not_listening", "not_registered"]
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}"##;
+
 const STATUS_UI_HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -375,7 +604,16 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
 .diag-fix code{background:var(--soft);color:var(--fg);padding:1px 5px;border-radius:4px}
 .no-issues{color:var(--ok);font-size:14px;margin:0}
 .loading{color:var(--muted);padding:32px 0}
+.endpoint-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:22px;align-items:start}
+.endpoint-list{display:grid;gap:12px}
+.endpoint{border-top:1px solid var(--line);padding-top:12px}
+.endpoint code{display:block;color:var(--fg);font-size:15px;margin-top:4px;word-break:break-word}
+.method{display:inline-flex;align-items:center;border-radius:4px;padding:1px 6px;background:var(--soft);font-weight:800;font-size:12px;color:var(--accent);margin-right:6px}
+.api-note{color:var(--muted);margin:0 0 14px}
+.spec-block{max-height:520px;overflow:auto;background:var(--code);color:var(--code-fg);border-radius:8px;padding:14px;font-size:12px;line-height:1.5}
+.spec-block code{white-space:pre}
 @media (max-width:760px){.nav{align-items:flex-start;flex-direction:column;gap:6px;padding:12px 0}.navlinks{margin-left:0;flex-wrap:wrap}.hero{padding-top:36px}.examples,.status-grid{grid-template-columns:1fr}.section-head{display:block}.step{grid-template-columns:1fr}.num{margin-bottom:4px}}
+@media (max-width:860px){.endpoint-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -384,6 +622,7 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
     <a class="brand" href="/">portzero.local</a>
     <div class="navlinks">
       <a href="#getting-started">Getting Started</a>
+      <a href="#api">API</a>
       <a href="#examples">Examples</a>
       <a href="#tunnels">Tunnels</a>
       <a href="#diagnostics">Diagnostics</a>
@@ -395,7 +634,7 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
   <section class="hero" id="getting-started">
     <p class="eyebrow">Local developer guide</p>
     <h1>Getting Started</h1>
-    <p class="lede">TODO: replace this intro with the first-run path for getting an app running and mapped to a .local DNS name.</p>
+    <p class="lede">Use <code>portzero.local</code> for the local dashboard. Local processes should call the management API at <code>http://api.portzero.local</code>.</p>
   </section>
 
   <section class="section" aria-labelledby="quickstart-title">
@@ -428,6 +667,259 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
           <pre class="code-row"><code>[TODO: command]</code></pre>
         </div>
       </article>
+    </div>
+  </section>
+
+  <section class="section" id="api" aria-labelledby="api-title">
+    <div class="section-head">
+      <h2 id="api-title">Local API</h2>
+      <p class="section-note">For local processes only. This page does not send API requests.</p>
+    </div>
+    <div class="endpoint-grid">
+      <div>
+        <p class="api-note">Endpoint base URL:</p>
+        <pre class="code-row"><code>http://api.portzero.local</code></pre>
+        <div class="endpoint-list" aria-label="API routes">
+          <div class="endpoint">
+            <span class="method">POST</span><strong>Register ports</strong>
+            <code>/v1/register</code>
+          </div>
+          <div class="endpoint">
+            <span class="method">DELETE</span><strong>Deregister ports</strong>
+            <code>/v1/register</code>
+          </div>
+          <div class="endpoint">
+            <span class="method">GET</span><strong>Process registration status</strong>
+            <code>/v1/status</code>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p class="api-note">OpenAPI 3.1 spec. The raw document is also available at <code>/openapi.json</code>.</p>
+        <pre class="spec-block" aria-label="OpenAPI specification"><code>{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PortZero Local Management API",
+    "version": "1.0.0",
+    "description": "Local process API served by the PortZero daemon. This API is intended for local processes that are listening on ports, not for browser-origin request forwarding."
+  },
+  "servers": [
+    {
+      "url": "http://api.portzero.local",
+      "description": "PortZero local management API"
+    }
+  ],
+  "paths": {
+    "/v1/register": {
+      "post": {
+        "summary": "Register local ports for the calling process",
+        "description": "Registers one or more local port/domain mappings for the process that opened the TCP connection. Each call replaces any prior registration for that process.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ports registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The caller is not listening on a requested port",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The daemon could not identify the calling process",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove registrations for the calling process",
+        "responses": {
+          "200": {
+            "description": "Registration removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeregisterResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No active registration exists for the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The daemon could not identify the calling process",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "summary": "Return registration state for the calling process",
+        "responses": {
+          "200": {
+            "description": "Current registration for the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No active registration exists for the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The daemon could not identify the calling process",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PortRegistration": {
+        "type": "object",
+        "required": ["local_port", "domain"],
+        "properties": {
+          "local_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "example": 3000
+          },
+          "domain": {
+            "type": "string",
+            "example": "web.portzero.local"
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["ports"],
+        "properties": {
+          "ports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortRegistration"
+            }
+          }
+        }
+      },
+      "RegisterResponse": {
+        "type": "object",
+        "required": ["pid", "registered"],
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "format": "uint32"
+          },
+          "registered": {
+            "type": "integer"
+          }
+        }
+      },
+      "DeregisterResponse": {
+        "type": "object",
+        "required": ["pid", "deregistered"],
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "format": "uint32"
+          },
+          "deregistered": {
+            "type": "boolean"
+          }
+        }
+      },
+      "StatusResponse": {
+        "type": "object",
+        "required": ["pid", "ports"],
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "format": "uint32"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortRegistration"
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error", "detail"],
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": ["caller_unidentifiable", "port_not_listening", "not_registered"]
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}</code></pre>
+      </div>
     </div>
   </section>
 

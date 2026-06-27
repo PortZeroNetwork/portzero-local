@@ -87,6 +87,7 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/status", routing::get(handlers::status))
         // Status UI (served at portzero.local)
         .route("/", routing::get(handlers::status_ui))
+        .route("/openapi.json", routing::get(handlers::openapi_json))
         .route("/status.json", routing::get(handlers::status_json))
         .with_state(state)
 }
