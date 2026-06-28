@@ -17,7 +17,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use rcgen::{BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair};
+use rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose,
+};
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 
@@ -59,7 +62,7 @@ impl LocalCa {
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("create PortZero data dir: {}", dir.display()))?;
 
-        if is_fresh(&dir) {
+        if is_fresh(&dir) && has_browser_tls_usages(&dir) {
             match load(&dir) {
                 Ok(ca) => return Ok(ca),
                 Err(e) => {
@@ -100,6 +103,34 @@ fn is_fresh(dir: &Path) -> bool {
     expiry - OffsetDateTime::now_utc() > Duration::days(RENEW_WITHIN_DAYS)
 }
 
+fn has_browser_tls_usages(dir: &Path) -> bool {
+    let Ok(ca_pem) = std::fs::read_to_string(dir.join(CA_CERT)) else {
+        return false;
+    };
+    let Ok(leaf_pem) = std::fs::read_to_string(dir.join(WILDCARD_CERT)) else {
+        return false;
+    };
+    certs_have_browser_tls_usages(&ca_pem, &leaf_pem)
+}
+
+fn certs_have_browser_tls_usages(ca_pem: &str, leaf_pem: &str) -> bool {
+    let Ok(ca_params) = CertificateParams::from_ca_cert_pem(ca_pem) else {
+        return false;
+    };
+    let Ok(leaf_params) = CertificateParams::from_ca_cert_pem(leaf_pem) else {
+        return false;
+    };
+
+    ca_params.key_usages.contains(&KeyUsagePurpose::KeyCertSign)
+        && ca_params.key_usages.contains(&KeyUsagePurpose::CrlSign)
+        && leaf_params
+            .key_usages
+            .contains(&KeyUsagePurpose::DigitalSignature)
+        && leaf_params
+            .extended_key_usages
+            .contains(&ExtendedKeyUsagePurpose::ServerAuth)
+}
+
 fn load(dir: &Path) -> Result<LocalCa> {
     Ok(LocalCa {
         ca_cert_pem: std::fs::read_to_string(dir.join(CA_CERT)).context("read ca.crt")?,
@@ -130,6 +161,7 @@ fn generate() -> Result<(LocalCa, OffsetDateTime)> {
     // --- CA (10-year self-signed) ---
     let mut ca_params = CertificateParams::new(vec![]).context("build CA cert params")?;
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     ca_params.distinguished_name = make_dn("PortZero Local CA", Some("PortZero"));
     ca_params.not_before = now;
     ca_params.not_after = now + Duration::days(CA_VALIDITY_DAYS);
@@ -146,6 +178,8 @@ fn generate() -> Result<(LocalCa, OffsetDateTime)> {
     ])
     .context("build wildcard cert params")?;
     leaf_params.distinguished_name = make_dn("*.portzero.local", None);
+    leaf_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     leaf_params.not_before = now;
     leaf_params.not_after = wildcard_expiry;
     let leaf_key = KeyPair::generate().context("generate wildcard keypair")?;
@@ -212,6 +246,57 @@ mod tests {
     }
 
     #[test]
+    fn generate_adds_browser_tls_usages() {
+        let Some(openssl) = openssl_available() else {
+            eprintln!("skipping OpenSSL extension check: openssl not found");
+            return;
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let (ca, _) = generate().unwrap();
+        let ca_path = dir.path().join("ca.crt");
+        let leaf_path = dir.path().join("wildcard.crt");
+        std::fs::write(&ca_path, ca.ca_cert_pem).unwrap();
+        std::fs::write(&leaf_path, ca.wildcard_cert_pem).unwrap();
+
+        let ca_text = openssl_x509_text(&openssl, &ca_path);
+        assert!(ca_text.contains("CA:TRUE"));
+        assert!(ca_text.contains("Key Usage"));
+        assert!(ca_text.contains("Certificate Sign"));
+        assert!(ca_text.contains("CRL Sign"));
+
+        let leaf_text = openssl_x509_text(&openssl, &leaf_path);
+        assert!(leaf_text.contains("DNS:*.portzero.local"));
+        assert!(leaf_text.contains("DNS:portzero.local"));
+        assert!(leaf_text.contains("Key Usage"));
+        assert!(leaf_text.contains("Digital Signature"));
+        assert!(leaf_text.contains("Extended Key Usage"));
+        assert!(leaf_text.contains("TLS Web Server Authentication"));
+    }
+
+    #[test]
+    fn generated_certs_satisfy_browser_tls_usage_check() {
+        let (ca, _) = generate().unwrap();
+        assert!(certs_have_browser_tls_usages(
+            &ca.ca_cert_pem,
+            &ca.wildcard_cert_pem
+        ));
+    }
+
+    #[test]
+    fn legacy_certs_without_usages_are_not_reused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ca, expiry) = generate_legacy_without_usages().unwrap();
+        save(&ca, expiry, dir.path()).unwrap();
+
+        assert!(is_fresh(dir.path()), "legacy cert is fresh by date");
+        assert!(
+            !has_browser_tls_usages(dir.path()),
+            "legacy cert must be regenerated despite a fresh expiry file"
+        );
+    }
+
+    #[test]
     fn round_trip_save_and_load() {
         let dir = tempfile::tempdir().unwrap();
         let (ca, expiry) = generate().unwrap();
@@ -266,5 +351,66 @@ mod tests {
             0o600,
             "key file must be owner-read/write only"
         );
+    }
+
+    fn openssl_available() -> Option<String> {
+        std::process::Command::new("openssl")
+            .arg("version")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|_| "openssl".to_string())
+    }
+
+    fn openssl_x509_text(openssl: &str, path: &Path) -> String {
+        let output = std::process::Command::new(openssl)
+            .args(["x509", "-in"])
+            .arg(path)
+            .args(["-noout", "-text"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "openssl x509 failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    fn generate_legacy_without_usages() -> Result<(LocalCa, OffsetDateTime)> {
+        let now = OffsetDateTime::now_utc();
+
+        let mut ca_params = CertificateParams::new(vec![]).context("build CA cert params")?;
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.distinguished_name = make_dn("PortZero Local CA", Some("PortZero"));
+        ca_params.not_before = now;
+        ca_params.not_after = now + Duration::days(CA_VALIDITY_DAYS);
+        let ca_key = KeyPair::generate().context("generate CA keypair")?;
+        let ca_cert = ca_params
+            .self_signed(&ca_key)
+            .context("self-sign CA certificate")?;
+
+        let wildcard_expiry = now + Duration::days(WILDCARD_VALIDITY_DAYS);
+        let mut leaf_params = CertificateParams::new(vec![
+            "*.portzero.local".to_string(),
+            "portzero.local".to_string(),
+        ])
+        .context("build wildcard cert params")?;
+        leaf_params.distinguished_name = make_dn("*.portzero.local", None);
+        leaf_params.not_before = now;
+        leaf_params.not_after = wildcard_expiry;
+        let leaf_key = KeyPair::generate().context("generate wildcard keypair")?;
+        let leaf_cert = leaf_params
+            .signed_by(&leaf_key, &ca_cert, &ca_key)
+            .context("sign wildcard certificate")?;
+
+        Ok((
+            LocalCa {
+                ca_cert_pem: ca_cert.pem(),
+                wildcard_cert_pem: leaf_cert.pem(),
+                wildcard_key_pem: leaf_key.serialize_pem(),
+            },
+            wildcard_expiry,
+        ))
     }
 }
