@@ -320,7 +320,8 @@ fn install_nss_cert(certutil: &Path, db_dir: &Path, ca_cert_path: &Path) -> Resu
 /// - `~/.mozilla/firefox/*/`                                      (Firefox)
 /// - `~/.var/app/org.mozilla.firefox/.mozilla/firefox/*/`         (Firefox Flatpak)
 /// - `~/snap/firefox/current/.mozilla/firefox/*/`                 (Firefox Snap)
-/// - `~/snap/{brave,chromium}/current/.pki/nssdb`                 (Snap browsers)
+/// - `~/snap/firefox/common/.mozilla/firefox/*/`                  (Firefox Snap)
+/// - `~/snap/{brave,chromium}/{current,<revision>}/.pki/nssdb`    (Snap browsers)
 /// - `~/.var/app/{com.brave.Browser,org.chromium.Chromium}/.pki/nssdb`
 ///   (Flatpak browsers)
 ///
@@ -339,6 +340,7 @@ pub(crate) fn find_nss_dbs(home: &Path) -> Vec<PathBuf> {
         home.join(".mozilla/firefox"),
         home.join(".var/app/org.mozilla.firefox/.mozilla/firefox"),
         home.join("snap/firefox/current/.mozilla/firefox"),
+        home.join("snap/firefox/common/.mozilla/firefox"),
     ];
     for base in &firefox_bases {
         dbs.extend(nss_dbs_under(base));
@@ -347,14 +349,14 @@ pub(crate) fn find_nss_dbs(home: &Path) -> Vec<PathBuf> {
     // Sandboxed Chromium-family browsers keep a private NSS store instead of
     // sharing ~/.pki/nssdb.
     let chromium_nss_dbs = [
-        home.join("snap/brave/current/.pki/nssdb"),
-        home.join("snap/chromium/current/.pki/nssdb"),
         home.join(".var/app/com.brave.Browser/.pki/nssdb"),
         home.join(".var/app/org.chromium.Chromium/.pki/nssdb"),
     ];
     for db in chromium_nss_dbs {
         push_nss_db_if_exists(&mut dbs, db);
     }
+    dbs.extend(snap_chromium_nss_dbs(home, "brave"));
+    dbs.extend(snap_chromium_nss_dbs(home, "chromium"));
 
     dbs
 }
@@ -377,6 +379,21 @@ fn nss_dbs_under(dir: &Path) -> Vec<PathBuf> {
         .map(|e| e.path())
         .filter(|p| p.is_dir() && p.join("cert9.db").exists())
         .collect()
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn snap_chromium_nss_dbs(home: &Path, snap_name: &str) -> Vec<PathBuf> {
+    let base = home.join("snap").join(snap_name);
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return vec![];
+    };
+
+    let mut dbs = Vec::new();
+    for entry in entries.filter_map(|e| e.ok()) {
+        let db = entry.path().join(".pki/nssdb");
+        push_nss_db_if_exists(&mut dbs, db);
+    }
+    dbs
 }
 
 // --- System detection — impure shims kept thin ----------------------------
@@ -1082,6 +1099,36 @@ mod tests {
 
         let found = find_nss_dbs(home);
         assert!(found.contains(&nssdb), "should find Snap Brave NSS DB");
+    }
+
+    #[test]
+    fn find_nss_dbs_picks_up_snap_brave_revision_nssdb() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let nssdb = home.join("snap/brave/646/.pki/nssdb");
+        std::fs::create_dir_all(&nssdb).unwrap();
+        std::fs::write(nssdb.join("cert9.db"), b"").unwrap();
+
+        let found = find_nss_dbs(home);
+        assert!(
+            found.contains(&nssdb),
+            "should find versioned Snap Brave NSS DB"
+        );
+    }
+
+    #[test]
+    fn find_nss_dbs_picks_up_snap_firefox_common_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let profile = home.join("snap/firefox/common/.mozilla/firefox/abc123.default");
+        std::fs::create_dir_all(&profile).unwrap();
+        std::fs::write(profile.join("cert9.db"), b"").unwrap();
+
+        let found = find_nss_dbs(home);
+        assert!(
+            found.contains(&profile),
+            "should find Firefox Snap common profile NSS DB"
+        );
     }
 
     #[test]
