@@ -124,6 +124,7 @@ fn install_system_ca(ca_cert_path: &Path, env: &LinuxTrustEnv) -> Result<()> {
             remove_legacy_debian_anchor()?;
             run_command("update-ca-certificates", &[] as &[&str])
                 .context("update-ca-certificates")?;
+            materialize_debian_ssl_cert(ca_cert_path)?;
             tracing::info!(
                 "Linux: installed CA cert to {} via update-ca-certificates",
                 dest.display()
@@ -206,6 +207,11 @@ fn uninstall_system_ca(env: &LinuxTrustEnv) -> Result<()> {
             if legacy_dest.exists() {
                 std::fs::remove_file(&legacy_dest)
                     .with_context(|| format!("remove {}", legacy_dest.display()))?;
+            }
+            let ssl_cert = debian_ssl_cert_path();
+            if ssl_cert.exists() {
+                std::fs::remove_file(&ssl_cert)
+                    .with_context(|| format!("remove {}", ssl_cert.display()))?;
             }
             remove_debian_ca_config_line()?;
             run_command("update-ca-certificates", &["--fresh"] as &[&str])
@@ -294,6 +300,11 @@ pub(crate) fn legacy_system_cert_dest_debian() -> PathBuf {
     PathBuf::from("/usr/local/share/ca-certificates").join(SYSTEM_CERT_NAME)
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn debian_ssl_cert_path() -> PathBuf {
+    PathBuf::from("/etc/ssl/certs/portzero-local-ca.pem")
+}
+
 #[cfg(target_os = "linux")]
 fn ensure_debian_ca_config_line() -> Result<()> {
     update_debian_ca_config(true)
@@ -328,6 +339,18 @@ fn remove_legacy_debian_anchor() -> Result<()> {
         std::fs::remove_file(&legacy_dest)
             .with_context(|| format!("remove legacy {}", legacy_dest.display()))?;
     }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn materialize_debian_ssl_cert(ca_cert_path: &Path) -> Result<()> {
+    let ssl_cert = debian_ssl_cert_path();
+    if ssl_cert.exists() {
+        std::fs::remove_file(&ssl_cert)
+            .with_context(|| format!("remove {}", ssl_cert.display()))?;
+    }
+    std::fs::copy(ca_cert_path, &ssl_cert)
+        .with_context(|| format!("copy CA cert to {}", ssl_cert.display()))?;
     Ok(())
 }
 
@@ -1080,6 +1103,14 @@ mod tests {
         assert_eq!(
             dest,
             PathBuf::from("/usr/share/ca-certificates/portzero/portzero-local-ca.crt")
+        );
+    }
+
+    #[test]
+    fn debian_ssl_cert_path_is_snap_readable_cert_location() {
+        assert_eq!(
+            debian_ssl_cert_path(),
+            PathBuf::from("/etc/ssl/certs/portzero-local-ca.pem")
         );
     }
 
