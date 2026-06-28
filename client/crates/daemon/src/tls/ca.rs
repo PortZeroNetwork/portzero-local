@@ -87,8 +87,45 @@ impl LocalCa {
 }
 
 fn data_dir() -> Result<PathBuf> {
-    let base = dirs::data_dir().context("cannot resolve platform data directory")?;
-    Ok(base.join("PortZero"))
+    Ok(base_data_dir()?.join("PortZero"))
+}
+
+fn base_data_dir() -> Result<PathBuf> {
+    #[cfg(unix)]
+    if let Some(home) = sudo_user_home() {
+        return Ok(home.join(".local/share"));
+    }
+
+    dirs::data_dir().context("cannot resolve platform data directory")
+}
+
+#[cfg(unix)]
+fn sudo_user_home() -> Option<PathBuf> {
+    let sudo_user = std::env::var("SUDO_USER").ok()?;
+    sudo_user_home_for(&sudo_user)
+}
+
+#[cfg(unix)]
+fn sudo_user_home_for(sudo_user: &str) -> Option<PathBuf> {
+    if sudo_user.is_empty() || sudo_user == "root" {
+        return None;
+    }
+    passwd_home(&sudo_user)
+}
+
+#[cfg(unix)]
+fn passwd_home(username: &str) -> Option<PathBuf> {
+    let content = std::fs::read_to_string("/etc/passwd").ok()?;
+    for line in content.lines() {
+        let mut fields = line.splitn(7, ':');
+        let name = fields.next()?;
+        if name != username {
+            continue;
+        }
+        let home = fields.nth(4)?;
+        return Some(PathBuf::from(home));
+    }
+    None
 }
 
 /// Returns true when the persisted wildcard cert has more than
@@ -344,6 +381,21 @@ mod tests {
         )
         .unwrap();
         assert!(!is_fresh(dir.path()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sudo_user_home_ignores_root() {
+        assert_eq!(sudo_user_home_for(""), None);
+        assert_eq!(sudo_user_home_for("root"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sudo_user_home_uses_passwd_home() {
+        let current_user = std::env::var("USER").unwrap();
+        let home = sudo_user_home_for(&current_user).unwrap();
+        assert_eq!(home, PathBuf::from(std::env::var("HOME").unwrap()));
     }
 
     #[cfg(unix)]
