@@ -488,7 +488,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         let iteration = async {
             // Re-run diagnostics every ~30s (every 15 × 2s scan cycles).
             diag_scan_counter = diag_scan_counter.wrapping_add(1);
-            if diag_scan_counter % 15 == 0 {
+            if diag_scan_counter.is_multiple_of(15) {
                 let diag = crate::diagnostics::run_diagnostics(&config.state_dir).await;
                 crate::diagnostics::save_report(&diag, &config.state_dir);
             }

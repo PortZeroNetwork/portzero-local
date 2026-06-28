@@ -37,11 +37,12 @@ const DNS_FIRST_HIT_WAIT: std::time::Duration = std::time::Duration::from_millis
 
 /// What DNS should do when an A query arrives for an unknown
 /// `*.portzero.local` name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DnsFirstHitPolicy {
     /// Current behavior: trigger process discovery and hold the DNS query open
     /// briefly so the response includes a routable service when the scan wins.
+    #[default]
     FastScan,
     /// Allocate and return a VIP immediately, then trigger discovery in the
     /// background. The first TCP connection succeeds once discovery registers
@@ -51,12 +52,6 @@ pub enum DnsFirstHitPolicy {
     /// short window while discovery finds the backend. This is benchmarkable
     /// because OS TCP behavior differs materially here.
     ProactiveVipHold,
-}
-
-impl Default for DnsFirstHitPolicy {
-    fn default() -> Self {
-        Self::FastScan
-    }
 }
 
 /// Runs a simple UDP DNS server that answers A queries for the overlay.
@@ -203,7 +198,7 @@ impl OverlayDnsServer {
                     rescan.notify_one();
                 }
                 if let Some(stack_updates) = &self.stack_updates {
-                    let _ = stack_updates.try_send(StackCommand::UpdateServices(table));
+                    let _ = stack_updates.try_send(StackCommand::UpdateServices(Box::new(table)));
                 }
             }
             let services = self.services.read().await;

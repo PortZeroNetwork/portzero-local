@@ -82,7 +82,7 @@ impl Default for OverlayHttpsPolicy {
 }
 
 pub enum StackCommand {
-    UpdateServices(ServiceTable),
+    UpdateServices(Box<ServiceTable>),
     Shutdown,
 }
 
@@ -192,7 +192,10 @@ impl VirtualStack {
     }
 
     pub async fn update_services(&self, table: ServiceTable) -> Result<()> {
-        let _ = self.cmd_tx.send(StackCommand::UpdateServices(table)).await;
+        let _ = self
+            .cmd_tx
+            .send(StackCommand::UpdateServices(Box::new(table)))
+            .await;
         Ok(())
     }
 
@@ -491,7 +494,7 @@ where
                 cmd = self.cmd_rx.recv() => {
                     match cmd {
                         Some(StackCommand::UpdateServices(table)) => {
-                            self.apply_services(table);
+                            self.apply_services(*table);
                         }
                         Some(StackCommand::Shutdown) | None => {
                             tracing::debug!("virtual stack shutting down");

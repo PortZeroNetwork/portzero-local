@@ -110,7 +110,7 @@ fn sudo_user_home_for(sudo_user: &str) -> Option<PathBuf> {
     if sudo_user.is_empty() || sudo_user == "root" {
         return None;
     }
-    passwd_home(&sudo_user)
+    passwd_home(sudo_user)
 }
 
 #[cfg(unix)]

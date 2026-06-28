@@ -476,16 +476,14 @@ fn install_nss_cert(certutil: &Path, db_dir: &Path, ca_cert_path: &Path) -> Resu
             let retry_args = certutil_add_args(db_dir, ca_cert_path);
             match run_certutil(program, &retry_args) {
                 Ok(()) => Ok(()),
-                Err(retry_err) if retry_err.is_read_only() => run_certutil_sudo(
-                    program,
-                    &retry_args,
-                )
-                .with_context(|| {
-                    format!(
+                Err(retry_err) if retry_err.is_read_only() => {
+                    run_certutil_sudo(program, &retry_args).with_context(|| {
+                        format!(
                         "replace existing CA in read-only NSS DB {} after add failed: {first_err}",
                         db_dir.display()
                     )
-                }),
+                    })
+                }
                 Err(retry_err) => Err::<(), anyhow::Error>(retry_err.into()).with_context(|| {
                     format!("replace existing NSS cert after add failed: {first_err}")
                 }),
