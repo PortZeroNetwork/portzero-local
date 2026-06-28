@@ -123,6 +123,8 @@ install:
         if ! grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
           echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts >/dev/null
         fi
+        echo "→ Starting daemon..."
+        portzero start
         ;;
       Darwin*)
         echo "→ Generating CA certificate for *.portzero.local HTTPS..."

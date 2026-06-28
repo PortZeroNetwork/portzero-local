@@ -125,6 +125,7 @@ fn install_system_ca(ca_cert_path: &Path, env: &LinuxTrustEnv) -> Result<()> {
             run_command("update-ca-certificates", &[] as &[&str])
                 .context("update-ca-certificates")?;
             materialize_debian_ssl_cert(ca_cert_path)?;
+            install_p11_kit_anchor(ca_cert_path)?;
             tracing::info!(
                 "Linux: installed CA cert to {} via update-ca-certificates",
                 dest.display()
@@ -179,7 +180,10 @@ fn copy_system_anchor(ca_cert_path: &Path, dest: &Path) -> Result<bool> {
         }
     }
     match std::fs::copy(ca_cert_path, dest) {
-        Ok(_) => Ok(true),
+        Ok(_) => {
+            set_world_readable(dest)?;
+            Ok(true)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
             tracing::warn!(
                 "Linux: no permission to write the system CA store at {} \
@@ -200,6 +204,9 @@ fn uninstall_system_ca(env: &LinuxTrustEnv) -> Result<()> {
         LinuxCaTool::UpdateCaCertificates => {
             let dest = system_cert_dest_debian();
             let legacy_dest = legacy_system_cert_dest_debian();
+            if dest.exists() {
+                remove_p11_kit_anchor(&dest)?;
+            }
             if dest.exists() {
                 std::fs::remove_file(&dest)
                     .with_context(|| format!("remove {}", dest.display()))?;
@@ -351,13 +358,63 @@ fn materialize_debian_ssl_cert(ca_cert_path: &Path) -> Result<()> {
     }
     std::fs::copy(ca_cert_path, &ssl_cert)
         .with_context(|| format!("copy CA cert to {}", ssl_cert.display()))?;
+    set_world_readable(&ssl_cert)?;
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn install_p11_kit_anchor(ca_cert_path: &Path) -> Result<()> {
+    if !command_exists("trust") {
+        tracing::warn!(
+            "Linux: p11-kit trust tool not found; Snap Chromium/Brave may not trust \
+             *.portzero.local. Install p11-kit or run your distro's trust-anchor tool."
+        );
+        return Ok(());
+    }
+    run_command("trust", &p11_kit_anchor_add_args(ca_cert_path)).context("trust anchor")?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn remove_p11_kit_anchor(ca_cert_path: &Path) -> Result<()> {
+    if !command_exists("trust") {
+        return Ok(());
+    }
+    match run_command("trust", &p11_kit_anchor_remove_args(ca_cert_path)) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            tracing::warn!("Linux: failed to remove p11-kit trust anchor: {e:#}");
+            Ok(())
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn set_world_readable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644))
+        .with_context(|| format!("set permissions on {}", path.display()))
 }
 
 /// Destination path for the CA cert on RHEL/Fedora.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn system_cert_dest_rhel() -> PathBuf {
     PathBuf::from("/etc/pki/ca-trust/source/anchors").join(SYSTEM_CERT_NAME)
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn p11_kit_anchor_add_args(cert_path: &Path) -> Vec<String> {
+    vec!["anchor".to_string(), cert_path.display().to_string()]
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn p11_kit_anchor_remove_args(cert_path: &Path) -> Vec<String> {
+    vec![
+        "anchor".to_string(),
+        "--remove".to_string(),
+        cert_path.display().to_string(),
+    ]
 }
 
 /// `certutil` arguments to add the CA to an NSS database directory.
@@ -1150,6 +1207,33 @@ mod tests {
         assert_eq!(args[2], "sql:/home/user/.pki/nssdb");
         assert_eq!(args[3], "-n");
         assert_eq!(args[4], CERT_NICKNAME);
+    }
+
+    #[test]
+    fn p11_kit_anchor_add_args_format() {
+        let cert = PathBuf::from("/etc/ssl/certs/portzero-local-ca.pem");
+        let args = p11_kit_anchor_add_args(&cert);
+        assert_eq!(
+            args,
+            vec![
+                "anchor".to_string(),
+                "/etc/ssl/certs/portzero-local-ca.pem".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn p11_kit_anchor_remove_args_format() {
+        let cert = PathBuf::from("/etc/ssl/certs/portzero-local-ca.pem");
+        let args = p11_kit_anchor_remove_args(&cert);
+        assert_eq!(
+            args,
+            vec![
+                "anchor".to_string(),
+                "--remove".to_string(),
+                "/etc/ssl/certs/portzero-local-ca.pem".to_string()
+            ]
+        );
     }
 
     #[test]
