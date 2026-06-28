@@ -211,6 +211,13 @@ fn display_substitutions(
     serde_json::json!(values)
 }
 
+fn local_service_link_url(domain: &str, service_port: u16) -> Option<String> {
+    match service_port {
+        80 | 443 => Some(format!("https://{domain}")),
+        _ => None,
+    }
+}
+
 // ─── Management API handlers ──────────────────────────────────────────────────
 
 /// POST /v1/register — register a list of ports for the calling process.
@@ -1005,7 +1012,8 @@ function renderSubstitutions(values){
   }).join('')+'</div>';
 }
 function domainCell(row){
-  return '<div class="domain-stack"><strong>'+esc(row.domain)+'</strong><code>template: '+esc(row.domain_template||row.domain)+'</code><code>materialized: '+esc(row.domain)+'</code></div>';
+  const domain=row.link_url?'<a href="'+esc(row.link_url)+'"><strong>'+esc(row.domain)+'</strong></a>':'<strong>'+esc(row.domain)+'</strong>';
+  return '<div class="domain-stack">'+domain+'<code>template: '+esc(row.domain_template||row.domain)+'</code><code>materialized: '+esc(row.domain)+'</code></div>';
 }
 
 function renderDiag(d){
@@ -1128,6 +1136,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
                 "substitutions": display_substitutions(&r.substitutions, &r.source),
                 "real_addr": r.real_addr,
                 "service_port": r.service_port,
+                "link_url": local_service_link_url(&r.domain, r.service_port),
                 "pid": r.pid,
             })
         })
@@ -1158,4 +1167,27 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         "diagnostics": diagnostics,
         "languages": detected_languages(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_service_link_url;
+
+    #[test]
+    fn local_service_link_url_prefers_https_for_web_ports() {
+        assert_eq!(
+            local_service_link_url("web.portzero.local", 80).as_deref(),
+            Some("https://web.portzero.local")
+        );
+        assert_eq!(
+            local_service_link_url("api.portzero.local", 443).as_deref(),
+            Some("https://api.portzero.local")
+        );
+    }
+
+    #[test]
+    fn local_service_link_url_skips_non_web_ports() {
+        assert_eq!(local_service_link_url("db.portzero.local", 5432), None);
+        assert_eq!(local_service_link_url("admin.portzero.local", 8080), None);
+    }
 }
