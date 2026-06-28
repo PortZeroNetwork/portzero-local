@@ -29,12 +29,20 @@ pub struct NetworkService {
     pub pid: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct PendingReservation {
+    port: u16,
+    hold_connections: bool,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct ServiceTable {
     allocator: VirtualIpAllocator,
     by_name: HashMap<String, NetworkService>,
     /// vip -> name for fast reverse lookup in the packet path
     vip_to_name: HashMap<Ipv4Address, String>,
+    /// VIP reservations that do not have a backend yet, keyed by name.
+    pending: HashMap<String, PendingReservation>,
 }
 
 impl ServiceTable {
@@ -76,8 +84,89 @@ impl ServiceTable {
         }
 
         self.by_name.insert(name.clone(), svc.clone());
-        self.vip_to_name.insert(vip, name);
+        self.vip_to_name.insert(vip, name.clone());
+        self.pending.remove(&name);
         svc
+    }
+
+    /// Reserve a VIP for a name before its backend endpoint is known.
+    ///
+    /// This lets DNS answer immediately for a just-started tunnel while
+    /// discovery continues scanning for the process and port. The reservation is
+    /// not considered a routable service until [`Self::register`] fills in the
+    /// backend.
+    pub fn reserve_name(&mut self, name: &str) -> Ipv4Address {
+        self.reserve_name_on_port(name, 80, false)
+    }
+
+    /// Reserve a VIP and temporary service port for a name before its backend is known.
+    pub fn reserve_name_on_port(
+        &mut self,
+        name: &str,
+        service_port: u16,
+        hold_connections: bool,
+    ) -> Ipv4Address {
+        if let Some(existing) = self.by_name.get(name) {
+            return existing.vip;
+        }
+        let std_ip = self.allocator.assign(name);
+        self.pending
+            .entry(name.to_string())
+            .or_insert(PendingReservation {
+                port: service_port,
+                hold_connections,
+            });
+        Ipv4Address::from_bytes(&std_ip.octets())
+    }
+
+    /// Lookup the VIP assigned to a name, whether or not a backend is registered.
+    pub fn assigned_vip(&self, name: &str) -> Option<Ipv4Address> {
+        if let Some(service) = self.by_name.get(name) {
+            return Some(service.vip);
+        }
+        self.allocator
+            .lookup_name(name)
+            .map(|ip| Ipv4Address::from_bytes(&ip.octets()))
+    }
+
+    /// Preserve all VIP assignments from another table.
+    ///
+    /// Fresh discovery scans rebuild the table from scratch. Carrying forward
+    /// assignments keeps DNS answers stable, including proactive reservations.
+    pub fn preserve_assignments_from(&mut self, other: &ServiceTable) {
+        for (name, ip) in other.allocator.assignments() {
+            self.allocator.preserve(name, ip);
+        }
+        for (name, pending) in &other.pending {
+            if !self.by_name.contains_key(name) {
+                self.pending.entry(name.clone()).or_insert(*pending);
+            }
+        }
+    }
+
+    /// Get the name assigned to a VIP, whether or not a backend is registered.
+    pub fn assigned_name_by_vip(&self, vip: Ipv4Address) -> Option<&str> {
+        if let Some(name) = self.vip_to_name.get(&vip) {
+            return Some(name);
+        }
+        let b = vip.0;
+        let ip = std::net::Ipv4Addr::new(b[0], b[1], b[2], b[3]);
+        self.allocator.lookup_ip(ip)
+    }
+
+    /// Ports that should be listened on for pending VIP reservations.
+    pub fn pending_ports(&self) -> impl Iterator<Item = u16> + '_ {
+        self.pending.values().map(|pending| pending.port)
+    }
+
+    /// Whether accepted sockets for a pending VIP should wait for discovery.
+    pub fn should_hold_pending_connection(&self, vip: Ipv4Address) -> bool {
+        let Some(name) = self.assigned_name_by_vip(vip) else {
+            return false;
+        };
+        self.pending
+            .get(name)
+            .is_some_and(|pending| pending.hold_connections)
     }
 
     /// Remove a service by name.
@@ -120,5 +209,38 @@ impl ServiceTable {
 
     pub fn is_empty(&self) -> bool {
         self.by_name.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_reservation_exposes_port_and_vip_name() {
+        let mut table = ServiceTable::new();
+        let vip = table.reserve_name_on_port("fresh", 80, true);
+
+        assert_eq!(table.assigned_vip("fresh"), Some(vip));
+        assert_eq!(table.assigned_name_by_vip(vip), Some("fresh"));
+        assert_eq!(table.pending_ports().collect::<Vec<_>>(), vec![80]);
+        assert!(table.should_hold_pending_connection(vip));
+        assert!(table.get("fresh").is_none());
+    }
+
+    #[test]
+    fn registering_service_clears_pending_port() {
+        let mut table = ServiceTable::new();
+        let pending_vip = table.reserve_name_on_port("fresh", 80, false);
+        let service = table.register(
+            "fresh".to_string(),
+            "127.0.0.1:9000".parse().unwrap(),
+            80,
+            1234,
+        );
+
+        assert_eq!(service.vip, pending_vip);
+        assert!(table.pending_ports().collect::<Vec<_>>().is_empty());
+        assert!(!table.should_hold_pending_connection(pending_vip));
     }
 }

@@ -19,9 +19,13 @@ use hickory_proto::rr::rdata::SOA;
 use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordType};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use tokio::net::UdpSocket;
+#[cfg(target_os = "windows")]
+use tokio::runtime::Handle;
+use tokio::sync::mpsc;
 use tokio::sync::{Notify, RwLock};
 
 use crate::net::service_table::ServiceTable;
+use crate::net::stack::StackCommand;
 use crate::net::virtual_ip::{API_MANAGEMENT_VIP, MANAGEMENT_VIP};
 
 /// How long a query for an as-yet-unknown `*.portzero.local` name is held open
@@ -31,12 +35,40 @@ use crate::net::virtual_ip::{API_MANAGEMENT_VIP, MANAGEMENT_VIP};
 /// back to NXDOMAIN.
 const DNS_FIRST_HIT_WAIT: std::time::Duration = std::time::Duration::from_millis(2000);
 
+/// What DNS should do when an A query arrives for an unknown
+/// `*.portzero.local` name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DnsFirstHitPolicy {
+    /// Current behavior: trigger process discovery and hold the DNS query open
+    /// briefly so the response includes a routable service when the scan wins.
+    FastScan,
+    /// Allocate and return a VIP immediately, then trigger discovery in the
+    /// background. The first TCP connection succeeds once discovery registers
+    /// the backend and listeners.
+    ProactiveVip,
+    /// Like `proactive-vip`, but the TCP stack holds accepted connections for a
+    /// short window while discovery finds the backend. This is benchmarkable
+    /// because OS TCP behavior differs materially here.
+    ProactiveVipHold,
+}
+
+impl Default for DnsFirstHitPolicy {
+    fn default() -> Self {
+        Self::FastScan
+    }
+}
+
 /// Runs a simple UDP DNS server that answers A queries for the overlay.
 pub struct OverlayDnsServer {
     services: Arc<RwLock<ServiceTable>>,
     listen_addr: SocketAddr,
+    first_hit_policy: DnsFirstHitPolicy,
+    stack_updates: Option<mpsc::Sender<StackCommand>>,
     /// Pinged when a query arrives for an unknown `*.portzero.local` name, so the
     /// discovery loop rescans immediately. `None` in standalone/test setups.
+    /// Uses `notify_one` at the call site so a wakeup is not lost if the refresh
+    /// task is between scans and has not yet parked on `notified()`.
     dns_rescan: Option<Arc<Notify>>,
     /// Awaited (briefly) after a miss; the discovery loop notifies it once the
     /// service table has been refreshed. `None` in standalone/test setups.
@@ -48,9 +80,21 @@ impl OverlayDnsServer {
         Self {
             services,
             listen_addr,
+            first_hit_policy: DnsFirstHitPolicy::default(),
+            stack_updates: None,
             dns_rescan: None,
             dns_updated: None,
         }
+    }
+
+    pub fn with_first_hit_policy(mut self, policy: DnsFirstHitPolicy) -> Self {
+        self.first_hit_policy = policy;
+        self
+    }
+
+    pub fn with_stack_updates(mut self, stack_updates: mpsc::Sender<StackCommand>) -> Self {
+        self.stack_updates = Some(stack_updates);
+        self
     }
 
     /// Wire up the rescan/refresh signals so a miss on an unknown subdomain
@@ -97,7 +141,7 @@ impl OverlayDnsServer {
     /// on a plain socket thread prevents those paths from starving name
     /// resolution once the resolver is configured.
     #[cfg(target_os = "windows")]
-    pub fn run_blocking(self) -> Result<()> {
+    pub fn run_blocking(self, runtime: Handle) -> Result<()> {
         let sock = StdUdpSocket::bind(self.listen_addr)?;
         sock.set_read_timeout(Some(Duration::from_secs(30)))?;
         tracing::info!("overlay DNS listening on {}", self.listen_addr);
@@ -121,8 +165,7 @@ impl OverlayDnsServer {
 
             tracing::debug!("overlay DNS query received from {}", src);
             let req_bytes = &buf[..len];
-            let services = self.services.blocking_read();
-            let response = match handle_query_with_services(req_bytes, &services) {
+            let response = match runtime.block_on(self.handle_query(req_bytes)) {
                 Some(resp) => resp,
                 None => continue,
             };
@@ -142,12 +185,37 @@ impl OverlayDnsServer {
             }
         }
 
+        if matches!(
+            self.first_hit_policy,
+            DnsFirstHitPolicy::ProactiveVip | DnsFirstHitPolicy::ProactiveVipHold
+        ) {
+            let (reserved, table) = {
+                let mut services = self.services.write().await;
+                let reserved = reserve_unresolved_overlay_queries(
+                    data,
+                    &mut services,
+                    self.first_hit_policy == DnsFirstHitPolicy::ProactiveVipHold,
+                );
+                (reserved, services.clone())
+            };
+            if reserved {
+                if let Some(rescan) = &self.dns_rescan {
+                    rescan.notify_one();
+                }
+                if let Some(stack_updates) = &self.stack_updates {
+                    let _ = stack_updates.try_send(StackCommand::UpdateServices(table));
+                }
+            }
+            let services = self.services.read().await;
+            return handle_query_with_services(data, &services);
+        }
+
         // The query is for a `*.portzero.local` name we don't know yet. If the
         // rescan signals are wired up, trigger an immediate discovery rescan and
         // briefly hold the query open, so a service that was just started resolves
         // on the first attempt rather than returning NXDOMAIN.
         if let (Some(rescan), Some(updated)) = (&self.dns_rescan, &self.dns_updated) {
-            rescan.notify_waiters();
+            rescan.notify_one();
             let _ = tokio::time::timeout(DNS_FIRST_HIT_WAIT, updated.notified()).await;
         }
 
@@ -173,6 +241,35 @@ fn has_unresolved_overlay_query(data: &[u8], services: &ServiceTable) -> bool {
             && is_portzero_local(q.name())
             && resolve_name_to_vip(q.name(), services).is_none()
     })
+}
+
+fn reserve_unresolved_overlay_queries(
+    data: &[u8],
+    services: &mut ServiceTable,
+    hold_connections: bool,
+) -> bool {
+    let msg = match Message::from_bytes(data) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if msg.op_code() != OpCode::Query {
+        return false;
+    }
+
+    let mut reserved = false;
+    for q in msg.queries() {
+        if q.query_class() == DNSClass::IN
+            && q.query_type() == RecordType::A
+            && is_portzero_local(q.name())
+            && resolve_name_to_vip(q.name(), services).is_none()
+        {
+            if let Some(label) = service_label(q.name()) {
+                services.reserve_name_on_port(label, 80, hold_connections);
+                reserved = true;
+            }
+        }
+    }
+    reserved
 }
 
 fn handle_query_with_services(data: &[u8], services: &ServiceTable) -> Option<Vec<u8>> {
@@ -293,14 +390,31 @@ fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<Ipv4Addr>
         && labels[labels.len() - 2] == "portzero"
         && labels[labels.len() - 1] == "local"
     {
-        return services.get(candidate).map(|svc| {
+        return services.assigned_vip(candidate).map(|vip| {
             // smoltcp Ipv4Address can be converted via its Display or as_bytes in 0.11
-            let b: [u8; 4] = svc.vip.0;
+            let b: [u8; 4] = vip.0;
             std::net::Ipv4Addr::new(b[0], b[1], b[2], b[3])
         });
     }
 
     None
+}
+
+fn service_label(name: &Name) -> Option<&str> {
+    let labels: Vec<_> = name
+        .iter()
+        .map(|l| std::str::from_utf8(l).unwrap_or(""))
+        .collect();
+    if labels.len() >= 3
+        && labels[labels.len() - 2] == "portzero"
+        && labels[labels.len() - 1] == "local"
+        && labels[0] != "portzero"
+        && labels[0] != "api"
+    {
+        Some(labels[0])
+    } else {
+        None
+    }
 }
 
 /// Helper to update the shared service table from outside.
@@ -400,5 +514,29 @@ mod tests {
                 .any(|r| r.record_type() == RecordType::A),
             "a registered service must return an A record"
         );
+    }
+
+    #[tokio::test]
+    async fn proactive_first_hit_reserves_and_answers_vip() {
+        let services = Arc::new(RwLock::new(ServiceTable::new()));
+        let server = OverlayDnsServer::new(services.clone(), "127.0.0.1:0".parse().unwrap())
+            .with_first_hit_policy(DnsFirstHitPolicy::ProactiveVip);
+
+        let resp = server
+            .handle_query(&a_query_bytes("fresh.portzero.local."))
+            .await
+            .expect("response");
+        let msg = Message::from_bytes(&resp).unwrap();
+        assert_eq!(msg.response_code(), ResponseCode::NoError);
+        assert!(
+            msg.answers()
+                .iter()
+                .any(|r| r.record_type() == RecordType::A),
+            "proactive mode must answer with the reserved VIP immediately"
+        );
+
+        let guard = services.read().await;
+        assert!(guard.get("fresh").is_none());
+        assert!(guard.assigned_vip("fresh").is_some());
     }
 }

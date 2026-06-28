@@ -65,6 +65,7 @@ use crate::auth::AuthConfig;
 use crate::cloud::CloudConnector;
 use crate::discovery::{self, DiscoveredNetworkService};
 use crate::docker_events::{self, ConflictRegistry};
+use crate::net::dns::DnsFirstHitPolicy;
 use crate::net::overlay::{OverlayConfig, OverlayNetwork};
 use crate::net::service_table::ServiceTable;
 use crate::net::stack::OverlayHttpsPolicy;
@@ -84,6 +85,8 @@ pub struct DaemonConfig {
     pub scan_interval_secs: u64,
     /// HTTPS behavior for `.portzero.local` overlay services.
     pub overlay_https: OverlayHttpsPolicy,
+    /// How DNS handles first hits for unknown `.portzero.local` services.
+    pub dns_first_hit_policy: DnsFirstHitPolicy,
 }
 
 impl Default for DaemonConfig {
@@ -96,6 +99,7 @@ impl Default for DaemonConfig {
             state_dir,
             scan_interval_secs: 2,
             overlay_https: OverlayHttpsPolicy::default(),
+            dns_first_hit_policy: DnsFirstHitPolicy::default(),
         }
     }
 }
@@ -188,10 +192,14 @@ struct FileDaemonConfig {
 #[derive(Debug, Default, Deserialize)]
 struct FileOverlayConfig {
     https: Option<FileOverlayHttpsConfig>,
+    dns_first_hit_policy: Option<DnsFirstHitPolicy>,
 }
 
 impl FileOverlayConfig {
     fn apply_to(self, config: &mut DaemonConfig) {
+        if let Some(policy) = self.dns_first_hit_policy {
+            config.dns_first_hit_policy = policy;
+        }
         if let Some(https) = self.https {
             if let Some(v) = https.enable_for_port_80 {
                 config.overlay_https.enable_for_port_80 = v;
@@ -392,6 +400,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     let overlay: Option<Arc<OverlayNetwork>> = match OverlayNetwork::start(
         OverlayConfig {
             https_policy: config.overlay_https,
+            dns_first_hit_policy: config.dns_first_hit_policy,
             ..OverlayConfig::default()
         },
         dns_rescan.clone(),
@@ -1500,6 +1509,7 @@ mod tests {
             state_dir: PathBuf::from("/nonexistent/path"),
             scan_interval_secs: 2,
             overlay_https: OverlayHttpsPolicy::default(),
+            dns_first_hit_policy: DnsFirstHitPolicy::default(),
         };
         assert!(read_daemon_pid(&config).is_none());
     }
@@ -1510,6 +1520,7 @@ mod tests {
             state_dir: dir.path().to_path_buf(),
             scan_interval_secs: 2,
             overlay_https: OverlayHttpsPolicy::default(),
+            dns_first_hit_policy: DnsFirstHitPolicy::default(),
         };
         (config, dir)
     }
@@ -1565,6 +1576,7 @@ mod tests {
             state_dir: PathBuf::from("/nonexistent/path"),
             scan_interval_secs: 2,
             overlay_https: OverlayHttpsPolicy::default(),
+            dns_first_hit_policy: DnsFirstHitPolicy::default(),
         };
         assert_eq!(read_cloud_connected(&config), None);
         assert_eq!(read_cloud_error(&config), None);
@@ -1587,5 +1599,20 @@ mod tests {
         assert!(!config.overlay_https.enable_for_port_80);
         assert!(!config.overlay_https.redirect_port_80);
         assert!(config.overlay_https.passthrough_port_443);
+    }
+
+    #[test]
+    fn test_file_config_overrides_dns_first_hit_policy() {
+        let file: FileConfig = toml::from_str(
+            r#"
+            [overlay]
+            dns_first_hit_policy = "proactive-vip"
+            "#,
+        )
+        .unwrap();
+        let mut config = DaemonConfig::default();
+        file.apply_to(&mut config);
+
+        assert_eq!(config.dns_first_hit_policy, DnsFirstHitPolicy::ProactiveVip);
     }
 }

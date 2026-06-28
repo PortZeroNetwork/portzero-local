@@ -92,6 +92,26 @@ impl VirtualIpAllocator {
         }
     }
 
+    /// Preserve an existing name -> IP assignment from another allocator.
+    ///
+    /// Used when rebuilding service tables from a fresh discovery scan: DNS may
+    /// have already handed a VIP to a client before discovery found the backend,
+    /// so the next table must keep that exact answer stable.
+    pub fn preserve(&mut self, name: &str, ip: Ipv4Addr) {
+        if self.name_to_ip.contains_key(name) || self.ip_to_name.contains_key(&ip) {
+            return;
+        }
+        self.name_to_ip.insert(name.to_string(), ip);
+        self.ip_to_name.insert(ip, name.to_string());
+    }
+
+    /// Iterate all assigned names and IPs.
+    pub fn assignments(&self) -> impl Iterator<Item = (&str, Ipv4Addr)> {
+        self.name_to_ip
+            .iter()
+            .map(|(name, ip)| (name.as_str(), *ip))
+    }
+
     /// Lookup by name.
     pub fn lookup_name(&self, name: &str) -> Option<Ipv4Addr> {
         self.name_to_ip.get(name).copied()

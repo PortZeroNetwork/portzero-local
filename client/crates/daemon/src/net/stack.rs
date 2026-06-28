@@ -34,6 +34,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::Instant as StdInstant;
 
 use anyhow::Result;
 use rustls::ServerConfig;
@@ -55,6 +56,7 @@ const SOCKET_BUF: usize = 64 * 1024;
 const PROXY_CHUNK: usize = 16 * 1024;
 /// How often the stack loop wakes up even with no I/O, to drive smoltcp timers.
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+const PENDING_BACKEND_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Configurable HTTPS behavior for `.portzero.local` overlay services.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,6 +196,10 @@ impl VirtualStack {
         Ok(())
     }
 
+    pub fn command_sender(&self) -> mpsc::Sender<StackCommand> {
+        self.cmd_tx.clone()
+    }
+
     pub async fn shutdown(&self) -> Result<()> {
         let _ = self.cmd_tx.send(StackCommand::Shutdown).await;
         // Abort the TUN reader/writer tasks so their halves of the device drop.
@@ -330,6 +336,12 @@ struct Connection {
     client_closing: bool,
 }
 
+struct PendingConnection {
+    vip: Ipv4Address,
+    port: u16,
+    accepted_at: StdInstant,
+}
+
 /// Listening socket bookkeeping: one smoltcp listener per service port.
 struct Listener {
     handle: SocketHandle,
@@ -343,6 +355,7 @@ struct StackEngine<D: Device> {
     services: ServiceTable,
     listeners: Vec<Listener>,
     connections: HashMap<SocketHandle, Connection>,
+    pending_connections: HashMap<SocketHandle, PendingConnection>,
     cmd_rx: mpsc::Receiver<StackCommand>,
     /// When present, port-443 connections are TLS-terminated with this config
     /// and forwarded as plaintext to the service's real backend.
@@ -391,6 +404,7 @@ where
             services: ServiceTable::new(),
             listeners: Vec::new(),
             connections: HashMap::new(),
+            pending_connections: HashMap::new(),
             cmd_rx,
             tls_config,
             https_policy,
@@ -406,6 +420,7 @@ where
     /// listening socket per distinct service port.
     fn apply_services(&mut self, table: ServiceTable) {
         let mut wanted_ports: Vec<u16> = table.all().map(|s| s.service_port).collect();
+        wanted_ports.extend(table.pending_ports());
         // Hold a port-443 listener only when at least one HTTP service should
         // receive daemon-terminated HTTPS. Explicit 443 services already add
         // this listener through `service_port` and are passed through by default.
@@ -512,6 +527,7 @@ where
             .poll(timestamp, &mut self.device, &mut self.sockets);
 
         self.accept_new_connections();
+        self.promote_pending_connections();
         self.service_connections();
 
         // Poll again so any bytes we just queued into sockets get flushed out.
@@ -536,22 +552,42 @@ where
             // Resolve which VIP the client connected to.
             let local = self.sockets.get::<tcp::Socket>(handle).local_endpoint();
 
-            let action = match local {
+            let (vip, action) = match local {
                 Some(ep) => match ep.addr {
-                    IpAddress::Ipv4(v4) => select_connection_action(
-                        &self.services,
-                        self.tls_config.is_some(),
-                        self.https_policy,
-                        v4,
-                        port,
+                    IpAddress::Ipv4(v4) => (
+                        Some(v4),
+                        select_connection_action(
+                            &self.services,
+                            self.tls_config.is_some(),
+                            self.https_policy,
+                            v4,
+                            port,
+                        ),
                     ),
                     #[allow(unreachable_patterns)]
-                    _ => None,
+                    _ => (None, None),
                 },
-                None => None,
+                None => (None, None),
             };
 
             let Some(action) = action else {
+                if let Some(vip) = vip {
+                    if self.services.should_hold_pending_connection(vip) {
+                        tracing::debug!(
+                            "holding virtual connection on pending VIP {vip} port {port}"
+                        );
+                        self.pending_connections.insert(
+                            handle,
+                            PendingConnection {
+                                vip,
+                                port,
+                                accepted_at: StdInstant::now(),
+                            },
+                        );
+                        self.replace_listener(idx, port);
+                        continue;
+                    }
+                }
                 tracing::warn!(
                     "no backend for accepted connection on port {port} (local={local:?}); aborting"
                 );
@@ -562,47 +598,89 @@ where
             };
 
             tracing::debug!("accepted virtual connection on port {port} -> {action:?}");
-
-            // Spawn backend connection plumbing.
-            let (to_backend_tx, to_backend_rx) = mpsc::channel::<Vec<u8>>(16);
-            let (from_backend_tx, from_backend_rx) = mpsc::channel::<Vec<u8>>(16);
-            match action {
-                ConnectionAction::PlainProxy(real_addr) => {
-                    spawn_backend(real_addr, to_backend_rx, from_backend_tx);
-                }
-                ConnectionAction::TlsTerminate(real_addr) => {
-                    if let Some(ref tls) = self.tls_config {
-                        crate::tls::stack::spawn_tls_backend(
-                            tls.clone(),
-                            real_addr,
-                            to_backend_rx,
-                            from_backend_tx,
-                        );
-                    } else {
-                        self.sockets.get_mut::<tcp::Socket>(handle).abort();
-                        self.replace_listener(idx, port);
-                        continue;
-                    }
-                }
-                ConnectionAction::RedirectToHttps => {
-                    spawn_https_redirect(to_backend_rx, from_backend_tx);
-                }
+            if !self.start_connection_backend(handle, action) {
+                self.sockets.get_mut::<tcp::Socket>(handle).abort();
+                self.replace_listener(idx, port);
+                continue;
             }
-
-            self.connections.insert(
-                handle,
-                Connection {
-                    to_client: VecDeque::new(),
-                    to_backend_tx: Some(to_backend_tx),
-                    from_backend_rx,
-                    backend_eof: false,
-                    client_closing: false,
-                },
-            );
 
             // The old handle is now a live connection; install a fresh listener
             // for the port.
             self.replace_listener(idx, port);
+        }
+    }
+
+    fn start_connection_backend(&mut self, handle: SocketHandle, action: ConnectionAction) -> bool {
+        let (to_backend_tx, to_backend_rx) = mpsc::channel::<Vec<u8>>(16);
+        let (from_backend_tx, from_backend_rx) = mpsc::channel::<Vec<u8>>(16);
+        match action {
+            ConnectionAction::PlainProxy(real_addr) => {
+                spawn_backend(real_addr, to_backend_rx, from_backend_tx);
+            }
+            ConnectionAction::TlsTerminate(real_addr) => {
+                let Some(ref tls) = self.tls_config else {
+                    return false;
+                };
+                crate::tls::stack::spawn_tls_backend(
+                    tls.clone(),
+                    real_addr,
+                    to_backend_rx,
+                    from_backend_tx,
+                );
+            }
+            ConnectionAction::RedirectToHttps => {
+                spawn_https_redirect(to_backend_rx, from_backend_tx);
+            }
+        }
+
+        self.connections.insert(
+            handle,
+            Connection {
+                to_client: VecDeque::new(),
+                to_backend_tx: Some(to_backend_tx),
+                from_backend_rx,
+                backend_eof: false,
+                client_closing: false,
+            },
+        );
+        true
+    }
+
+    fn promote_pending_connections(&mut self) {
+        let handles: Vec<SocketHandle> = self.pending_connections.keys().copied().collect();
+        for handle in handles {
+            let Some(pending) = self.pending_connections.get(&handle) else {
+                continue;
+            };
+            let action = select_connection_action(
+                &self.services,
+                self.tls_config.is_some(),
+                self.https_policy,
+                pending.vip,
+                pending.port,
+            );
+            if let Some(action) = action {
+                tracing::debug!(
+                    "attached pending virtual connection on {}:{} -> {action:?}",
+                    pending.vip,
+                    pending.port
+                );
+                self.pending_connections.remove(&handle);
+                if !self.start_connection_backend(handle, action) {
+                    self.sockets.get_mut::<tcp::Socket>(handle).abort();
+                }
+                continue;
+            }
+
+            if pending.accepted_at.elapsed() >= PENDING_BACKEND_WAIT {
+                tracing::warn!(
+                    "timed out waiting for backend for pending virtual connection on {}:{}",
+                    pending.vip,
+                    pending.port
+                );
+                self.pending_connections.remove(&handle);
+                self.sockets.get_mut::<tcp::Socket>(handle).abort();
+            }
         }
     }
 

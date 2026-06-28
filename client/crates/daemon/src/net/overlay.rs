@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::{Notify, RwLock};
 
-use crate::net::dns::OverlayDnsServer;
+use crate::net::dns::{DnsFirstHitPolicy, OverlayDnsServer};
 use crate::net::resolver_config;
 use crate::net::service_table::ServiceTable;
 use crate::net::stack::{OverlayHttpsPolicy, VirtualStack};
@@ -91,6 +91,8 @@ pub struct OverlayConfig {
     pub tun: TunConfig,
     /// HTTPS behavior for services exposed through the local overlay.
     pub https_policy: OverlayHttpsPolicy,
+    /// DNS behavior for first queries to unknown local overlay names.
+    pub dns_first_hit_policy: DnsFirstHitPolicy,
 }
 
 impl Default for OverlayConfig {
@@ -99,6 +101,7 @@ impl Default for OverlayConfig {
             dns_listen: default_dns_listen(),
             tun: TunConfig::default(),
             https_policy: OverlayHttpsPolicy::default(),
+            dns_first_hit_policy: DnsFirstHitPolicy::default(),
         }
     }
 }
@@ -173,10 +176,14 @@ impl OverlayNetwork {
         // just-started service can succeed instead of returning NXDOMAIN.
         let dns_updated = Arc::new(Notify::new());
         let dns_server = OverlayDnsServer::new(services.clone(), config.dns_listen)
+            .with_first_hit_policy(config.dns_first_hit_policy)
+            .with_stack_updates(stack.command_sender())
             .with_rescan(dns_rescan, dns_updated.clone());
         #[cfg(target_os = "windows")]
+        let runtime = tokio::runtime::Handle::current();
+        #[cfg(target_os = "windows")]
         let dns_task = tokio::task::spawn_blocking(move || {
-            if let Err(e) = dns_server.run_blocking() {
+            if let Err(e) = dns_server.run_blocking(runtime) {
                 tracing::error!("overlay DNS server exited: {}", e);
             }
         });
@@ -211,9 +218,11 @@ impl OverlayNetwork {
 
     /// Push an updated service table into the overlay (called by discovery).
     pub async fn update_services(&self, table: ServiceTable) -> Result<()> {
+        let mut table = table;
         // Update DNS view
         {
             let mut guard = self.services.write().await;
+            table.preserve_assignments_from(&guard);
             *guard = table.clone();
         }
 
