@@ -15,9 +15,9 @@ pub fn generate() -> anyhow::Result<()> {
 /// Install the local CA into the OS trust store so browsers and system tools
 /// accept `*.portzero.local` without certificate warnings.
 ///
-/// Requires elevated privileges on Linux (`sudo -E`) and macOS (`sudo`).
-/// On Linux, run `portzero trust generate` first (as the regular user) so the
-/// certificate exists before this command is invoked as root.
+/// Requires elevated privileges for system-wide trust on Linux (`sudo -E`) and
+/// macOS (`sudo`). On Linux, running as the regular user still updates writable
+/// per-user browser NSS stores.
 pub fn install() -> anyhow::Result<()> {
     let path = LocalCa::ca_cert_path()?;
     if !path.exists() {
@@ -27,7 +27,7 @@ pub fn install() -> anyhow::Result<()> {
         );
     }
     trust::install(&path)?;
-    println!("CA certificate installed to system trust store.");
+    println!("CA certificate installed to available trust stores.");
     Ok(())
 }
 

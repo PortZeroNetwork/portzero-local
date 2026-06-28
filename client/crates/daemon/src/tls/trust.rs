@@ -222,8 +222,7 @@ fn install_nss_dbs(ca_cert_path: &Path, env: &LinuxTrustEnv) {
         return;
     };
     for db_dir in &env.nss_db_dirs {
-        let args = certutil_add_args(db_dir, ca_cert_path);
-        if let Err(e) = run_command(certutil.to_str().unwrap_or("certutil"), &args) {
+        if let Err(e) = install_nss_cert(certutil, db_dir, ca_cert_path) {
             tracing::warn!(
                 "Linux: failed to add CA to NSS DB {}: {e:#}",
                 db_dir.display()
@@ -296,13 +295,34 @@ pub(crate) fn certutil_delete_args(db_dir: &Path) -> Vec<String> {
     ]
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn install_nss_cert(certutil: &Path, db_dir: &Path, ca_cert_path: &Path) -> Result<()> {
+    let program = certutil.to_str().unwrap_or("certutil");
+    let add_args = certutil_add_args(db_dir, ca_cert_path);
+
+    match run_command(program, &add_args) {
+        Ok(()) => Ok(()),
+        Err(first_err) => {
+            let delete_args = certutil_delete_args(db_dir);
+            let _ = run_command(program, &delete_args);
+            let retry_args = certutil_add_args(db_dir, ca_cert_path);
+            run_command(program, &retry_args).with_context(|| {
+                format!("replace existing NSS cert after add failed: {first_err:#}")
+            })
+        }
+    }
+}
+
 /// Collect all NSS database directories found under `home`.
 ///
 /// Checked locations:
-/// - `~/.pki/nssdb`                                              (Chrome, Chromium)
-/// - `~/.mozilla/firefox/*/`                                     (Firefox)
-/// - `~/.var/app/org.mozilla.firefox/.mozilla/firefox/*/`        (Firefox Flatpak)
-/// - `~/snap/firefox/current/.mozilla/firefox/*/`                (Firefox Snap)
+/// - `~/.pki/nssdb`                                               (Chrome, Chromium)
+/// - `~/.mozilla/firefox/*/`                                      (Firefox)
+/// - `~/.var/app/org.mozilla.firefox/.mozilla/firefox/*/`         (Firefox Flatpak)
+/// - `~/snap/firefox/current/.mozilla/firefox/*/`                 (Firefox Snap)
+/// - `~/snap/{brave,chromium}/current/.pki/nssdb`                 (Snap browsers)
+/// - `~/.var/app/{com.brave.Browser,org.chromium.Chromium}/.pki/nssdb`
+///   (Flatpak browsers)
 ///
 /// A directory is included only if it contains a `cert9.db` file (the SQLite
 /// NSS store). Legacy `cert8.db` (Berkeley DB) is intentionally ignored; all
@@ -312,10 +332,7 @@ pub(crate) fn find_nss_dbs(home: &Path) -> Vec<PathBuf> {
     let mut dbs = Vec::new();
 
     // Chrome / Chromium — direct NSS DB directory.
-    let pki = home.join(".pki/nssdb");
-    if pki.join("cert9.db").exists() {
-        dbs.push(pki);
-    }
+    push_nss_db_if_exists(&mut dbs, home.join(".pki/nssdb"));
 
     // Firefox-family profile directories — enumerate subdirs for cert9.db.
     let firefox_bases = [
@@ -327,7 +344,26 @@ pub(crate) fn find_nss_dbs(home: &Path) -> Vec<PathBuf> {
         dbs.extend(nss_dbs_under(base));
     }
 
+    // Sandboxed Chromium-family browsers keep a private NSS store instead of
+    // sharing ~/.pki/nssdb.
+    let chromium_nss_dbs = [
+        home.join("snap/brave/current/.pki/nssdb"),
+        home.join("snap/chromium/current/.pki/nssdb"),
+        home.join(".var/app/com.brave.Browser/.pki/nssdb"),
+        home.join(".var/app/org.chromium.Chromium/.pki/nssdb"),
+    ];
+    for db in chromium_nss_dbs {
+        push_nss_db_if_exists(&mut dbs, db);
+    }
+
     dbs
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn push_nss_db_if_exists(dbs: &mut Vec<PathBuf>, db: PathBuf) {
+    if db.join("cert9.db").exists() && !dbs.contains(&db) {
+        dbs.push(db);
+    }
 }
 
 /// Return subdirectories of `dir` that contain a `cert9.db` file.
@@ -534,8 +570,7 @@ fn install_nss_dbs_macos(ca_cert_path: &Path, env: &MacosTrustEnv) {
         return;
     };
     for db_dir in &env.nss_db_dirs {
-        let args = certutil_add_args(db_dir, ca_cert_path);
-        if let Err(e) = run_command(certutil.to_str().unwrap_or("certutil"), &args) {
+        if let Err(e) = install_nss_cert(certutil, db_dir, ca_cert_path) {
             tracing::warn!(
                 "macOS: failed to add CA to NSS DB {}: {e:#}",
                 db_dir.display()
@@ -682,8 +717,7 @@ fn install_nss_dbs_windows(ca_cert_path: &Path, env: &WindowsTrustEnv) {
         return;
     };
     for db_dir in &env.nss_db_dirs {
-        let args = certutil_add_args(db_dir, ca_cert_path);
-        if let Err(e) = run_command(certutil.to_str().unwrap_or("certutil"), &args) {
+        if let Err(e) = install_nss_cert(certutil, db_dir, ca_cert_path) {
             tracing::warn!(
                 "Windows: failed to add CA to NSS DB {}: {e:#}",
                 db_dir.display()
@@ -1036,6 +1070,30 @@ mod tests {
             found.contains(&profile),
             "should find Firefox profile NSS DB"
         );
+    }
+
+    #[test]
+    fn find_nss_dbs_picks_up_snap_brave_nssdb() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let nssdb = home.join("snap/brave/current/.pki/nssdb");
+        std::fs::create_dir_all(&nssdb).unwrap();
+        std::fs::write(nssdb.join("cert9.db"), b"").unwrap();
+
+        let found = find_nss_dbs(home);
+        assert!(found.contains(&nssdb), "should find Snap Brave NSS DB");
+    }
+
+    #[test]
+    fn find_nss_dbs_picks_up_flatpak_brave_nssdb() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let nssdb = home.join(".var/app/com.brave.Browser/.pki/nssdb");
+        std::fs::create_dir_all(&nssdb).unwrap();
+        std::fs::write(nssdb.join("cert9.db"), b"").unwrap();
+
+        let found = find_nss_dbs(home);
+        assert!(found.contains(&nssdb), "should find Flatpak Brave NSS DB");
     }
 
     #[test]
