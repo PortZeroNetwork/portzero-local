@@ -47,6 +47,45 @@ install:
       echo "warning: Browsers with NSS stores may not trust *.portzero.local until you install libnss3-tools (Debian/Ubuntu) or nss-tools (Fedora/RHEL)." >&2
       return 1
     }
+    install_linux_resolved_polkit_rule() {
+      if [ ! -d /etc/polkit-1/rules.d ]; then
+        echo "warning: polkit rules directory not found; systemd-resolved may prompt for DNS setup at login." >&2
+        return 1
+      fi
+
+      local user
+      user="$(id -un)"
+      case "$user" in
+        *[!A-Za-z0-9._-]*|'')
+          echo "warning: Cannot install polkit rule for unsupported username: $user" >&2
+          return 1
+          ;;
+      esac
+
+      local rule_tmp
+      rule_tmp="$(mktemp)"
+      trap 'rm -f "$rule_tmp"' RETURN
+      {
+        printf '%s\n' '// Managed by portzero installer.'
+        printf '%s\n' "// Allows the portzero user service for $user to attach scoped DNS settings"
+        printf '%s\n' '// to its TUN link without interactive authentication on every login.'
+        printf '%s\n' 'polkit.addRule(function(action, subject) {'
+        printf '%s\n' "    if (subject.user !== \"$user\") {"
+        printf '%s\n' '        return polkit.Result.NOT_HANDLED;'
+        printf '%s\n' '    }'
+        printf '%s\n' ''
+        printf '%s\n' '    if (action.id === "org.freedesktop.resolve1.set-dns-servers" ||'
+        printf '%s\n' '        action.id === "org.freedesktop.resolve1.set-domains" ||'
+        printf '%s\n' '        action.id === "org.freedesktop.resolve1.revert") {'
+        printf '%s\n' '        return polkit.Result.YES;'
+        printf '%s\n' '    }'
+        printf '%s\n' ''
+        printf '%s\n' '    return polkit.Result.NOT_HANDLED;'
+        printf '%s\n' '});'
+      } > "$rule_tmp"
+
+      sudo install -m 0644 "$rule_tmp" /etc/polkit-1/rules.d/50-portzero-resolved.rules
+    }
 
     cargo install --path client/crates/cli
     cargo_bin="$HOME/.cargo/bin/portzero"
@@ -63,6 +102,8 @@ install:
         echo "  (CAP_NET_ADMIN creates the TUN device; CAP_NET_BIND_SERVICE lets the"
         echo "   embedded DNS server bind 10.254.0.1:53 so *.portzero.local resolves.)"
         sudo setcap 'cap_net_admin,cap_net_bind_service+eip' "$cargo_bin"
+        echo "→ Installing systemd-resolved polkit rule..."
+        install_linux_resolved_polkit_rule
         install_linux_certutil || true
         echo "→ Generating CA certificate..."
         portzero trust generate
@@ -148,6 +189,10 @@ uninstall:
         if grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
           echo "→ Removing portzero.local pin from /etc/hosts..."
           sudo sed -i '/# portzero-local/d' /etc/hosts
+        fi
+        if [ -f /etc/polkit-1/rules.d/50-portzero-resolved.rules ]; then
+          echo "→ Removing systemd-resolved polkit rule..."
+          sudo rm -f /etc/polkit-1/rules.d/50-portzero-resolved.rules
         fi
         ;;
       Darwin*)

@@ -55,6 +55,52 @@ install_linux_certutil() {
     return 1
 }
 
+install_linux_resolved_polkit_rule() {
+    if [ "$(uname -s)" != "Linux" ]; then
+        return 0
+    fi
+    if [ ! -d /etc/polkit-1/rules.d ]; then
+        warn "polkit rules directory not found; systemd-resolved may prompt for DNS setup at login."
+        return 1
+    fi
+
+    user="$(id -un)"
+    case "$user" in
+        *[!A-Za-z0-9._-]*|'')
+            warn "Cannot install polkit rule for unsupported username: $user"
+            return 1
+            ;;
+    esac
+
+    rule_tmp="$tmp/50-portzero-resolved.rules"
+    cat > "$rule_tmp" << RULE
+// Managed by portzero installer.
+// Allows the portzero user service for $user to attach scoped DNS settings
+// to its TUN link without interactive authentication on every login.
+polkit.addRule(function(action, subject) {
+    if (subject.user !== "$user") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    if (action.id === "org.freedesktop.resolve1.set-dns-servers" ||
+        action.id === "org.freedesktop.resolve1.set-domains" ||
+        action.id === "org.freedesktop.resolve1.revert") {
+        return polkit.Result.YES;
+    }
+
+    return polkit.Result.NOT_HANDLED;
+});
+RULE
+
+    if sudo install -m 0644 "$rule_tmp" /etc/polkit-1/rules.d/50-portzero-resolved.rules 2>/dev/null; then
+        info "Installed polkit rule for systemd-resolved scoped DNS setup"
+    else
+        warn "Could not install systemd-resolved polkit rule (sudo failed or was denied)."
+        warn "Without it, *.portzero.local DNS may require an interactive auth prompt after login."
+        return 1
+    fi
+}
+
 # --- Detect platform ---
 case "$(uname -s)" in
     Linux*)  os="linux" ;;
@@ -140,6 +186,9 @@ if [ "$(uname -s)" = "Linux" ]; then
         warn "setcap not found — install libcap2-bin (Debian/Ubuntu) or libcap (Fedora/RHEL),"
         warn "then run: sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $bin_path"
     fi
+
+    info "Installing systemd-resolved polkit rule..."
+    install_linux_resolved_polkit_rule || true
 
     # Install a systemd user service unit so 'portzero autostart enable' works
     # and the service can be managed with 'systemctl --user'.
