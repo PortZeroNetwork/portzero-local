@@ -91,8 +91,17 @@ function Stop-ExistingDaemon {
 
     foreach ($candidate in ($candidates | Select-Object -Unique)) {
         Write-Step "Stopping existing daemon with $candidate"
-        & $candidate stop 2>$null
-        if ($LASTEXITCODE -eq 0) {
+        $exitCode = 1
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & $candidate stop 2>$null
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        if ($exitCode -eq 0) {
             return
         }
     }
