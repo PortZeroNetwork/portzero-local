@@ -123,6 +123,9 @@ fn certs_have_browser_tls_usages(ca_pem: &str, leaf_pem: &str) -> bool {
 
     ca_params.key_usages.contains(&KeyUsagePurpose::KeyCertSign)
         && ca_params.key_usages.contains(&KeyUsagePurpose::CrlSign)
+        && ca_params
+            .key_usages
+            .contains(&KeyUsagePurpose::DigitalSignature)
         && leaf_params
             .key_usages
             .contains(&KeyUsagePurpose::DigitalSignature)
@@ -161,7 +164,11 @@ fn generate() -> Result<(LocalCa, OffsetDateTime)> {
     // --- CA (10-year self-signed) ---
     let mut ca_params = CertificateParams::new(vec![]).context("build CA cert params")?;
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    ca_params.key_usages = vec![
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::CrlSign,
+        KeyUsagePurpose::DigitalSignature,
+    ];
     ca_params.distinguished_name = make_dn("PortZero Local CA", Some("PortZero"));
     ca_params.not_before = now;
     ca_params.not_after = now + Duration::days(CA_VALIDITY_DAYS);
@@ -264,6 +271,7 @@ mod tests {
         assert!(ca_text.contains("Key Usage"));
         assert!(ca_text.contains("Certificate Sign"));
         assert!(ca_text.contains("CRL Sign"));
+        assert!(ca_text.contains("Digital Signature"));
 
         let leaf_text = openssl_x509_text(&openssl, &leaf_path);
         assert!(leaf_text.contains("DNS:*.portzero.local"));

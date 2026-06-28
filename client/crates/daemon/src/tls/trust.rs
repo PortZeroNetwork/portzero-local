@@ -11,7 +11,8 @@
 //!    daemon does NOT have when running as an unprivileged systemd *user*
 //!    service; in that case this step is skipped with an actionable warning
 //!    (`sudo portzero trust install`) and the NSS step below still runs.
-//!    - Debian/Ubuntu: copy to `/usr/local/share/ca-certificates/` + `update-ca-certificates`
+//!    - Debian/Ubuntu: copy to `/usr/share/ca-certificates/portzero/`, register
+//!      in `/etc/ca-certificates.conf`, then run `update-ca-certificates`.
 //!    - RHEL/Fedora:   copy to `/etc/pki/ca-trust/source/anchors/` + `update-ca-trust extract`
 //!
 //! 2. **NSS databases** (Chrome, Chromium, Firefox) — browsers maintain their
@@ -47,6 +48,7 @@ use anyhow::{Context, Result};
 
 const CERT_NICKNAME: &str = "PortZero Local CA";
 const SYSTEM_CERT_NAME: &str = "portzero-local-ca.crt";
+const DEBIAN_CA_CONFIG_LINE: &str = "portzero/portzero-local-ca.crt";
 
 /// Install the PortZero local CA into OS trust stores.
 ///
@@ -118,6 +120,8 @@ fn install_system_ca(ca_cert_path: &Path, env: &LinuxTrustEnv) -> Result<()> {
             if !copy_system_anchor(ca_cert_path, &dest)? {
                 return Ok(());
             }
+            ensure_debian_ca_config_line()?;
+            remove_legacy_debian_anchor()?;
             run_command("update-ca-certificates", &[] as &[&str])
                 .context("update-ca-certificates")?;
             tracing::info!(
@@ -158,6 +162,21 @@ fn install_system_ca(ca_cert_path: &Path, env: &LinuxTrustEnv) -> Result<()> {
 /// failure.
 #[cfg(target_os = "linux")]
 fn copy_system_anchor(ca_cert_path: &Path, dest: &Path) -> Result<bool> {
+    if let Some(parent) = dest.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                tracing::warn!(
+                    "Linux: no permission to create system CA directory at {} \
+                     (the daemon is running unprivileged). Browsers using the per-user \
+                     NSS store will still trust *.portzero.local; for system-wide trust \
+                     (curl, openssl, Brave Snap) run: sudo portzero trust install",
+                    parent.display()
+                );
+                return Ok(false);
+            }
+            return Err(e).with_context(|| format!("create {}", parent.display()));
+        }
+    }
     match std::fs::copy(ca_cert_path, dest) {
         Ok(_) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -165,7 +184,7 @@ fn copy_system_anchor(ca_cert_path: &Path, dest: &Path) -> Result<bool> {
                 "Linux: no permission to write the system CA store at {} \
                  (the daemon is running unprivileged). Browsers using the per-user \
                  NSS store will still trust *.portzero.local; for system-wide trust \
-                 (curl, openssl) run: sudo portzero trust install",
+                 (curl, openssl, Brave Snap) run: sudo portzero trust install",
                 dest.display()
             );
             Ok(false)
@@ -179,16 +198,22 @@ fn uninstall_system_ca(env: &LinuxTrustEnv) -> Result<()> {
     match env.ca_tool {
         LinuxCaTool::UpdateCaCertificates => {
             let dest = system_cert_dest_debian();
+            let legacy_dest = legacy_system_cert_dest_debian();
             if dest.exists() {
                 std::fs::remove_file(&dest)
                     .with_context(|| format!("remove {}", dest.display()))?;
-                run_command("update-ca-certificates", &[] as &[&str])
-                    .context("update-ca-certificates")?;
-                tracing::info!(
-                    "Linux: removed CA cert {} via update-ca-certificates",
-                    dest.display()
-                );
             }
+            if legacy_dest.exists() {
+                std::fs::remove_file(&legacy_dest)
+                    .with_context(|| format!("remove {}", legacy_dest.display()))?;
+            }
+            remove_debian_ca_config_line()?;
+            run_command("update-ca-certificates", &["--fresh"] as &[&str])
+                .context("update-ca-certificates --fresh")?;
+            tracing::info!(
+                "Linux: removed CA cert {} via update-ca-certificates",
+                dest.display()
+            );
         }
         LinuxCaTool::UpdateCaTrust => {
             let dest = system_cert_dest_rhel();
@@ -256,7 +281,54 @@ fn uninstall_nss_dbs(env: &LinuxTrustEnv) {
 /// Destination path for the CA cert on Debian/Ubuntu.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn system_cert_dest_debian() -> PathBuf {
+    PathBuf::from("/usr/share/ca-certificates")
+        .join("portzero")
+        .join(SYSTEM_CERT_NAME)
+}
+
+/// Previous Debian/Ubuntu destination. Snap applications can see the symlink
+/// under `/etc/ssl/certs` but cannot follow it into `/usr/local/share`, so keep
+/// this only for migration cleanup.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn legacy_system_cert_dest_debian() -> PathBuf {
     PathBuf::from("/usr/local/share/ca-certificates").join(SYSTEM_CERT_NAME)
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_debian_ca_config_line() -> Result<()> {
+    update_debian_ca_config(true)
+}
+
+#[cfg(target_os = "linux")]
+fn remove_debian_ca_config_line() -> Result<()> {
+    update_debian_ca_config(false)
+}
+
+#[cfg(target_os = "linux")]
+fn update_debian_ca_config(install: bool) -> Result<()> {
+    let path = Path::new("/etc/ca-certificates.conf");
+    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let mut lines: Vec<&str> = content
+        .lines()
+        .filter(|line| line.trim() != DEBIAN_CA_CONFIG_LINE)
+        .collect();
+    if install {
+        lines.push(DEBIAN_CA_CONFIG_LINE);
+    }
+
+    let mut updated = lines.join("\n");
+    updated.push('\n');
+    std::fs::write(path, updated).with_context(|| format!("write {}", path.display()))
+}
+
+#[cfg(target_os = "linux")]
+fn remove_legacy_debian_anchor() -> Result<()> {
+    let legacy_dest = legacy_system_cert_dest_debian();
+    if legacy_dest.exists() {
+        std::fs::remove_file(&legacy_dest)
+            .with_context(|| format!("remove legacy {}", legacy_dest.display()))?;
+    }
+    Ok(())
 }
 
 /// Destination path for the CA cert on RHEL/Fedora.
@@ -1007,7 +1079,7 @@ mod tests {
         let dest = system_cert_dest_debian();
         assert_eq!(
             dest,
-            PathBuf::from("/usr/local/share/ca-certificates/portzero-local-ca.crt")
+            PathBuf::from("/usr/share/ca-certificates/portzero/portzero-local-ca.crt")
         );
     }
 
