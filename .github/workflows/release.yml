@@ -75,17 +75,17 @@ jobs:
             archive_ext: tar.gz
             archive_name: portzero-linux-x86
           - target: x86_64-apple-darwin
-            os: warp-macos-latest-arm64-6x
+            os: warp-macos-15-arm64-6x
             bins: portzero
             archive_ext: tar.gz
             archive_name: portzero-darwin-amd64
           - target: aarch64-apple-darwin
-            os: warp-macos-latest-arm64-6x
+            os: warp-macos-15-arm64-6x
             bins: portzero
             archive_ext: tar.gz
             archive_name: portzero-darwin-arm64
           - target: x86_64-pc-windows-msvc
-            os: warp-windows-latest-x64-2x
+            os: warp-windows-latest-x64-4x
             bins: portzero
             archive_ext: zip
             archive_name: portzero-windows-amd64
@@ -104,7 +104,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-          save-if: ${{ matrix.os != 'warp-windows-latest-x64-2x' }}
+          save-if: ${{ matrix.os != 'warp-windows-latest-x64-4x' }}
 
       - name: Install cross
         if: matrix.cross
@@ -250,7 +250,7 @@ jobs:
   package-windows:
     name: Build Windows MSI
     needs: [version, build]
-    runs-on: warp-windows-latest-x64-2x
+    runs-on: warp-windows-latest-x64-4x
     steps:
       - uses: actions/checkout@v5
 
