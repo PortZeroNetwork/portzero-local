@@ -139,6 +139,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    portzero_daemon::install_default_crypto_provider();
+
     let cli = Cli::parse();
 
     // Spawn update check in the background — it never blocks the command.

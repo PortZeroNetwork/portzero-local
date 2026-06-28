@@ -268,6 +268,8 @@ impl GracePeriodTracker {
 /// 4. Registers/unregisters routes with cloud as they change
 /// 5. Checks for process exit with a grace period
 pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
+    crate::install_default_crypto_provider();
+
     std::fs::create_dir_all(&config.state_dir).with_context(|| {
         format!(
             "Failed to create daemon state directory: {}\n\n\
