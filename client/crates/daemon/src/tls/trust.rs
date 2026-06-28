@@ -275,8 +275,7 @@ fn uninstall_nss_dbs(env: &LinuxTrustEnv) {
         return;
     };
     for db_dir in &env.nss_db_dirs {
-        let args = certutil_delete_args(db_dir);
-        if let Err(e) = run_command(certutil.to_str().unwrap_or("certutil"), &args) {
+        if let Err(e) = delete_nss_cert(certutil, db_dir) {
             tracing::warn!(
                 "Linux: failed to remove CA from NSS DB {}: {e:#}",
                 db_dir.display()
@@ -451,17 +450,141 @@ fn install_nss_cert(certutil: &Path, db_dir: &Path, ca_cert_path: &Path) -> Resu
     let program = certutil.to_str().unwrap_or("certutil");
     let add_args = certutil_add_args(db_dir, ca_cert_path);
 
-    match run_command(program, &add_args) {
+    match run_certutil(program, &add_args) {
         Ok(()) => Ok(()),
+        Err(first_err) if first_err.is_read_only() => run_certutil_sudo(program, &add_args)
+            .with_context(|| {
+                format!(
+                    "add CA to read-only NSS DB {} after user certutil failed: {first_err}",
+                    db_dir.display()
+                )
+            }),
         Err(first_err) => {
             let delete_args = certutil_delete_args(db_dir);
-            let _ = run_command(program, &delete_args);
+            match run_certutil(program, &delete_args) {
+                Ok(()) => {}
+                Err(delete_err) if delete_err.is_read_only() => {
+                    run_certutil_sudo(program, &delete_args).with_context(|| {
+                        format!(
+                            "delete existing CA from read-only NSS DB {} after add failed: {first_err}",
+                            db_dir.display()
+                        )
+                    })?;
+                }
+                Err(_) => {}
+            }
             let retry_args = certutil_add_args(db_dir, ca_cert_path);
-            run_command(program, &retry_args).with_context(|| {
-                format!("replace existing NSS cert after add failed: {first_err:#}")
-            })
+            match run_certutil(program, &retry_args) {
+                Ok(()) => Ok(()),
+                Err(retry_err) if retry_err.is_read_only() => run_certutil_sudo(
+                    program,
+                    &retry_args,
+                )
+                .with_context(|| {
+                    format!(
+                        "replace existing CA in read-only NSS DB {} after add failed: {first_err}",
+                        db_dir.display()
+                    )
+                }),
+                Err(retry_err) => Err::<(), anyhow::Error>(retry_err.into()).with_context(|| {
+                    format!("replace existing NSS cert after add failed: {first_err}")
+                }),
+            }
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn delete_nss_cert(certutil: &Path, db_dir: &Path) -> Result<()> {
+    let program = certutil.to_str().unwrap_or("certutil");
+    let args = certutil_delete_args(db_dir);
+    match run_certutil(program, &args) {
+        Ok(()) => Ok(()),
+        Err(err) if err.is_read_only() => run_certutil_sudo(program, &args)
+            .with_context(|| format!("delete CA from read-only NSS DB {}", db_dir.display())),
+        Err(err) => Err(err.into()),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[derive(Debug)]
+struct CertutilError {
+    program: String,
+    status: Option<std::process::ExitStatus>,
+    stdout: String,
+    stderr: String,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl CertutilError {
+    fn is_read_only(&self) -> bool {
+        certutil_output_is_read_only(&self.stdout) || certutil_output_is_read_only(&self.stderr)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl std::fmt::Display for CertutilError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.status {
+            Some(status) => write!(f, "{} exited with {}", self.program, status)?,
+            None => write!(f, "failed to spawn {}", self.program)?,
+        }
+        if !self.stderr.trim().is_empty() {
+            write!(f, ": {}", self.stderr.trim())?;
+        } else if !self.stdout.trim().is_empty() {
+            write!(f, ": {}", self.stdout.trim())?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl std::error::Error for CertutilError {}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn certutil_output_is_read_only(output: &str) -> bool {
+    output.contains("SEC_ERROR_READ_ONLY")
+        || output.to_ascii_lowercase().contains("read-only database")
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn run_certutil(program: &str, args: &[String]) -> std::result::Result<(), CertutilError> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|e| CertutilError {
+            program: program.to_string(),
+            status: None,
+            stdout: String::new(),
+            stderr: e.to_string(),
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(CertutilError {
+        program: program.to_string(),
+        status: Some(output.status),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_certutil_sudo(program: &str, args: &[String]) -> Result<()> {
+    run_command("sudo", &certutil_sudo_args(program, args))
+}
+
+#[cfg(target_os = "windows")]
+fn run_certutil_sudo(program: &str, args: &[String]) -> Result<()> {
+    run_command(program, args)
+}
+
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+pub(crate) fn certutil_sudo_args(program: &str, args: &[String]) -> Vec<String> {
+    let mut sudo_args = Vec::with_capacity(args.len() + 1);
+    sudo_args.push(program.to_string());
+    sudo_args.extend(args.iter().cloned());
+    sudo_args
 }
 
 /// Collect all NSS database directories found under `home`.
@@ -755,8 +878,7 @@ fn uninstall_nss_dbs_macos(env: &MacosTrustEnv) {
         return;
     };
     for db_dir in &env.nss_db_dirs {
-        let args = certutil_delete_args(db_dir);
-        if let Err(e) = run_command(certutil.to_str().unwrap_or("certutil"), &args) {
+        if let Err(e) = delete_nss_cert(certutil, db_dir) {
             tracing::warn!(
                 "macOS: failed to remove CA from NSS DB {}: {e:#}",
                 db_dir.display()
@@ -1206,6 +1328,29 @@ mod tests {
         assert_eq!(args[2], "sql:/home/user/.pki/nssdb");
         assert_eq!(args[3], "-n");
         assert_eq!(args[4], CERT_NICKNAME);
+    }
+
+    #[test]
+    fn certutil_read_only_error_is_detected() {
+        assert!(certutil_output_is_read_only(
+            "certutil: function failed: SEC_ERROR_READ_ONLY: security library: read-only database."
+        ));
+        assert!(certutil_output_is_read_only(
+            "security library: read-only database"
+        ));
+        assert!(!certutil_output_is_read_only(
+            "certutil: could not find certificate named PortZero Local CA"
+        ));
+    }
+
+    #[test]
+    fn certutil_sudo_args_prefix_program() {
+        let args = certutil_delete_args(&PathBuf::from("/home/user/.pki/nssdb"));
+        let sudo_args = certutil_sudo_args("/usr/bin/certutil", &args);
+        assert_eq!(sudo_args[0], "/usr/bin/certutil");
+        assert_eq!(sudo_args[1], "-D");
+        assert_eq!(sudo_args[2], "-d");
+        assert_eq!(sudo_args[3], "sql:/home/user/.pki/nssdb");
     }
 
     #[test]
