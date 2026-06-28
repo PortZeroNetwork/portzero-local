@@ -1645,7 +1645,12 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
         scan_network_processes_sync_windows()
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        scan_network_processes_sync_macos()
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         use std::net::{IpAddr, SocketAddr};
 
@@ -1740,6 +1745,134 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
 
         candidates
     }
+}
+
+#[cfg(target_os = "macos")]
+fn scan_network_processes_sync_macos() -> Vec<NetProcessCandidate> {
+    use std::net::{IpAddr, SocketAddr};
+    use std::process::Command;
+
+    let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+    let output = match Command::new("ps")
+        .args(["-axo", "pid=,command=", "-wwwE"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let daemon_no_probe = std::env::var(ENV_NO_PROBE_VAR).ok();
+    let mut candidates = Vec::new();
+
+    for (pid_u32, raw) in parse_macos_ps_env_candidates(&stdout, ENV_VAR_NAME) {
+        if pid_u32 <= 1 {
+            continue;
+        }
+
+        let process_cwd = sys
+            .process(sysinfo::Pid::from_u32(pid_u32))
+            .and_then(|process| process.cwd().map(|p| p.to_path_buf()));
+        let (raw_domain, canonical_port) = split_tunnel_port(&raw);
+        warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
+        let substitutions = template_substitutions(process_cwd.as_deref(), None, None, None);
+        let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
+
+        if !is_local_overlay_domain(&resolved) {
+            continue;
+        }
+
+        if resolved.eq_ignore_ascii_case("portzero.local") {
+            tracing::warn!(
+                "PZ_TUNNEL=portzero.local is reserved by the portzero daemon; ignoring process {}",
+                pid_u32
+            );
+            continue;
+        }
+
+        if resolved.eq_ignore_ascii_case("api.portzero.local") {
+            tracing::warn!(
+                "PZ_TUNNEL=api.portzero.local is reserved by the portzero daemon; ignoring process {}",
+                pid_u32
+            );
+            continue;
+        }
+
+        let label = extract_local_label(&resolved);
+        if label.is_empty() {
+            continue;
+        }
+
+        // We only invoke lsof for processes that actually advertise PZ_TUNNEL.
+        // The previous macOS path invoked `ps` once per process and commonly
+        // exceeded the overlay scan timeout before reaching the real service.
+        let listening = discover_process_ports(pid_u32);
+        if listening.is_empty() {
+            continue;
+        }
+
+        let chosen = listening
+            .iter()
+            .find(|lp| lp.bind == BindAddr::Public)
+            .or_else(|| listening.first());
+
+        let port = match chosen {
+            Some(lp) => lp.port,
+            None => continue,
+        };
+
+        let real_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port);
+
+        let (port, needs_probe) = match canonical_port {
+            Some(explicit) => (explicit, false),
+            None => {
+                let per_process = scan_process_env(pid_u32, ENV_NO_PROBE_VAR);
+                let no_probe = protocol_detect::probing_disabled(
+                    per_process.as_deref(),
+                    daemon_no_probe.as_deref(),
+                );
+                (port, !no_probe)
+            }
+        };
+
+        candidates.push(NetProcessCandidate {
+            label,
+            domain_template: raw_domain.to_string(),
+            substitutions,
+            real_addr,
+            port,
+            needs_probe,
+            pid: pid_u32,
+            cwd: process_cwd,
+        });
+    }
+
+    candidates
+}
+
+#[cfg(target_os = "macos")]
+fn parse_macos_ps_env_candidates(stdout: &str, var_name: &str) -> Vec<(u32, String)> {
+    stdout
+        .lines()
+        .filter_map(|line| parse_macos_ps_env_candidate(line, var_name))
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn parse_macos_ps_env_candidate(line: &str, var_name: &str) -> Option<(u32, String)> {
+    let trimmed = line.trim_start();
+    let (pid, rest) = trimmed.split_once(char::is_whitespace)?;
+    let pid = pid.parse::<u32>().ok()?;
+    let prefix = format!("{var_name}=");
+    let value = rest
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix(&prefix))?;
+    if value.is_empty() {
+        return None;
+    }
+    Some((pid, value.to_string()))
 }
 
 #[cfg(target_os = "windows")]
@@ -2144,6 +2277,23 @@ mod tests {
             parse_http_port_selection("notaport"),
             HttpPortSelection::ChooseLowest
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_parse_macos_ps_env_candidate() {
+        let line = "64039 target/debug/portzero-rust-local-process CARGO=/Users/loumtech/.cargo/bin/cargo PWD=/tmp/project PZ_TUNNEL=rust-demo.portzero.local:80 RUST_RECURSION_COUNT=1";
+        assert_eq!(
+            parse_macos_ps_env_candidate(line, ENV_VAR_NAME),
+            Some((64039, "rust-demo.portzero.local:80".to_string()))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_parse_macos_ps_env_candidate_ignores_missing_var() {
+        let line = "70462 /Users/loumtech/.cargo/bin/portzero start --foreground";
+        assert_eq!(parse_macos_ps_env_candidate(line, ENV_VAR_NAME), None);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
