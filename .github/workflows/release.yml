@@ -16,7 +16,7 @@ env:
 jobs:
   version:
     name: Determine Version
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-2x
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -58,34 +58,34 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: warp-ubuntu-latest-x64-2x
             bins: portzero
             archive_ext: tar.gz
             archive_name: portzero-linux-amd64
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: warp-ubuntu-latest-x64-2x
             bins: portzero
             cross: true
             archive_ext: tar.gz
             archive_name: portzero-linux-arm64
           - target: i686-unknown-linux-gnu
-            os: ubuntu-latest
+            os: warp-ubuntu-latest-x64-2x
             bins: portzero
             cross: true
             archive_ext: tar.gz
             archive_name: portzero-linux-x86
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: warp-macos-latest-arm64-6x
             bins: portzero
             archive_ext: tar.gz
             archive_name: portzero-darwin-amd64
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: warp-macos-latest-arm64-6x
             bins: portzero
             archive_ext: tar.gz
             archive_name: portzero-darwin-arm64
           - target: x86_64-pc-windows-msvc
-            os: windows-latest
+            os: warp-windows-latest-x64-2x
             bins: portzero
             archive_ext: zip
             archive_name: portzero-windows-amd64
@@ -104,7 +104,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-          save-if: ${{ matrix.os != 'windows-latest' }}
+          save-if: ${{ matrix.os != 'warp-windows-latest-x64-2x' }}
 
       - name: Install cross
         if: matrix.cross
@@ -201,7 +201,7 @@ jobs:
   package-linux:
     name: Build Linux Packages
     needs: [version, build]
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-2x
     steps:
       - uses: actions/checkout@v5
 
@@ -250,7 +250,7 @@ jobs:
   package-windows:
     name: Build Windows MSI
     needs: [version, build]
-    runs-on: windows-latest
+    runs-on: warp-windows-latest-x64-2x
     steps:
       - uses: actions/checkout@v5
 
@@ -304,7 +304,7 @@ jobs:
   release:
     name: Create Release
     needs: [version, build, package-linux, package-windows]
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-2x
     permissions:
       contents: write
     steps:
@@ -362,7 +362,7 @@ jobs:
   check-homebrew-token:
     name: Check Homebrew Token
     needs: [release]
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-2x
     outputs:
       has-token: ${{ steps.check.outputs.has-token }}
     steps:
@@ -373,7 +373,7 @@ jobs:
   update-homebrew:
     name: Update Homebrew Formula
     needs: [version, release, check-homebrew-token]
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-2x
     if: ${{ needs.check-homebrew-token.outputs.has-token == 'true' }}
     steps:
       - name: Download macOS SHA256 files
