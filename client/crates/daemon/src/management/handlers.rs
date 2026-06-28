@@ -561,7 +561,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,sys
 a{color:inherit;text-decoration:none}
 a:hover{color:var(--accent)}
 code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-.shell{width:min(100% - 32px,980px);margin:0 auto}
+.shell{width:min(100% - 32px,1120px);margin:0 auto}
 .topbar{position:sticky;top:0;z-index:3;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
 .nav{display:flex;align-items:center;gap:18px;min-height:62px}
 .brand{font-size:18px;font-weight:800}
@@ -588,7 +588,7 @@ h2{font-size:28px;line-height:1.2;margin:0}
 .picker{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .picker select{appearance:none;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 34px 8px 10px;font:inherit;font-size:14px}
 .detected{color:var(--muted);font-size:13px}
-.status-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+.status-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:28px}
 .status-card{min-width:0}
 .status-row{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:14px;margin-bottom:12px}
 .dot{width:9px;height:9px;border-radius:50%;background:var(--bad);flex:0 0 auto}
