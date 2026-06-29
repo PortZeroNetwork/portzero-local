@@ -289,6 +289,63 @@ fn substitution_alerts(
     alerts
 }
 
+fn duplicate_route_alert(domain: &str, duplicate_count: usize) -> serde_json::Value {
+    serde_json::json!({
+        "title": "Duplicate tunnel domain",
+        "detail": format!(
+            "{duplicate_count} tunnels materialized to {domain}. Change PZ_TUNNEL so each active tunnel has a unique domain."
+        ),
+    })
+}
+
+fn append_alert(row: &mut serde_json::Value, alert: serde_json::Value) {
+    row.get_mut("alerts")
+        .and_then(|alerts| alerts.as_array_mut())
+        .expect("route rows always include an alerts array")
+        .push(alert);
+}
+
+fn add_duplicate_route_alerts(
+    local_services: &mut [serde_json::Value],
+    cloud_routes: &mut [serde_json::Value],
+) {
+    #[derive(Clone, Copy)]
+    enum RouteList {
+        Local,
+        Cloud,
+    }
+
+    let mut routes = Vec::new();
+    for (index, row) in local_services.iter().enumerate() {
+        if let Some(domain) = row.get("domain").and_then(|v| v.as_str()) {
+            routes.push((RouteList::Local, index, domain.to_string()));
+        }
+    }
+    for (index, row) in cloud_routes.iter().enumerate() {
+        if let Some(domain) = row.get("domain").and_then(|v| v.as_str()) {
+            routes.push((RouteList::Cloud, index, domain.to_string()));
+        }
+    }
+
+    let mut counts = std::collections::HashMap::new();
+    for (_, _, domain) in &routes {
+        *counts.entry(domain.clone()).or_insert(0usize) += 1;
+    }
+
+    for (list, index, domain) in routes {
+        let duplicate_count = counts.get(&domain).copied().unwrap_or(0);
+        if duplicate_count < 2 {
+            continue;
+        }
+
+        let alert = duplicate_route_alert(&domain, duplicate_count);
+        match list {
+            RouteList::Local => append_alert(&mut local_services[index], alert),
+            RouteList::Cloud => append_alert(&mut cloud_routes[index], alert),
+        }
+    }
+}
+
 // ─── Management API handlers ──────────────────────────────────────────────────
 
 /// POST /v1/register — register a list of ports for the calling process.
@@ -1207,7 +1264,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         })
         .collect();
 
-    let local_services: Vec<serde_json::Value> = overlay
+    let mut local_services: Vec<serde_json::Value> = overlay
         .routes
         .iter()
         .map(|r| {
@@ -1229,7 +1286,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         })
         .collect();
 
-    let cloud_routes: Vec<serde_json::Value> = routes
+    let mut cloud_routes: Vec<serde_json::Value> = routes
         .routes
         .values()
         .map(|r| {
@@ -1249,6 +1306,8 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         })
         .collect();
 
+    add_duplicate_route_alerts(&mut local_services, &mut cloud_routes);
+
     Json(serde_json::json!({
         "daemon_pid": daemon_pid,
         "overlay_active": overlay.overlay_active,
@@ -1264,7 +1323,9 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
 
 #[cfg(test)]
 mod tests {
-    use super::{has_dns_token, local_service_link_url, substitution_alerts};
+    use super::{
+        add_duplicate_route_alerts, has_dns_token, local_service_link_url, substitution_alerts,
+    };
     use std::collections::BTreeMap;
 
     #[test]
@@ -1338,5 +1399,90 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap()
             .contains("materialized the value as \"unknown\""));
+    }
+
+    #[test]
+    fn duplicate_route_alerts_mark_every_matching_domain() {
+        let mut local_services = vec![
+            serde_json::json!({
+                "domain": "api.portzero.local",
+                "service_port": 3000,
+                "alerts": [],
+            }),
+            serde_json::json!({
+                "domain": "api.portzero.local",
+                "service_port": 3000,
+                "alerts": [],
+            }),
+        ];
+        let mut cloud_routes = vec![serde_json::json!({
+            "domain": "api.portzero.local",
+            "port": 3000,
+            "alerts": [],
+        })];
+
+        add_duplicate_route_alerts(&mut local_services, &mut cloud_routes);
+
+        for row in local_services.iter().chain(cloud_routes.iter()) {
+            let alerts = row.get("alerts").and_then(|v| v.as_array()).unwrap();
+            assert_eq!(alerts.len(), 1);
+            assert_eq!(
+                alerts[0].get("title").and_then(|v| v.as_str()),
+                Some("Duplicate tunnel domain")
+            );
+            assert!(alerts[0]
+                .get("detail")
+                .and_then(|v| v.as_str())
+                .unwrap()
+                .contains("3 tunnels materialized to api.portzero.local"));
+        }
+    }
+
+    #[test]
+    fn duplicate_route_alerts_include_different_ports() {
+        let mut local_services = vec![
+            serde_json::json!({
+                "domain": "api.portzero.local",
+                "service_port": 3000,
+                "alerts": [],
+            }),
+            serde_json::json!({
+                "domain": "api.portzero.local",
+                "service_port": 3001,
+                "alerts": [],
+            }),
+        ];
+        let mut cloud_routes = Vec::new();
+
+        add_duplicate_route_alerts(&mut local_services, &mut cloud_routes);
+
+        assert!(local_services
+            .iter()
+            .all(|row| { row.get("alerts").and_then(|v| v.as_array()).unwrap().len() == 1 }));
+    }
+
+    #[test]
+    fn duplicate_route_alerts_skip_unique_domains() {
+        let mut local_services = vec![
+            serde_json::json!({
+                "domain": "api.portzero.local",
+                "service_port": 3000,
+                "alerts": [],
+            }),
+            serde_json::json!({
+                "domain": "web.portzero.local",
+                "service_port": 3000,
+                "alerts": [],
+            }),
+        ];
+        let mut cloud_routes = Vec::new();
+
+        add_duplicate_route_alerts(&mut local_services, &mut cloud_routes);
+
+        assert!(local_services.iter().all(|row| row
+            .get("alerts")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .is_empty()));
     }
 }
