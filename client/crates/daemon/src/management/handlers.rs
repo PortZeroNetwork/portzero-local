@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, State};
 use axum::http::StatusCode;
+use axum::response::Redirect;
 use axum::response::{Html, IntoResponse};
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -445,6 +446,27 @@ pub async fn status_ui() -> Html<&'static str> {
     Html(STATUS_UI_HTML)
 }
 
+/// GET /login — start browser login and redirect this tab to the cloud auth UI.
+pub async fn start_login() -> impl IntoResponse {
+    match crate::auth::start_browser_login_session().await {
+        Ok(session) => {
+            tracing::info!(
+                callback_port = session.callback_port,
+                "started dashboard browser login"
+            );
+            Redirect::temporary(&session.auth_url).into_response()
+        }
+        Err(error) => {
+            tracing::warn!(?error, "failed to start dashboard browser login");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to start login flow: {error}"),
+            )
+                .into_response()
+        }
+    }
+}
+
 /// GET /openapi.json — read-only OpenAPI document for local process clients.
 pub async fn openapi_json() -> impl IntoResponse {
     ([("content-type", "application/json")], OPENAPI_SPEC_JSON)
@@ -734,6 +756,10 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
 .substitutions{display:flex;gap:6px;flex-wrap:wrap}
 .substitutions code{background:var(--soft);border-radius:999px;padding:2px 7px;color:var(--fg);font-size:12px}
 .empty{color:var(--muted);font-size:14px;margin:0}
+.empty-action{display:flex;align-items:center;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:14px}
+.empty-action p{margin:0}
+.button{display:inline-flex;align-items:center;justify-content:center;min-height:36px;border-radius:8px;background:var(--accent);color:var(--bg);font-weight:700;padding:6px 12px}
+.button:hover{color:var(--bg)}
 .diag{border-left:3px solid var(--line);padding:10px 0 10px 14px;margin-bottom:10px}
 .diag-critical,.diag-error{border-color:var(--bad)}
 .diag-warning{border-color:var(--warn)}
@@ -1198,7 +1224,11 @@ function render(d){
     });
     html+='</tbody></table>';
   } else {
-    html+='<p class="empty">no cloud routes</p>';
+    if(!d.auth_authenticated){
+      html+='<div class="empty-action"><p>No cloud routes because you are not logged in.</p><a class="button" href="/login">Log in</a></div>';
+    } else {
+      html+='<p class="empty">no cloud routes</p>';
+    }
   }
   html+='</section>';
   html+='</div>';
@@ -1248,6 +1278,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
     let overlay = read_overlay_state(&state.state_dir);
     let routes = read_route_table(&state.state_dir);
     let (cloud_connected, cloud_error) = read_cloud_state(&state.state_dir);
+    let auth_authenticated = crate::auth::AuthConfig::load().is_authenticated();
     let diagnostics = crate::diagnostics::load_report(&state.state_dir);
 
     let registrations_guard = state.store.read().await;
@@ -1311,6 +1342,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
     Json(serde_json::json!({
         "daemon_pid": daemon_pid,
         "overlay_active": overlay.overlay_active,
+        "auth_authenticated": auth_authenticated,
         "local_services": local_services,
         "cloud_connected": cloud_connected,
         "cloud_error": cloud_error,

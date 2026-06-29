@@ -10,6 +10,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use uuid::Uuid;
 
 /// Default base URL for cloud API calls.
 const DEFAULT_API_URL: &str = "https://app.portzero.cloud/api";
@@ -17,10 +20,39 @@ const DEFAULT_API_URL: &str = "https://app.portzero.cloud/api";
 /// Stored authentication configuration (written by the CLI after login).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AuthFile {
+    #[serde(default)]
+    email: Option<String>,
     token: Option<String>,
     account_id: Option<String>,
     #[serde(default)]
     username: Option<String>,
+}
+
+/// Credentials returned by the cloud dashboard's browser login callback.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BrowserLoginCredentials {
+    pub email: String,
+    pub token: String,
+    pub account_id: String,
+    #[serde(default)]
+    pub username: String,
+}
+
+#[derive(Deserialize)]
+struct BrowserLoginCallback {
+    code: String,
+    email: String,
+    token: String,
+    account_id: String,
+    #[serde(default)]
+    username: String,
+}
+
+/// A started browser-login session. Open `auth_url` in a browser to continue.
+#[derive(Debug, Clone)]
+pub struct BrowserLoginSession {
+    pub auth_url: String,
+    pub callback_port: u16,
 }
 
 /// Runtime authentication state.
@@ -44,6 +76,213 @@ fn decode_jwt_exp(token: &str) -> Option<u64> {
     let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
     let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
     payload.get("exp")?.as_u64()
+}
+
+/// Derive the dashboard URL from the API URL.
+///
+/// - If `PZ_TUNNEL_DASHBOARD_URL` is set, use it directly.
+/// - If `PZ_TUNNEL_API_URL` looks like `localhost:3001`, use `localhost:3003`.
+/// - Otherwise default to `https://app.portzero.cloud`.
+fn dashboard_url() -> String {
+    if let Ok(url) = std::env::var("PZ_TUNNEL_DASHBOARD_URL") {
+        return url;
+    }
+
+    let api_url =
+        std::env::var("PZ_TUNNEL_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+
+    dashboard_url_from_api_url(&api_url)
+}
+
+fn dashboard_url_from_api_url(api_url: &str) -> String {
+    if api_url.contains("localhost") || api_url.contains("127.0.0.1") {
+        if let Some(colon_pos) = api_url.rfind(':') {
+            let base = &api_url[..colon_pos];
+            return format!("{base}:3003");
+        }
+    }
+
+    "https://app.portzero.cloud".to_string()
+}
+
+fn generate_session_code() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+/// Start the same browser login callback flow used by `portzero login`.
+///
+/// The returned URL should be opened or redirected to by the caller. A background
+/// task waits up to two minutes for the dashboard callback, then saves
+/// `~/.portzero/auth.json`.
+pub async fn start_browser_login_session() -> Result<BrowserLoginSession> {
+    let listener = TcpListener::bind("127.0.0.1:0").await.with_context(|| {
+        "Failed to bind a local TCP listener for the login callback.\n\n\
+         Ensure that localhost networking is available."
+    })?;
+    let callback_port = listener.local_addr()?.port();
+    let code = generate_session_code();
+    let auth_url = format!(
+        "{}/#/auth/cli?port={callback_port}&code={code}",
+        dashboard_url()
+    );
+
+    tokio::spawn(async move {
+        let result = tokio::time::timeout(Duration::from_secs(120), async {
+            accept_browser_login_callback(listener, &code).await
+        })
+        .await;
+
+        match result {
+            Ok(Ok(credentials)) => {
+                if let Err(error) = save_browser_login_credentials(&credentials) {
+                    tracing::warn!(?error, "failed to save browser login credentials");
+                } else {
+                    tracing::info!(
+                        email = credentials.email,
+                        "browser login completed and credentials saved"
+                    );
+                }
+            }
+            Ok(Err(error)) => tracing::warn!(?error, "browser login failed"),
+            Err(_) => tracing::warn!("browser login timed out"),
+        }
+    });
+
+    Ok(BrowserLoginSession {
+        auth_url,
+        callback_port,
+    })
+}
+
+pub fn save_browser_login_credentials(credentials: &BrowserLoginCredentials) -> Result<()> {
+    let config_dir = dirs::home_dir()
+        .map(|h| h.join(".portzero"))
+        .unwrap_or_else(|| PathBuf::from(".portzero"));
+    std::fs::create_dir_all(&config_dir)?;
+
+    let auth_file = AuthFile {
+        email: Some(credentials.email.clone()),
+        token: Some(credentials.token.clone()),
+        account_id: Some(credentials.account_id.clone()),
+        username: Some(credentials.username.clone()).filter(|value| !value.is_empty()),
+    };
+    let json = serde_json::to_string_pretty(&auth_file)?;
+    let auth_path = config_dir.join("auth.json");
+    std::fs::write(&auth_path, json)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(&auth_path, perms).ok();
+    }
+
+    Ok(())
+}
+
+async fn accept_browser_login_callback(
+    listener: TcpListener,
+    expected_code: &str,
+) -> Result<BrowserLoginCredentials> {
+    loop {
+        let (mut stream, _addr) = listener.accept().await?;
+
+        let mut buf = vec![0u8; 8192];
+        let n = stream.read(&mut buf).await?;
+        let request = String::from_utf8_lossy(&buf[..n]);
+        let first_line = request.lines().next().unwrap_or("");
+
+        if first_line.starts_with("OPTIONS ") {
+            let response = "HTTP/1.1 204 No Content\r\n\
+Access-Control-Allow-Origin: *\r\n\
+Access-Control-Allow-Methods: POST, OPTIONS\r\n\
+Access-Control-Allow-Headers: Content-Type\r\n\
+Access-Control-Max-Age: 86400\r\n\
+Content-Length: 0\r\n\
+\r\n";
+            stream.write_all(response.as_bytes()).await.ok();
+            stream.flush().await.ok();
+            continue;
+        }
+
+        if !first_line.starts_with("POST /callback") {
+            let response = "HTTP/1.1 404 Not Found\r\n\
+Access-Control-Allow-Origin: *\r\n\
+Content-Type: text/plain\r\n\
+Content-Length: 9\r\n\
+\r\n\
+Not Found";
+            stream.write_all(response.as_bytes()).await.ok();
+            stream.flush().await.ok();
+            continue;
+        }
+
+        let body = request
+            .split("\r\n\r\n")
+            .nth(1)
+            .or_else(|| request.split("\n\n").nth(1))
+            .unwrap_or("");
+
+        let payload: BrowserLoginCallback = match serde_json::from_str(body) {
+            Ok(payload) => payload,
+            Err(error) => {
+                write_callback_error(&mut stream, 400, &format!("Invalid request body: {error}"))
+                    .await;
+                continue;
+            }
+        };
+
+        if payload.code != expected_code {
+            write_callback_error(
+                &mut stream,
+                403,
+                "Session code mismatch. This request may be from a stale login attempt.",
+            )
+            .await;
+            continue;
+        }
+
+        let success_body = r#"{"ok":true}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\n\
+Access-Control-Allow-Origin: *\r\n\
+Content-Type: application/json\r\n\
+Content-Length: {}\r\n\
+\r\n\
+{}",
+            success_body.len(),
+            success_body
+        );
+        stream.write_all(response.as_bytes()).await.ok();
+        stream.flush().await.ok();
+
+        return Ok(BrowserLoginCredentials {
+            email: payload.email,
+            token: payload.token,
+            account_id: payload.account_id,
+            username: payload.username,
+        });
+    }
+}
+
+async fn write_callback_error(stream: &mut TcpStream, status: u16, message: &str) {
+    let reason = match status {
+        400 => "Bad Request",
+        403 => "Forbidden",
+        _ => "Error",
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {reason}\r\n\
+Access-Control-Allow-Origin: *\r\n\
+Content-Type: text/plain\r\n\
+Content-Length: {}\r\n\
+\r\n\
+{}",
+        message.len(),
+        message
+    );
+    stream.write_all(response.as_bytes()).await.ok();
+    stream.flush().await.ok();
 }
 
 impl AuthConfig {
@@ -86,6 +325,7 @@ impl AuthConfig {
     pub fn save_token(&mut self, token: &str) -> Result<()> {
         std::fs::create_dir_all(&self.config_dir)?;
         let auth_file = AuthFile {
+            email: None,
             token: Some(token.to_string()),
             account_id: self.account_id.clone(),
             username: self.username.clone(),
