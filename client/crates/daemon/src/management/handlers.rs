@@ -218,6 +218,65 @@ fn local_service_link_url(domain: &str, service_port: u16) -> Option<String> {
     }
 }
 
+fn has_dns_token(template: &str, value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+
+    template.match_indices(value).any(|(start, _)| {
+        let end = start + value.len();
+        let before_is_boundary = template[..start]
+            .chars()
+            .next_back()
+            .map(|c| !c.is_ascii_alphanumeric())
+            .unwrap_or(true);
+        let after_is_boundary = template[end..]
+            .chars()
+            .next()
+            .map(|c| !c.is_ascii_alphanumeric())
+            .unwrap_or(true);
+        before_is_boundary && after_is_boundary
+    })
+}
+
+fn substitution_alerts(
+    domain_template: &str,
+    substitutions: &std::collections::BTreeMap<String, String>,
+) -> Vec<serde_json::Value> {
+    const SUGGESTED_KEYS: &[&str] = &[
+        "branch",
+        "worktree",
+        "project",
+        "user",
+        "machine",
+        "uid",
+        "username",
+        "folder-name",
+    ];
+
+    SUGGESTED_KEYS
+        .iter()
+        .filter_map(|key| {
+            let placeholder = format!("{{{key}}}");
+            if domain_template.contains(&placeholder) {
+                return None;
+            }
+
+            let value = substitutions.get(*key)?;
+            if !has_dns_token(domain_template, value) {
+                return None;
+            }
+
+            Some(serde_json::json!({
+                "title": format!("Suggest replacing \"{value}\" with \"{placeholder}\""),
+                "detail": format!(
+                    "PZ_TUNNEL supports variable substitution: write {placeholder} in the value and the daemon materializes it as \"{value}\" for this process. This keeps tunnel names accurate when the branch, worktree, user, or machine changes."
+                ),
+            }))
+        })
+        .collect()
+}
+
 // ─── Management API handlers ──────────────────────────────────────────────────
 
 /// POST /v1/register — register a list of ports for the calling process.
@@ -599,6 +658,10 @@ th{text-align:left;color:var(--muted);font-weight:600;border-bottom:1px solid va
 td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-break:break-word}
 .domain-stack{display:grid;gap:2px}
 .domain-stack code{font-size:13px}
+.route-alerts{display:grid;gap:6px;margin-top:8px}
+.route-alert{border-left:3px solid var(--warn);background:var(--soft);padding:7px 9px;font-size:13px}
+.route-alert-title{font-weight:700}
+.route-alert-detail{color:var(--muted)}
 .substitutions{display:flex;gap:6px;flex-wrap:wrap}
 .substitutions code{background:var(--soft);border-radius:999px;padding:2px 7px;color:var(--fg);font-size:12px}
 .empty{color:var(--muted);font-size:14px;margin:0}
@@ -1013,7 +1076,13 @@ function renderSubstitutions(values){
 }
 function domainCell(row){
   const domain=row.link_url?'<a href="'+esc(row.link_url)+'"><strong>'+esc(row.domain)+'</strong></a>':'<strong>'+esc(row.domain)+'</strong>';
-  return '<div class="domain-stack">'+domain+'<code>template: '+esc(row.domain_template||row.domain)+'</code><code>materialized: '+esc(row.domain)+'</code></div>';
+  let alerts='';
+  if(row.alerts&&row.alerts.length){
+    alerts='<div class="route-alerts">'+row.alerts.map(function(alert){
+      return '<div class="route-alert"><div class="route-alert-title">'+esc(alert.title)+'</div><div class="route-alert-detail">'+esc(alert.detail)+'</div></div>';
+    }).join('')+'</div>';
+  }
+  return '<div class="domain-stack">'+domain+'<code>template: '+esc(row.domain_template||row.domain)+'</code><code>materialized: '+esc(row.domain)+'</code>'+alerts+'</div>';
 }
 
 function renderDiag(d){
@@ -1130,10 +1199,16 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         .routes
         .iter()
         .map(|r| {
+            let domain_template = if r.domain_template.is_empty() {
+                &r.domain
+            } else {
+                &r.domain_template
+            };
             serde_json::json!({
                 "domain": r.domain,
-                "domain_template": if r.domain_template.is_empty() { &r.domain } else { &r.domain_template },
+                "domain_template": domain_template,
                 "substitutions": display_substitutions(&r.substitutions, &r.source),
+                "alerts": substitution_alerts(domain_template, &r.substitutions),
                 "real_addr": r.real_addr,
                 "service_port": r.service_port,
                 "link_url": local_service_link_url(&r.domain, r.service_port),
@@ -1146,10 +1221,16 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         .routes
         .values()
         .map(|r| {
+            let domain_template = if r.domain_template.is_empty() {
+                &r.domain
+            } else {
+                &r.domain_template
+            };
             serde_json::json!({
                 "domain": r.domain,
-                "domain_template": if r.domain_template.is_empty() { &r.domain } else { &r.domain_template },
+                "domain_template": domain_template,
                 "substitutions": display_substitutions(&r.substitutions, &r.source),
+                "alerts": substitution_alerts(domain_template, &r.substitutions),
                 "port": r.port,
                 "pid": r.pid,
             })
@@ -1171,7 +1252,8 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
 
 #[cfg(test)]
 mod tests {
-    use super::local_service_link_url;
+    use super::{has_dns_token, local_service_link_url, substitution_alerts};
+    use std::collections::BTreeMap;
 
     #[test]
     fn local_service_link_url_prefers_https_for_web_ports() {
@@ -1189,5 +1271,42 @@ mod tests {
     fn local_service_link_url_skips_non_web_ports() {
         assert_eq!(local_service_link_url("db.portzero.local", 5432), None);
         assert_eq!(local_service_link_url("admin.portzero.local", 8080), None);
+    }
+
+    #[test]
+    fn dns_token_matching_requires_boundaries() {
+        assert!(has_dns_token("web-main.portzero.local", "main"));
+        assert!(has_dns_token("web.feature-x.portzero.local", "feature-x"));
+        assert!(!has_dns_token("web-maintenance.portzero.local", "main"));
+    }
+
+    #[test]
+    fn substitution_alert_suggests_branch_placeholder_for_literal_value() {
+        let substitutions = BTreeMap::from([
+            ("branch".to_string(), "main".to_string()),
+            ("worktree".to_string(), "portzero-local".to_string()),
+        ]);
+
+        let alerts = substitution_alerts("web-main.portzero.local", &substitutions);
+
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(
+            alerts[0].get("title").and_then(|v| v.as_str()),
+            Some("Suggest replacing \"main\" with \"{branch}\"")
+        );
+        assert!(alerts[0]
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .contains("PZ_TUNNEL supports variable substitution"));
+    }
+
+    #[test]
+    fn substitution_alert_skips_existing_placeholder() {
+        let substitutions = BTreeMap::from([("branch".to_string(), "main".to_string())]);
+
+        let alerts = substitution_alerts("web-{branch}.portzero.local", &substitutions);
+
+        assert!(alerts.is_empty());
     }
 }
