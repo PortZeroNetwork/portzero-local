@@ -254,7 +254,18 @@ fn substitution_alerts(
         "folder-name",
     ];
 
-    SUGGESTED_KEYS
+    let mut alerts = Vec::new();
+
+    if domain_template.contains("{branch}")
+        && substitutions.get("branch").map(String::as_str) == Some("unknown")
+    {
+        alerts.push(serde_json::json!({
+            "title": "Could not determine {branch}",
+            "detail": "PZ_TUNNEL uses {branch}, but the daemon could not determine the current git branch, so it materialized the value as \"unknown\". Run the service from a git worktree with a checked-out branch, or use a literal tunnel name."
+        }));
+    }
+
+    alerts.extend(SUGGESTED_KEYS
         .iter()
         .filter_map(|key| {
             let placeholder = format!("{{{key}}}");
@@ -273,8 +284,9 @@ fn substitution_alerts(
                     "PZ_TUNNEL supports variable substitution: write {placeholder} in the value and the daemon materializes it as \"{value}\" for this process. This keeps tunnel names accurate when the branch, worktree, user, or machine changes."
                 ),
             }))
-        })
-        .collect()
+        }));
+
+    alerts
 }
 
 // ─── Management API handlers ──────────────────────────────────────────────────
@@ -1308,5 +1320,23 @@ mod tests {
         let alerts = substitution_alerts("web-{branch}.portzero.local", &substitutions);
 
         assert!(alerts.is_empty());
+    }
+
+    #[test]
+    fn substitution_alert_warns_when_branch_placeholder_resolves_to_unknown() {
+        let substitutions = BTreeMap::from([("branch".to_string(), "unknown".to_string())]);
+
+        let alerts = substitution_alerts("web-{branch}.portzero.local", &substitutions);
+
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(
+            alerts[0].get("title").and_then(|v| v.as_str()),
+            Some("Could not determine {branch}")
+        );
+        assert!(alerts[0]
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .contains("materialized the value as \"unknown\""));
     }
 }
