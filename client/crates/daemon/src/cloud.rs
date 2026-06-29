@@ -410,10 +410,10 @@ mod tests {
     async fn test_handle_incoming_route_ack_success() {
         let router = DomainRouter::new();
         let msg = ServerMessage::RouteAck {
-            domain: "api-test.tunnel.portzero.cloud".to_string(),
+            domain: "api-test.alice.portzero.cloud".to_string(),
             success: true,
             error: None,
-            url: Some("https://api-test.tunnel.portzero.cloud".to_string()),
+            url: Some("https://api-test.alice.portzero.cloud".to_string()),
         };
         let result = handle_incoming(msg, &router).await.unwrap();
         assert!(result.is_none());
@@ -423,7 +423,7 @@ mod tests {
     async fn test_handle_incoming_route_ack_failure() {
         let router = DomainRouter::new();
         let msg = ServerMessage::RouteAck {
-            domain: "api-test.tunnel.portzero.cloud".to_string(),
+            domain: "api-test.alice.portzero.cloud".to_string(),
             success: false,
             error: Some("domain not authorized".to_string()),
             url: None,
@@ -450,7 +450,7 @@ mod tests {
             request_id: 1,
             method: "GET".to_string(),
             path: "/".to_string(),
-            host: "unknown-svc.tunnel.portzero.cloud".to_string(),
+            host: "unknown-svc.alice.portzero.cloud".to_string(),
             headers: vec![],
             body: vec![],
         };
@@ -462,7 +462,7 @@ mod tests {
     async fn test_register_route_not_connected() {
         let conn = CloudConnector::new("tok_test".to_string());
         let result = conn
-            .register_route("api-test.tunnel.portzero.cloud", 8080)
+            .register_route("api-test.alice.portzero.cloud", 8080)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Not connected"));
@@ -472,7 +472,7 @@ mod tests {
     async fn test_unregister_route_not_connected() {
         let conn = CloudConnector::new("tok_test".to_string());
         let result = conn
-            .unregister_route("api-test.tunnel.portzero.cloud")
+            .unregister_route("api-test.alice.portzero.cloud")
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Not connected"));

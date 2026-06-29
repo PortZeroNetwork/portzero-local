@@ -76,44 +76,44 @@ mod tests {
     #[test]
     fn test_add_and_resolve() {
         let router = DomainRouter::new();
-        router.add_route("api-myapp.tunnel.portzero.cloud".into(), 8080);
+        router.add_route("api-myapp.alice.portzero.cloud".into(), 8080);
         assert_eq!(
-            router.resolve("api-myapp.tunnel.portzero.cloud"),
+            router.resolve("api-myapp.alice.portzero.cloud"),
             Some(8080)
         );
-        assert_eq!(router.resolve("unknown-svc.tunnel.portzero.cloud"), None);
+        assert_eq!(router.resolve("unknown-svc.alice.portzero.cloud"), None);
     }
 
     #[test]
     fn test_remove_route() {
         let router = DomainRouter::new();
-        router.add_route("api-myapp.tunnel.portzero.cloud".into(), 8080);
-        router.remove_route("api-myapp.tunnel.portzero.cloud");
-        assert_eq!(router.resolve("api-myapp.tunnel.portzero.cloud"), None);
+        router.add_route("api-myapp.alice.portzero.cloud".into(), 8080);
+        router.remove_route("api-myapp.alice.portzero.cloud");
+        assert_eq!(router.resolve("api-myapp.alice.portzero.cloud"), None);
     }
 
     #[test]
     fn test_replace_all() {
         let router = DomainRouter::new();
-        router.add_route("old-svc.tunnel.portzero.cloud".into(), 3000);
+        router.add_route("old-svc.alice.portzero.cloud".into(), 3000);
 
         let mut new_routes = HashMap::new();
-        new_routes.insert("new-svc.tunnel.portzero.cloud".into(), 4000);
+        new_routes.insert("new-svc.alice.portzero.cloud".into(), 4000);
         router.replace_all(new_routes);
 
-        assert_eq!(router.resolve("old-svc.tunnel.portzero.cloud"), None);
-        assert_eq!(router.resolve("new-svc.tunnel.portzero.cloud"), Some(4000));
+        assert_eq!(router.resolve("old-svc.alice.portzero.cloud"), None);
+        assert_eq!(router.resolve("new-svc.alice.portzero.cloud"), Some(4000));
     }
 
     #[test]
     fn test_snapshot() {
         let router = DomainRouter::new();
-        router.add_route("a-svc.tunnel.portzero.cloud".into(), 1000);
-        router.add_route("b-svc.tunnel.portzero.cloud".into(), 2000);
+        router.add_route("a-svc.alice.portzero.cloud".into(), 1000);
+        router.add_route("b-svc.alice.portzero.cloud".into(), 2000);
 
         let snap = router.snapshot();
         assert_eq!(snap.len(), 2);
-        assert_eq!(snap["a-svc.tunnel.portzero.cloud"], 1000);
-        assert_eq!(snap["b-svc.tunnel.portzero.cloud"], 2000);
+        assert_eq!(snap["a-svc.alice.portzero.cloud"], 1000);
+        assert_eq!(snap["b-svc.alice.portzero.cloud"], 2000);
     }
 }

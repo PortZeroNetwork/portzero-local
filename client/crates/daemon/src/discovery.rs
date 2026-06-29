@@ -4,13 +4,13 @@
 //! substitution). No implicit suffixes are added.
 //!
 //! - If it ends with `.portzero.local` (or `.local`) → local virtual overlay.
-//! - Otherwise it must be a valid tunnel domain ending in `.tunnel.portzero.cloud`
-//!   (or the configured base, supporting namespacing like `api.alice.tunnel...`).
+//! - Otherwise it must be a valid tunnel domain ending in `.portzero.cloud`
+//!   (or the configured base), under a username scope like `api.alice.portzero.cloud`.
 //!
 //! Examples (full names required):
-//!   PZ_TUNNEL=my-api.alice.tunnel.portzero.cloud
+//!   PZ_TUNNEL=my-api.alice.portzero.cloud
 //!   PZ_TUNNEL=my-db-{branch}.portzero.local
-//!   PZ_TUNNEL=web-{branch}.tunnel.portzero.cloud
+//!   PZ_TUNNEL=web-{branch}.{username}.portzero.cloud
 //!
 //! Cross-platform support:
 //! - Linux: full (reads /proc/<pid>/environ and /proc/<pid>/fd for inode-based port scoping)
@@ -31,7 +31,7 @@ use crate::protocol_detect;
 ///
 /// The value (after substitution) must be a full domain name:
 /// - `*.portzero.local` → local overlay
-/// - `*.(username.)tunnel.portzero.cloud` (or configured base) → cloud tunnel
+/// - `*.<username>.portzero.cloud` (or configured base) → cloud tunnel
 ///
 /// No implicit suffix is ever appended.
 const ENV_VAR_NAME: &str = "PZ_TUNNEL";
@@ -286,7 +286,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                     domain,
                     error = %e,
                     "PZ_TUNNEL value is not a valid full tunnel domain (and not .local). \
-                     Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
+                     Provide the full name including suffix, e.g. my-api.alice.portzero.cloud"
                 );
                 continue;
             }
@@ -411,7 +411,7 @@ fn scan_processes_windows(
                 domain,
                 error = %e,
                 "PZ_TUNNEL value is not a valid full tunnel domain (and not .local). \
-                 Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
+                 Provide the full name including suffix, e.g. my-api.alice.portzero.cloud"
             );
             continue;
         }
@@ -1586,7 +1586,7 @@ fn inspect_container(
             domain,
             error = %e,
             "PZ_TUNNEL value on container is not a valid full tunnel domain (and not .local). \
-             Use a full name like web-mybranch.tunnel.portzero.cloud"
+             Use a full name like web-mybranch.alice.portzero.cloud"
         );
         return Ok(None);
     }
@@ -2760,7 +2760,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_scan_process_env_windows_spawned_child() {
-        let expected = "spawned-child.tunnel.portzero.cloud";
+        let expected = "spawned-child.alice.portzero.cloud";
         let mut child = std::process::Command::new("powershell.exe")
             .args([
                 "-NoProfile",

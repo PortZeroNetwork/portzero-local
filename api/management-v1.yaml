@@ -73,9 +73,9 @@ paths:
                 value:
                   ports:
                     - local_port: 8080
-                      domain: api.alice.tunnel.portzero.cloud
+                      domain: api.alice.portzero.cloud
                     - local_port: 9090
-                      domain: metrics.alice.tunnel.portzero.cloud
+                      domain: metrics.alice.portzero.cloud
       responses:
         '200':
           description: Mappings registered successfully
@@ -173,9 +173,9 @@ paths:
                     pid: 12345
                     ports:
                       - local_port: 8080
-                        domain: api.alice.tunnel.portzero.cloud
+                        domain: api.alice.portzero.cloud
                       - local_port: 9090
-                        domain: metrics.alice.tunnel.portzero.cloud
+                        domain: metrics.alice.portzero.cloud
         '404':
           description: No registrations found for this process
           content:
@@ -243,9 +243,9 @@ components:
           description: >
             Full domain name to map to this port. Accepted patterns:
             `*.portzero.local` for local overlay-only resolution, or
-            `*.tunnel.portzero.cloud` for a cloud-proxied tunnel domain.
+            `*.<username>.portzero.cloud` for a cloud-proxied tunnel domain.
           examples:
-            - api.alice.tunnel.portzero.cloud
+            - api.alice.portzero.cloud
             - myservice.portzero.local
 
     RegisterRequest:

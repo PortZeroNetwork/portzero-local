@@ -27,7 +27,7 @@
       "target": "local"
     },
     {
-      "domain": "go-gin.tunnel.portzero.cloud",
+      "domain": "go-gin.alice.portzero.cloud",
       "framework": "go/gin",
       "id": "go/gin:cloud:env",
       "kind": "Go",
@@ -40,7 +40,7 @@
       "target": "cloud"
     },
     {
-      "domain": "go-gin.tunnel.portzero.cloud",
+      "domain": "go-gin.alice.portzero.cloud",
       "framework": "go/gin",
       "id": "go/gin:cloud:sdk",
       "kind": "Go",
@@ -79,7 +79,7 @@
       "target": "local"
     },
     {
-      "domain": "go-echo.tunnel.portzero.cloud",
+      "domain": "go-echo.alice.portzero.cloud",
       "framework": "go/echo",
       "id": "go/echo:cloud:env",
       "kind": "Go",
@@ -92,7 +92,7 @@
       "target": "cloud"
     },
     {
-      "domain": "go-echo.tunnel.portzero.cloud",
+      "domain": "go-echo.alice.portzero.cloud",
       "framework": "go/echo",
       "id": "go/echo:cloud:sdk",
       "kind": "Go",
@@ -131,7 +131,7 @@
       "target": "local"
     },
     {
-      "domain": "go-chi.tunnel.portzero.cloud",
+      "domain": "go-chi.alice.portzero.cloud",
       "framework": "go/chi",
       "id": "go/chi:cloud:env",
       "kind": "Go",
@@ -144,7 +144,7 @@
       "target": "cloud"
     },
     {
-      "domain": "go-chi.tunnel.portzero.cloud",
+      "domain": "go-chi.alice.portzero.cloud",
       "framework": "go/chi",
       "id": "go/chi:cloud:sdk",
       "kind": "Go",
@@ -183,7 +183,7 @@
       "target": "local"
     },
     {
-      "domain": "rust-axum.tunnel.portzero.cloud",
+      "domain": "rust-axum.alice.portzero.cloud",
       "framework": "rust/axum",
       "id": "rust/axum:cloud:env",
       "kind": "Rust",
@@ -196,7 +196,7 @@
       "target": "cloud"
     },
     {
-      "domain": "rust-axum.tunnel.portzero.cloud",
+      "domain": "rust-axum.alice.portzero.cloud",
       "framework": "rust/axum",
       "id": "rust/axum:cloud:sdk",
       "kind": "Rust",
@@ -235,7 +235,7 @@
       "target": "local"
     },
     {
-      "domain": "rust-actix-web.tunnel.portzero.cloud",
+      "domain": "rust-actix-web.alice.portzero.cloud",
       "framework": "rust/actix-web",
       "id": "rust/actix-web:cloud:env",
       "kind": "Rust",
@@ -248,7 +248,7 @@
       "target": "cloud"
     },
     {
-      "domain": "rust-actix-web.tunnel.portzero.cloud",
+      "domain": "rust-actix-web.alice.portzero.cloud",
       "framework": "rust/actix-web",
       "id": "rust/actix-web:cloud:sdk",
       "kind": "Rust",
@@ -287,7 +287,7 @@
       "target": "local"
     },
     {
-      "domain": "js-express.tunnel.portzero.cloud",
+      "domain": "js-express.alice.portzero.cloud",
       "framework": "js/express",
       "id": "js/express:cloud:env",
       "kind": "Node",
@@ -300,7 +300,7 @@
       "target": "cloud"
     },
     {
-      "domain": "js-express.tunnel.portzero.cloud",
+      "domain": "js-express.alice.portzero.cloud",
       "framework": "js/express",
       "id": "js/express:cloud:sdk",
       "kind": "Node",
@@ -339,7 +339,7 @@
       "target": "local"
     },
     {
-      "domain": "js-nextjs.tunnel.portzero.cloud",
+      "domain": "js-nextjs.alice.portzero.cloud",
       "framework": "js/nextjs",
       "id": "js/nextjs:cloud:env",
       "kind": "Node",
@@ -352,7 +352,7 @@
       "target": "cloud"
     },
     {
-      "domain": "js-nextjs.tunnel.portzero.cloud",
+      "domain": "js-nextjs.alice.portzero.cloud",
       "framework": "js/nextjs",
       "id": "js/nextjs:cloud:sdk",
       "kind": "Node",
@@ -391,7 +391,7 @@
       "target": "local"
     },
     {
-      "domain": "python-fastapi.tunnel.portzero.cloud",
+      "domain": "python-fastapi.alice.portzero.cloud",
       "framework": "python/fastapi",
       "id": "python/fastapi:cloud:env",
       "kind": "Python",
@@ -404,7 +404,7 @@
       "target": "cloud"
     },
     {
-      "domain": "python-fastapi.tunnel.portzero.cloud",
+      "domain": "python-fastapi.alice.portzero.cloud",
       "framework": "python/fastapi",
       "id": "python/fastapi:cloud:sdk",
       "kind": "Python",
@@ -443,7 +443,7 @@
       "target": "local"
     },
     {
-      "domain": "python-django.tunnel.portzero.cloud",
+      "domain": "python-django.alice.portzero.cloud",
       "framework": "python/django",
       "id": "python/django:cloud:env",
       "kind": "Python",
@@ -456,7 +456,7 @@
       "target": "cloud"
     },
     {
-      "domain": "python-django.tunnel.portzero.cloud",
+      "domain": "python-django.alice.portzero.cloud",
       "framework": "python/django",
       "id": "python/django:cloud:sdk",
       "kind": "Python",
@@ -495,7 +495,7 @@
       "target": "local"
     },
     {
-      "domain": "csharp-aspnet-core.tunnel.portzero.cloud",
+      "domain": "csharp-aspnet-core.alice.portzero.cloud",
       "framework": "csharp/aspnet-core",
       "id": "csharp/aspnet-core:cloud:env",
       "kind": "CSharp",
@@ -508,7 +508,7 @@
       "target": "cloud"
     },
     {
-      "domain": "csharp-aspnet-core.tunnel.portzero.cloud",
+      "domain": "csharp-aspnet-core.alice.portzero.cloud",
       "framework": "csharp/aspnet-core",
       "id": "csharp/aspnet-core:cloud:sdk",
       "kind": "CSharp",
@@ -547,7 +547,7 @@
       "target": "local"
     },
     {
-      "domain": "java-spring-boot.tunnel.portzero.cloud",
+      "domain": "java-spring-boot.alice.portzero.cloud",
       "framework": "java/spring-boot",
       "id": "java/spring-boot:cloud:env",
       "kind": "Java",
@@ -560,7 +560,7 @@
       "target": "cloud"
     },
     {
-      "domain": "java-spring-boot.tunnel.portzero.cloud",
+      "domain": "java-spring-boot.alice.portzero.cloud",
       "framework": "java/spring-boot",
       "id": "java/spring-boot:cloud:sdk",
       "kind": "Java",
@@ -599,7 +599,7 @@
       "target": "local"
     },
     {
-      "domain": "ruby-ruby-on-rails.tunnel.portzero.cloud",
+      "domain": "ruby-ruby-on-rails.alice.portzero.cloud",
       "framework": "ruby/ruby-on-rails",
       "id": "ruby/ruby-on-rails:cloud:env",
       "kind": "Ruby",
@@ -612,7 +612,7 @@
       "target": "cloud"
     },
     {
-      "domain": "ruby-ruby-on-rails.tunnel.portzero.cloud",
+      "domain": "ruby-ruby-on-rails.alice.portzero.cloud",
       "framework": "ruby/ruby-on-rails",
       "id": "ruby/ruby-on-rails:cloud:sdk",
       "kind": "Ruby",
@@ -651,7 +651,7 @@
       "target": "local"
     },
     {
-      "domain": "php-laravel.tunnel.portzero.cloud",
+      "domain": "php-laravel.alice.portzero.cloud",
       "framework": "php/laravel",
       "id": "php/laravel:cloud:env",
       "kind": "PHP",
@@ -664,7 +664,7 @@
       "target": "cloud"
     },
     {
-      "domain": "php-laravel.tunnel.portzero.cloud",
+      "domain": "php-laravel.alice.portzero.cloud",
       "framework": "php/laravel",
       "id": "php/laravel:cloud:sdk",
       "kind": "PHP",

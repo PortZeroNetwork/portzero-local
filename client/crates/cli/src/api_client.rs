@@ -81,25 +81,6 @@ impl ApiClient {
         Ok(resp)
     }
 
-    /// Send a DELETE request.
-    pub async fn delete(&self, path: &str) -> Result<reqwest::Response> {
-        let url = format!("{}{}", self.base_url, path);
-        let mut req = self.client.delete(&url);
-
-        if let Some(auth) = &self.auth {
-            req = req.header("Authorization", format!("Bearer {}", auth.token));
-        }
-
-        let resp = req.send().await.with_context(|| {
-            format!(
-                "Failed to reach the portzero.cloud API at {url}\n\n\
-                 Check your internet connection, or if you are using a custom API URL,\n\
-                 verify that PZ_TUNNEL_API_URL is correct."
-            )
-        })?;
-
-        Ok(resp)
-    }
 }
 
 #[cfg(test)]

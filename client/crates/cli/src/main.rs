@@ -7,7 +7,6 @@ mod auth;
 mod autostart;
 mod browser;
 mod daemon;
-mod domains;
 mod team;
 mod trust;
 mod update;
@@ -58,10 +57,6 @@ enum Command {
     /// Show the currently authenticated user.
     Whoami,
 
-    /// Manage custom domains.
-    #[command(subcommand)]
-    Domains(DomainsCommand),
-
     /// Manage teams.
     #[command(subcommand)]
     Team(TeamCommand),
@@ -94,27 +89,6 @@ enum AutostartCommand {
     Disable,
     /// Show whether autostart is installed.
     Status,
-}
-
-#[derive(Subcommand)]
-enum DomainsCommand {
-    /// List configured domains.
-    List,
-    /// Add a custom domain.
-    Add {
-        /// The domain pattern to add (e.g. "*.dev.example.com").
-        domain: String,
-    },
-    /// Verify DNS for a domain.
-    Verify {
-        /// The domain to verify.
-        domain: String,
-    },
-    /// Remove a custom domain.
-    Remove {
-        /// The domain to remove.
-        domain: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -169,12 +143,6 @@ async fn main() -> anyhow::Result<()> {
         Command::Logout => auth::logout()?,
         Command::Whoami => auth::whoami().await?,
 
-        Command::Domains(cmd) => match cmd {
-            DomainsCommand::List => domains::list().await?,
-            DomainsCommand::Add { domain } => domains::add(&domain).await?,
-            DomainsCommand::Verify { domain } => domains::verify(&domain).await?,
-            DomainsCommand::Remove { domain } => domains::remove(&domain).await?,
-        },
         Command::Team(cmd) => match cmd {
             TeamCommand::List => team::list().await?,
             TeamCommand::Invite { email } => team::invite(&email).await?,

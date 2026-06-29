@@ -10,7 +10,7 @@ appended implicitly. The daemon takes the value verbatim.
 
 ```
 PZ_TUNNEL=hello.portzero.local            # valid (local overlay)
-PZ_TUNNEL=web.tunnel.portzero.cloud       # valid (cloud tunnel)
+PZ_TUNNEL=web.alice.portzero.cloud        # valid (cloud tunnel)
 PZ_TUNNEL=hello                          # NOT valid — no suffix
 ```
 
@@ -20,14 +20,14 @@ The daemon routes a service based purely on the **suffix** of the full domain:
 
 | Suffix                                            | Target                  |
 |---------------------------------------------------|-------------------------|
-| `.portzero.local`                                   | Local virtual overlay   |
-| `.tunnel.portzero.cloud` (incl. `foo.user.tunnel.portzero.cloud`) | Cloud tunnel |
+| `.portzero.local` | Local virtual overlay |
+| `*.<username>.portzero.cloud` (incl. `foo.user.portzero.cloud`) | Cloud tunnel |
 
 - `.portzero.local` → the service is given a virtual IP from `10.254.0.0/16`,
   served by scoped DNS, and proxied through the TUN + user-space stack on this
   machine. See [architecture.md](architecture.md).
-- `.tunnel.portzero.cloud` → the service is exposed via the cloud edge (requires
-  login). Namespaced forms like `foo.username.tunnel.portzero.cloud` are also
+- `*.<username>.portzero.cloud` → the service is exposed via the cloud edge (requires
+  login). Namespaced forms like `foo.team.username.portzero.cloud` are also
   cloud routes.
 
 You choose the path simply by which suffix you put in the value.
@@ -74,7 +74,7 @@ git context:
 
 ```
 PZ_TUNNEL=web-{branch}.portzero.local
-PZ_TUNNEL=api-{worktree}.tunnel.portzero.cloud
+PZ_TUNNEL=api-{worktree}.{username}.portzero.cloud
 ```
 
 The daemon resolves these itself from the host (for native processes from the
