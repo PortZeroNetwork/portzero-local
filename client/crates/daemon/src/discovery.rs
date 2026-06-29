@@ -565,7 +565,11 @@ fn process_template_context(sys: &System, pid: u32) -> ProcessTemplateContext {
 
         let lineage_pid = current_pid.as_u32();
 
-        if let Some(cwd) = process.cwd().map(|p| p.to_path_buf()).filter(|p| p.is_dir()) {
+        if let Some(cwd) = process
+            .cwd()
+            .map(|p| p.to_path_buf())
+            .filter(|p| p.is_dir())
+        {
             if context.cwd.is_none() {
                 context.cwd = Some(cwd.clone());
             }
@@ -664,11 +668,7 @@ fn collect_process_repo_candidates(
     }
 }
 
-fn push_repo_candidate_arg(
-    out: &mut Vec<PathBuf>,
-    arg: &std::ffi::OsStr,
-    base_dir: Option<&Path>,
-) {
+fn push_repo_candidate_arg(out: &mut Vec<PathBuf>, arg: &std::ffi::OsStr, base_dir: Option<&Path>) {
     let path = PathBuf::from(arg);
     if path.is_absolute() {
         push_repo_candidate(out, &path);
@@ -1945,12 +1945,8 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
             let process_context = process_template_context(&sys, pid_u32);
             let (raw_domain, canonical_port) = split_tunnel_port(&raw);
             warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
-            let substitutions = template_substitutions(
-                process_context.project_dir.as_deref(),
-                None,
-                None,
-                None,
-            );
+            let substitutions =
+                template_substitutions(process_context.project_dir.as_deref(), None, None, None);
             let resolved = resolve_tunnel_template(
                 raw_domain,
                 process_context.project_dir.as_deref(),
@@ -2056,12 +2052,8 @@ fn scan_network_processes_sync_macos() -> Vec<NetProcessCandidate> {
         let process_context = process_template_context(&sys, pid_u32);
         let (raw_domain, canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
-        let substitutions = template_substitutions(
-            process_context.project_dir.as_deref(),
-            None,
-            None,
-            None,
-        );
+        let substitutions =
+            template_substitutions(process_context.project_dir.as_deref(), None, None, None);
         let resolved = resolve_tunnel_template(
             raw_domain,
             process_context.project_dir.as_deref(),
@@ -2188,12 +2180,8 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
         let process_context = process_template_context(&sys, pid_u32);
         let (raw_domain, canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
-        let substitutions = template_substitutions(
-            process_context.project_dir.as_deref(),
-            None,
-            None,
-            None,
-        );
+        let substitutions =
+            template_substitutions(process_context.project_dir.as_deref(), None, None, None);
         let resolved = resolve_tunnel_template(
             raw_domain,
             process_context.project_dir.as_deref(),
@@ -3114,9 +3102,7 @@ mod tests {
             },
         };
 
-        let dup = DiscoveredNetworkService {
-            ..svc.clone()
-        };
+        let dup = DiscoveredNetworkService { ..svc.clone() };
 
         let deduped = dedupe_network_services(vec![svc, dup]);
         assert_eq!(deduped.len(), 1);
