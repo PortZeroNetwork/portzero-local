@@ -100,6 +100,45 @@ impl DomainContext {
         }
     }
 
+    /// Build context from an optional project directory.
+    ///
+    /// When no project directory is available, git-derived values stay
+    /// `"unknown"`/`None` instead of consulting the caller's current directory.
+    pub fn from_optional_environment(
+        service_name: &str,
+        project_dir: Option<&Path>,
+        account_id: Option<&str>,
+        username: Option<&str>,
+    ) -> Self {
+        match project_dir {
+            Some(project_dir) => {
+                Self::from_environment(service_name, project_dir, account_id, username)
+            }
+            None => {
+                let user = detect_user();
+                let machine = detect_machine();
+                let uid = account_id.map(|id| {
+                    id.chars()
+                        .filter(|c| c.is_ascii_alphanumeric())
+                        .take(8)
+                        .collect::<String>()
+                        .to_ascii_lowercase()
+                });
+
+                Self {
+                    service: service_name.to_string(),
+                    project: "unknown".to_string(),
+                    branch: "unknown".to_string(),
+                    worktree: None,
+                    user,
+                    machine,
+                    uid,
+                    username: username.map(|u| u.to_string()),
+                }
+            }
+        }
+    }
+
     /// Resolve a domain template, replacing all `{placeholder}` variables.
     ///
     /// All values are DNS-sanitized before substitution.
@@ -572,6 +611,14 @@ mod tests {
     fn test_detect_project_name() {
         let name = detect_project_name(Path::new("/home/user/src/myapp"));
         assert_eq!(name, "myapp");
+    }
+
+    #[test]
+    fn test_optional_context_without_project_dir_stays_unknown() {
+        let ctx = DomainContext::from_optional_environment("svc", None, None, None);
+        assert_eq!(ctx.project, "unknown");
+        assert_eq!(ctx.branch, "unknown");
+        assert_eq!(ctx.worktree, None);
     }
 
     // -------------------------------------------------------------------------

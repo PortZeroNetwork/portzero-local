@@ -159,6 +159,12 @@ struct ListeningPort {
     bind: BindAddr,
 }
 
+#[derive(Debug, Clone, Default)]
+struct ProcessTemplateContext {
+    cwd: Option<PathBuf>,
+    project_dir: Option<PathBuf>,
+}
+
 /// How the HTTP port is chosen when PZ_TUNNEL_HTTP_PORT is set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum HttpPortSelection {
@@ -235,7 +241,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
 
         let mut services = Vec::new();
 
-        for (pid, process) in sys.processes() {
+        for (pid, _process) in sys.processes() {
             let pid_u32 = pid.as_u32();
             if pid_u32 <= 1 {
                 continue;
@@ -246,13 +252,23 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                 _ => continue,
             };
 
-            let cwd = process.cwd().map(|p| p.to_path_buf());
+            let process_context = process_template_context(&sys, pid_u32);
             // Strip an optional canonical `:port` before classification/validation.
             // On the cloud path the edge assigns the URL, so the port is ignored.
             let (raw_domain, _canonical_port) = split_tunnel_port(&raw);
             warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
-            let substitutions = template_substitutions(cwd.as_deref(), account_id, username, None);
-            let domain = resolve_tunnel_template(raw_domain, cwd.as_deref(), account_id, username);
+            let substitutions = template_substitutions(
+                process_context.project_dir.as_deref(),
+                account_id,
+                username,
+                None,
+            );
+            let domain = resolve_tunnel_template(
+                raw_domain,
+                process_context.project_dir.as_deref(),
+                account_id,
+                username,
+            );
 
             if is_local_overlay_domain(&domain) {
                 tracing::debug!(
@@ -333,7 +349,9 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
                 port,
                 extra_ports,
                 pid: pid_u32,
-                source: ServiceSource::Process { cwd },
+                source: ServiceSource::Process {
+                    cwd: process_context.cwd,
+                },
             });
         }
 
@@ -362,13 +380,21 @@ fn scan_processes_windows(
             _ => continue,
         };
 
-        let cwd = sys
-            .process(sysinfo::Pid::from_u32(pid_u32))
-            .and_then(|process| process.cwd().map(|p| p.to_path_buf()));
+        let process_context = process_template_context(&sys, pid_u32);
         let (raw_domain, _canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
-        let substitutions = template_substitutions(cwd.as_deref(), account_id, username, None);
-        let domain = resolve_tunnel_template(raw_domain, cwd.as_deref(), account_id, username);
+        let substitutions = template_substitutions(
+            process_context.project_dir.as_deref(),
+            account_id,
+            username,
+            None,
+        );
+        let domain = resolve_tunnel_template(
+            raw_domain,
+            process_context.project_dir.as_deref(),
+            account_id,
+            username,
+        );
 
         if is_local_overlay_domain(&domain) {
             tracing::debug!(
@@ -436,7 +462,9 @@ fn scan_processes_windows(
             port,
             extra_ports,
             pid: pid_u32,
-            source: ServiceSource::Process { cwd },
+            source: ServiceSource::Process {
+                cwd: process_context.cwd,
+            },
         });
     }
 
@@ -478,8 +506,7 @@ fn resolve_tunnel_template(
     if !raw.contains('{') {
         return raw.to_string();
     }
-    let dir = project_dir.unwrap_or(Path::new("."));
-    let ctx = DomainContext::from_environment("", dir, account_id, username);
+    let ctx = DomainContext::from_optional_environment("", project_dir, account_id, username);
     ctx.resolve(raw)
 }
 
@@ -489,8 +516,7 @@ fn template_substitutions(
     username: Option<&str>,
     source_name: Option<&str>,
 ) -> BTreeMap<String, String> {
-    let dir = project_dir.unwrap_or(Path::new("."));
-    let ctx = DomainContext::from_environment("", dir, account_id, username);
+    let ctx = DomainContext::from_optional_environment("", project_dir, account_id, username);
     let folder_name = source_name
         .map(|s| s.trim_start_matches('/').to_string())
         .filter(|s| !s.is_empty())
@@ -521,6 +547,182 @@ fn template_substitutions(
         ctx.username.unwrap_or_else(|| "unknown".to_string()),
     );
     values
+}
+
+fn process_template_context(sys: &System, pid: u32) -> ProcessTemplateContext {
+    let mut context = ProcessTemplateContext::default();
+    let mut repo_candidates = Vec::new();
+    let mut current = Some(sysinfo::Pid::from_u32(pid));
+    let mut depth = 0usize;
+
+    while let Some(current_pid) = current {
+        if depth >= 8 {
+            break;
+        }
+        let Some(process) = sys.process(current_pid) else {
+            break;
+        };
+
+        let lineage_pid = current_pid.as_u32();
+
+        if let Some(cwd) = process.cwd().map(|p| p.to_path_buf()).filter(|p| p.is_dir()) {
+            if context.cwd.is_none() {
+                context.cwd = Some(cwd.clone());
+            }
+            repo_candidates.push(cwd);
+        }
+
+        if let Some(env_pwd) = scan_process_env(lineage_pid, "PWD")
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir())
+        {
+            if context.cwd.is_none() {
+                context.cwd = Some(env_pwd.clone());
+            }
+            repo_candidates.push(env_pwd);
+        }
+
+        collect_process_repo_candidates(process, context.cwd.as_deref(), &mut repo_candidates);
+
+        current = process.parent();
+        depth += 1;
+    }
+
+    context.project_dir = first_git_project_dir(&repo_candidates);
+    context
+}
+
+fn first_git_project_dir(candidates: &[PathBuf]) -> Option<PathBuf> {
+    for candidate in candidates {
+        if let Some((root, _)) = portzero_domain::find_git_root(candidate) {
+            return Some(root.to_path_buf());
+        }
+    }
+    None
+}
+
+fn collect_process_repo_candidates(
+    process: &sysinfo::Process,
+    base_dir: Option<&Path>,
+    out: &mut Vec<PathBuf>,
+) {
+    if let Some(exe) = process.exe() {
+        push_repo_candidate(out, exe);
+    }
+
+    let cmd = process.cmd();
+    let launcher = process.name().to_string_lossy().to_ascii_lowercase();
+
+    let mut i = 0usize;
+    while i < cmd.len() {
+        let arg = cmd[i].to_string_lossy();
+        match arg.as_ref() {
+            "-jar" | "--manifest-path" | "--project-dir" | "--project" | "--file" | "--config" => {
+                if let Some(next) = cmd.get(i + 1) {
+                    push_repo_candidate_arg(out, next, base_dir);
+                }
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    if launcher.contains("java") || launcher.contains("kotlin") {
+        for pair in cmd.windows(2) {
+            if pair[0].to_string_lossy() == "-jar" {
+                push_repo_candidate_arg(out, &pair[1], base_dir);
+            }
+        }
+    } else if launcher.contains("python")
+        || launcher.contains("node")
+        || launcher.contains("bun")
+        || launcher.contains("deno")
+        || launcher.contains("ruby")
+        || launcher.contains("php")
+        || launcher.contains("perl")
+        || launcher.contains("dotnet")
+    {
+        if let Some(script_arg) = cmd
+            .iter()
+            .skip(1)
+            .find(|arg| !arg.to_string_lossy().starts_with('-'))
+        {
+            push_repo_candidate_arg(out, script_arg, base_dir);
+        }
+    }
+
+    for arg in cmd.iter().skip(1) {
+        let text = arg.to_string_lossy();
+        if text.starts_with('-') || text.is_empty() {
+            continue;
+        }
+        if looks_like_repo_path(&text) {
+            push_repo_candidate_arg(out, arg, base_dir);
+        }
+    }
+}
+
+fn push_repo_candidate_arg(
+    out: &mut Vec<PathBuf>,
+    arg: &std::ffi::OsStr,
+    base_dir: Option<&Path>,
+) {
+    let path = PathBuf::from(arg);
+    if path.is_absolute() {
+        push_repo_candidate(out, &path);
+    } else if let Some(base_dir) = base_dir {
+        push_repo_candidate(out, &base_dir.join(path));
+    }
+}
+
+fn push_repo_candidate(out: &mut Vec<PathBuf>, path: &Path) {
+    let candidate = if path.is_dir() {
+        path.to_path_buf()
+    } else if let Some(parent) = path.parent() {
+        parent.to_path_buf()
+    } else {
+        return;
+    };
+
+    if candidate.as_os_str().is_empty() {
+        return;
+    }
+
+    out.push(candidate);
+}
+
+fn looks_like_repo_path(value: &str) -> bool {
+    if value.starts_with('/') || value.starts_with("./") || value.starts_with("../") {
+        return true;
+    }
+
+    let path = Path::new(value);
+    if path.components().count() > 1 {
+        return true;
+    }
+
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some(
+            "jar"
+                | "class"
+                | "js"
+                | "mjs"
+                | "cjs"
+                | "ts"
+                | "tsx"
+                | "py"
+                | "rb"
+                | "php"
+                | "pl"
+                | "sh"
+                | "dll"
+                | "exe"
+                | "go"
+        )
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1660,7 +1862,7 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
         let daemon_no_probe = std::env::var(ENV_NO_PROBE_VAR).ok();
         let mut candidates = Vec::new();
 
-        for (pid, process) in sys.processes() {
+        for (pid, _process) in sys.processes() {
             let pid_u32 = pid.as_u32();
             if pid_u32 <= 1 {
                 continue;
@@ -1671,11 +1873,21 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
                 _ => continue,
             };
 
-            let process_cwd = process.cwd().map(|p| p.to_path_buf());
+            let process_context = process_template_context(&sys, pid_u32);
             let (raw_domain, canonical_port) = split_tunnel_port(&raw);
             warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
-            let substitutions = template_substitutions(process_cwd.as_deref(), None, None, None);
-            let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
+            let substitutions = template_substitutions(
+                process_context.project_dir.as_deref(),
+                None,
+                None,
+                None,
+            );
+            let resolved = resolve_tunnel_template(
+                raw_domain,
+                process_context.project_dir.as_deref(),
+                None,
+                None,
+            );
 
             if !is_local_overlay_domain(&resolved) {
                 continue;
@@ -1739,7 +1951,7 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
                 port,
                 needs_probe,
                 pid: pid_u32,
-                cwd: process_cwd,
+                cwd: process_context.cwd,
             });
         }
 
@@ -1772,13 +1984,21 @@ fn scan_network_processes_sync_macos() -> Vec<NetProcessCandidate> {
             continue;
         }
 
-        let process_cwd = sys
-            .process(sysinfo::Pid::from_u32(pid_u32))
-            .and_then(|process| process.cwd().map(|p| p.to_path_buf()));
+        let process_context = process_template_context(&sys, pid_u32);
         let (raw_domain, canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
-        let substitutions = template_substitutions(process_cwd.as_deref(), None, None, None);
-        let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
+        let substitutions = template_substitutions(
+            process_context.project_dir.as_deref(),
+            None,
+            None,
+            None,
+        );
+        let resolved = resolve_tunnel_template(
+            raw_domain,
+            process_context.project_dir.as_deref(),
+            None,
+            None,
+        );
 
         if !is_local_overlay_domain(&resolved) {
             continue;
@@ -1845,7 +2065,7 @@ fn scan_network_processes_sync_macos() -> Vec<NetProcessCandidate> {
             port,
             needs_probe,
             pid: pid_u32,
-            cwd: process_cwd,
+            cwd: process_context.cwd,
         });
     }
 
@@ -1896,13 +2116,21 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
             _ => continue,
         };
 
-        let process_cwd = sys
-            .process(sysinfo::Pid::from_u32(pid_u32))
-            .and_then(|process| process.cwd().map(|p| p.to_path_buf()));
+        let process_context = process_template_context(&sys, pid_u32);
         let (raw_domain, canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, canonical_port, pid_u32);
-        let substitutions = template_substitutions(process_cwd.as_deref(), None, None, None);
-        let resolved = resolve_tunnel_template(raw_domain, process_cwd.as_deref(), None, None);
+        let substitutions = template_substitutions(
+            process_context.project_dir.as_deref(),
+            None,
+            None,
+            None,
+        );
+        let resolved = resolve_tunnel_template(
+            raw_domain,
+            process_context.project_dir.as_deref(),
+            None,
+            None,
+        );
 
         if !is_local_overlay_domain(&resolved) {
             continue;
@@ -1961,7 +2189,7 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
             port,
             needs_probe,
             pid: pid_u32,
-            cwd: process_cwd,
+            cwd: process_context.cwd,
         });
     }
 
@@ -2775,5 +3003,31 @@ mod tests {
         let mut inodes = std::collections::HashSet::new();
         inodes.insert(12345u64);
         assert!(parse_proc_net_tcp_line(line, &inodes).is_none());
+    }
+
+    #[test]
+    fn test_looks_like_repo_path() {
+        assert!(looks_like_repo_path("/repo/app.jar"));
+        assert!(looks_like_repo_path("./server/main.py"));
+        assert!(looks_like_repo_path("dist/app.js"));
+        assert!(looks_like_repo_path("app.jar"));
+        assert!(!looks_like_repo_path("serve"));
+    }
+
+    #[test]
+    fn test_template_substitutions_without_project_dir_do_not_use_daemon_cwd() {
+        let substitutions = template_substitutions(None, None, None, None);
+        assert_eq!(
+            substitutions.get("branch").map(String::as_str),
+            Some("unknown")
+        );
+        assert_eq!(
+            substitutions.get("project").map(String::as_str),
+            Some("unknown")
+        );
+        assert_eq!(
+            substitutions.get("worktree").map(String::as_str),
+            Some("unknown")
+        );
     }
 }
