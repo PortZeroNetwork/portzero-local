@@ -1770,7 +1770,7 @@ pub async fn scan_network_services(
 
     append_registered_network_services(&mut out, &registrations);
 
-    out
+    dedupe_network_services(out)
 }
 
 /// Fast overlay-only scan used on first DNS hit for an unknown
@@ -1799,7 +1799,7 @@ pub async fn scan_network_process_services(
     };
 
     append_registered_network_services(&mut out, &registrations);
-    Some(out)
+    Some(dedupe_network_services(out))
 }
 
 fn append_registered_network_services(
@@ -1826,6 +1826,37 @@ fn append_registered_network_services(
                 source: ServiceSource::Process { cwd: None },
             });
         }
+    }
+}
+
+fn dedupe_network_services(
+    services: Vec<DiscoveredNetworkService>,
+) -> Vec<DiscoveredNetworkService> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut deduped = Vec::with_capacity(services.len());
+
+    for svc in services {
+        let key = (
+            svc.name.clone(),
+            svc.domain_template.clone(),
+            svc.substitutions.clone(),
+            svc.real_addr,
+            svc.service_port,
+            svc.pid,
+            service_source_dedupe_key(&svc.source),
+        );
+        if seen.insert(key) {
+            deduped.push(svc);
+        }
+    }
+
+    deduped
+}
+
+fn service_source_dedupe_key(source: &ServiceSource) -> String {
+    match source {
+        ServiceSource::Process { cwd } => format!("process:{cwd:?}"),
+        ServiceSource::Container { id, .. } => format!("container:{id}"),
     }
 }
 
@@ -3029,5 +3060,51 @@ mod tests {
             substitutions.get("worktree").map(String::as_str),
             Some("unknown")
         );
+    }
+
+    #[test]
+    fn test_dedupe_network_services_collapses_same_process_context() {
+        let svc = DiscoveredNetworkService {
+            name: "web".to_string(),
+            domain_template: "web.portzero.local".to_string(),
+            substitutions: BTreeMap::new(),
+            real_addr: std::net::SocketAddr::from(([127, 0, 0, 1], 5173)),
+            service_port: 5173,
+            pid: 100,
+            source: ServiceSource::Process {
+                cwd: Some(PathBuf::from("/work/app")),
+            },
+        };
+
+        let dup = DiscoveredNetworkService {
+            ..svc.clone()
+        };
+
+        let deduped = dedupe_network_services(vec![svc, dup]);
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(deduped[0].service_port, 5173);
+    }
+
+    #[test]
+    fn test_dedupe_network_services_keeps_distinct_processes_in_same_worktree() {
+        let a = DiscoveredNetworkService {
+            name: "web".to_string(),
+            domain_template: "web.portzero.local".to_string(),
+            substitutions: BTreeMap::new(),
+            real_addr: std::net::SocketAddr::from(([127, 0, 0, 1], 5173)),
+            service_port: 5173,
+            pid: 100,
+            source: ServiceSource::Process {
+                cwd: Some(PathBuf::from("/work/a")),
+            },
+        };
+
+        let b = DiscoveredNetworkService {
+            pid: 200,
+            ..a.clone()
+        };
+
+        let deduped = dedupe_network_services(vec![a, b]);
+        assert_eq!(deduped.len(), 2);
     }
 }
