@@ -261,6 +261,7 @@ fn substitution_alerts(
         && substitutions.get("branch").map(String::as_str) == Some("unknown")
     {
         alerts.push(serde_json::json!({
+            "severity": "info",
             "title": "Could not determine {branch}",
             "detail": "PZ_TUNNEL uses {branch}, but the daemon could not determine the current git branch, so it materialized the value as \"unknown\". Run the service from a git worktree with a checked-out branch, or use a literal tunnel name."
         }));
@@ -280,6 +281,7 @@ fn substitution_alerts(
             }
 
             Some(serde_json::json!({
+                "severity": "info",
                 "title": format!("Suggest replacing \"{value}\" with \"{placeholder}\""),
                 "detail": format!(
                     "PZ_TUNNEL supports variable substitution: write {placeholder} in the value and the daemon materializes it as \"{value}\" for this process. This keeps tunnel names accurate when the branch, worktree, user, or machine changes."
@@ -292,6 +294,7 @@ fn substitution_alerts(
 
 fn duplicate_route_alert(domain: &str, duplicate_count: usize) -> serde_json::Value {
     serde_json::json!({
+        "severity": "warning",
         "title": "Duplicate tunnel domain",
         "detail": format!(
             "{duplicate_count} tunnels materialized to {domain}. Change PZ_TUNNEL so each active tunnel has a unique domain."
@@ -751,6 +754,8 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
 .domain-stack code{font-size:13px}
 .route-alerts{display:grid;gap:6px;margin-top:8px}
 .route-alert{border-left:3px solid var(--warn);background:var(--soft);padding:7px 9px;font-size:13px}
+.route-alert.info{border-left-color:var(--accent)}
+.route-alert.warning{border-left-color:var(--warn)}
 .route-alert-title{font-weight:700}
 .route-alert-detail{color:var(--muted)}
 .substitutions{display:flex;gap:6px;flex-wrap:wrap}
@@ -1174,7 +1179,8 @@ function domainCell(row){
   let alerts='';
   if(row.alerts&&row.alerts.length){
     alerts='<div class="route-alerts">'+row.alerts.map(function(alert){
-      return '<div class="route-alert"><div class="route-alert-title">'+esc(alert.title)+'</div><div class="route-alert-detail">'+esc(alert.detail)+'</div></div>';
+      const sev=(alert.severity||'warning').toLowerCase();
+      return '<div class="route-alert '+esc(sev)+'"><div class="route-alert-title">'+esc(alert.title)+'</div><div class="route-alert-detail">'+esc(alert.detail)+'</div></div>';
     }).join('')+'</div>';
   }
   return '<div class="domain-stack">'+domain+'<code>template: '+esc(row.domain_template||row.domain)+'</code><code>materialized: '+esc(row.domain)+'</code>'+alerts+'</div>';
@@ -1399,6 +1405,10 @@ mod tests {
             alerts[0].get("title").and_then(|v| v.as_str()),
             Some("Suggest replacing \"main\" with \"{branch}\"")
         );
+        assert_eq!(
+            alerts[0].get("severity").and_then(|v| v.as_str()),
+            Some("info")
+        );
         assert!(alerts[0]
             .get("detail")
             .and_then(|v| v.as_str())
@@ -1425,6 +1435,10 @@ mod tests {
         assert_eq!(
             alerts[0].get("title").and_then(|v| v.as_str()),
             Some("Could not determine {branch}")
+        );
+        assert_eq!(
+            alerts[0].get("severity").and_then(|v| v.as_str()),
+            Some("info")
         );
         assert!(alerts[0]
             .get("detail")
@@ -1458,14 +1472,18 @@ mod tests {
         for row in local_services.iter().chain(cloud_routes.iter()) {
             let alerts = row.get("alerts").and_then(|v| v.as_array()).unwrap();
             assert_eq!(alerts.len(), 1);
-            assert_eq!(
-                alerts[0].get("title").and_then(|v| v.as_str()),
-                Some("Duplicate tunnel domain")
-            );
-            assert!(alerts[0]
-                .get("detail")
-                .and_then(|v| v.as_str())
-                .unwrap()
+        assert_eq!(
+            alerts[0].get("title").and_then(|v| v.as_str()),
+            Some("Duplicate tunnel domain")
+        );
+        assert_eq!(
+            alerts[0].get("severity").and_then(|v| v.as_str()),
+            Some("warning")
+        );
+        assert!(alerts[0]
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .unwrap()
                 .contains("3 tunnels materialized to api.portzero.local"));
         }
     }
