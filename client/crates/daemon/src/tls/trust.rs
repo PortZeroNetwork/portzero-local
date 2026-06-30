@@ -89,6 +89,12 @@ pub(crate) struct LinuxTrustEnv {
     pub(crate) certutil_path: Option<PathBuf>,
     /// All NSS database directories found in the user's home.
     pub(crate) nss_db_dirs: Vec<PathBuf>,
+    /// NSS database directories that should be created if missing.
+    ///
+    /// Native Chromium-family browsers on Linux, including apt-installed Brave,
+    /// use `~/.pki/nssdb`. Seeding it before the browser exists makes browsers
+    /// installed after PortZero trust the local CA on first launch.
+    pub(crate) provision_nss_db_dirs: Vec<PathBuf>,
 }
 
 #[cfg(target_os = "linux")]
@@ -247,17 +253,25 @@ fn uninstall_system_ca(env: &LinuxTrustEnv) -> Result<()> {
 #[cfg(target_os = "linux")]
 fn install_nss_dbs(ca_cert_path: &Path, env: &LinuxTrustEnv) {
     let Some(ref certutil) = env.certutil_path else {
-        if !env.nss_db_dirs.is_empty() {
+        if !env.nss_db_dirs.is_empty() || !env.provision_nss_db_dirs.is_empty() {
             tracing::warn!(
-                "Linux: NSS databases found ({} location(s)) but certutil is not installed. \
+                "Linux: NSS databases found or expected ({} location(s)) but certutil is not installed. \
                  Browsers may not trust *.portzero.local. \
                  Fix: sudo apt install libnss3-tools  (or dnf install nss-tools)",
-                env.nss_db_dirs.len()
+                env.nss_db_dirs.len() + env.provision_nss_db_dirs.len()
             );
         }
         return;
     };
-    for db_dir in &env.nss_db_dirs {
+
+    let mut db_dirs = env.nss_db_dirs.clone();
+    for db_dir in &env.provision_nss_db_dirs {
+        if !db_dirs.contains(db_dir) {
+            db_dirs.push(db_dir.clone());
+        }
+    }
+
+    for db_dir in &db_dirs {
         if let Err(e) = install_nss_cert(certutil, db_dir, ca_cert_path) {
             tracing::warn!(
                 "Linux: failed to add CA to NSS DB {}: {e:#}",
@@ -445,9 +459,23 @@ pub(crate) fn certutil_delete_args(db_dir: &Path) -> Vec<String> {
     ]
 }
 
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos", target_os = "windows")),
+    allow(dead_code)
+)]
+pub(crate) fn certutil_init_args(db_dir: &Path) -> Vec<String> {
+    vec![
+        "-N".to_string(),
+        "-d".to_string(),
+        format!("sql:{}", db_dir.display()),
+        "--empty-password".to_string(),
+    ]
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn install_nss_cert(certutil: &Path, db_dir: &Path, ca_cert_path: &Path) -> Result<()> {
     let program = certutil.to_str().unwrap_or("certutil");
+    ensure_nss_db_exists(program, db_dir)?;
     let add_args = certutil_add_args(db_dir, ca_cert_path);
 
     match run_certutil(program, &add_args) {
@@ -490,6 +518,17 @@ fn install_nss_cert(certutil: &Path, db_dir: &Path, ca_cert_path: &Path) -> Resu
             }
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn ensure_nss_db_exists(program: &str, db_dir: &Path) -> Result<()> {
+    if db_dir.join("cert9.db").exists() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(db_dir).with_context(|| format!("create {}", db_dir.display()))?;
+    run_certutil(program, &certutil_init_args(db_dir))
+        .with_context(|| format!("initialize NSS DB {}", db_dir.display()))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -588,7 +627,8 @@ pub(crate) fn certutil_sudo_args(program: &str, args: &[String]) -> Vec<String> 
 /// Collect all NSS database directories found under `home`.
 ///
 /// Checked locations:
-/// - `~/.pki/nssdb`                                               (Chrome, Chromium)
+/// - `~/.pki/nssdb`                                               (Chrome, Chromium,
+///                                                                 native Brave)
 /// - `~/.mozilla/firefox/*/`                                      (Firefox)
 /// - `~/.var/app/org.mozilla.firefox/.mozilla/firefox/*/`         (Firefox Flatpak)
 /// - `~/snap/firefox/current/.mozilla/firefox/*/`                 (Firefox Snap)
@@ -604,8 +644,8 @@ pub(crate) fn certutil_sudo_args(program: &str, args: &[String]) -> Vec<String> 
 pub(crate) fn find_nss_dbs(home: &Path) -> Vec<PathBuf> {
     let mut dbs = Vec::new();
 
-    // Chrome / Chromium — direct NSS DB directory.
-    push_nss_db_if_exists(&mut dbs, home.join(".pki/nssdb"));
+    // Chrome / Chromium / native Brave — direct NSS DB directory.
+    push_nss_db_if_exists(&mut dbs, native_chromium_nss_db(home));
 
     // Firefox-family profile directories — enumerate subdirs for cert9.db.
     let firefox_bases = [
@@ -631,6 +671,11 @@ pub(crate) fn find_nss_dbs(home: &Path) -> Vec<PathBuf> {
     dbs.extend(snap_chromium_nss_dbs(home, "chromium"));
 
     dbs
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn native_chromium_nss_db(home: &Path) -> PathBuf {
+    home.join(".pki/nssdb")
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -676,7 +721,11 @@ fn detect_trust_env() -> LinuxTrustEnv {
     LinuxTrustEnv {
         ca_tool: detect_ca_tool(),
         certutil_path: find_certutil(),
-        nss_db_dirs: home.map(|h| find_nss_dbs(&h)).unwrap_or_default(),
+        nss_db_dirs: home.as_deref().map(find_nss_dbs).unwrap_or_default(),
+        provision_nss_db_dirs: home
+            .as_deref()
+            .map(|h| vec![native_chromium_nss_db(h)])
+            .unwrap_or_default(),
     }
 }
 
@@ -1329,6 +1378,16 @@ mod tests {
     }
 
     #[test]
+    fn certutil_init_args_uses_empty_password_sql_store() {
+        let db = PathBuf::from("/home/user/.pki/nssdb");
+        let args = certutil_init_args(&db);
+        assert_eq!(args[0], "-N");
+        assert_eq!(args[1], "-d");
+        assert_eq!(args[2], "sql:/home/user/.pki/nssdb");
+        assert_eq!(args[3], "--empty-password");
+    }
+
+    #[test]
     fn certutil_read_only_error_is_detected() {
         assert!(certutil_output_is_read_only(
             "certutil: function failed: SEC_ERROR_READ_ONLY: security library: read-only database."
@@ -1382,6 +1441,15 @@ mod tests {
 
         let found = find_nss_dbs(home);
         assert!(found.contains(&nssdb), "should find ~/.pki/nssdb");
+    }
+
+    #[test]
+    fn native_chromium_nss_db_is_shared_by_native_brave() {
+        let home = PathBuf::from("/home/user");
+        assert_eq!(
+            native_chromium_nss_db(&home),
+            PathBuf::from("/home/user/.pki/nssdb")
+        );
     }
 
     #[test]
