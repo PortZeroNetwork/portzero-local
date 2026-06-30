@@ -56,6 +56,14 @@ backend. Check that the backend service is still listening on its ephemeral port
 and that `port-zero status` shows the expected real address. Restarting the
 service re-registers it on the same stable VIP.
 
+## Brave shows `ERR_CERT_AUTHORITY_INVALID` for `https://portzero.local`
+
+If this only happens in the Snap package of Brave, use the native Brave package
+instead. PortZero installs its local CA into the Linux system trust store and
+browser NSS stores, but some Snap Brave/Chromium builds still ignore those local
+trust anchors and report the PortZero CA as an unknown issuer. Non-Snap Brave
+uses the installed CA correctly.
+
 ## Seeing the daemon's own logs
 
 - `~/.portzero/daemon/daemon.log` (background mode).

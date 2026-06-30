@@ -673,6 +673,64 @@ fn check_ca_cert_exists() -> Option<Diagnostic> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn check_snap_brave_tls_trust() -> Option<Diagnostic> {
+    let paths = detected_snap_brave_paths();
+    if paths.is_empty() {
+        return None;
+    }
+
+    Some(Diagnostic {
+        id: "snap_brave_tls_trust".into(),
+        severity: Severity::Warning,
+        category: "tls".into(),
+        title: "Snap Brave may not trust the local PortZero CA".to_string(),
+        detail: format!(
+            "Snap Brave was detected at {}. Some Snap Brave/Chromium builds ignore locally installed CAs even when the PortZero CA is present in the system and NSS trust stores. If only Snap Brave shows net::ERR_CERT_AUTHORITY_INVALID for https://portzero.local, use the native Brave package or another non-Snap browser.",
+            paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        fix: Some(Fix {
+            kind: FixKind::Manual,
+            description:
+                "Use the native Brave package for trusted https://*.portzero.local browsing."
+                    .to_string(),
+            command: None,
+        }),
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn check_snap_brave_tls_trust() -> Option<Diagnostic> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn detected_snap_brave_paths() -> Vec<PathBuf> {
+    let mut candidates = vec![
+        PathBuf::from("/snap/bin/brave"),
+        PathBuf::from("/var/lib/snapd/snap/bin/brave"),
+        PathBuf::from("/snap/brave/current"),
+    ];
+
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        candidates.push(home.join("snap/brave/current"));
+    }
+
+    existing_paths(candidates)
+}
+
+#[cfg(target_os = "linux")]
+fn existing_paths(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
+    paths
+        .into_iter()
+        .filter(|path| path.exists())
+        .collect::<Vec<_>>()
+}
+
 async fn probe_portzero_local_dns() -> Diagnostic {
     match timeout(ACTIVE_PROBE_TIMEOUT, lookup_host(("portzero.local", 443))).await {
         Err(_) => Diagnostic {
@@ -860,6 +918,7 @@ pub async fn run_diagnostics(state_dir: &std::path::Path) -> DiagnosticsReport {
         run!(check_conflicting_vpn_software());
         run!(check_auth_token(&state_dir));
         run!(check_ca_cert_exists());
+        run!(check_snap_brave_tls_trust());
 
         out.sort_by(|a, b| a.severity.cmp(&b.severity));
         (out, checks_run)
@@ -1096,5 +1155,18 @@ mod tests {
         ]);
 
         assert_eq!(text, "10.254.0.2, ::1");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn existing_paths_returns_only_present_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let present = dir.path().join("snap/brave/current");
+        let missing = dir.path().join("snap/brave/old");
+        std::fs::create_dir_all(&present).unwrap();
+
+        let found = super::existing_paths([present.clone(), missing]);
+
+        assert_eq!(found, vec![present]);
     }
 }
