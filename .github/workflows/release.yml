@@ -295,11 +295,29 @@ jobs:
             -out "portzero-${{ needs.version.outputs.version }}-x86_64.msi" `
             "portzero.wixobj"
 
+      - name: Generate winget manifest
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Filter "portzero-*.msi" | Select-Object -First 1
+          if (-not $msi) {
+            throw "MSI artifact not found after WiX build"
+          }
+
+          & ".\scripts\generate-winget-manifest.ps1" `
+            -Version "${{ needs.version.outputs.version }}" `
+            -MsiPath $msi.FullName
+
       - name: Upload MSI
         uses: actions/upload-artifact@v5
         with:
           name: portzero-msi
           path: "*.msi"
+
+      - name: Upload winget manifest
+        uses: actions/upload-artifact@v5
+        with:
+          name: portzero-winget
+          path: packaging/winget/manifests/**
 
   release:
     name: Create Release
@@ -321,7 +339,7 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           path: artifacts
-          pattern: portzero-{deb,rpm,msi}
+          pattern: portzero-{deb,rpm,msi,winget}
           merge-multiple: true
 
       - name: Generate version manifest
@@ -347,7 +365,20 @@ jobs:
             curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | sh
             ```
 
-            **Windows** — download the `.msi` from the assets below and run it.
+            **Windows (winget)**
+            ```powershell
+            winget install PortZeroNetwork.PortZero
+            ```
+
+            Or download the `.msi` from the assets below and run it manually.
+
+            After installing, run these commands from an Administrator terminal:
+            ```powershell
+            portzero trust generate
+            portzero trust install
+            portzero autostart enable
+            portzero start
+            ```
 
             ---
           files: |
@@ -358,6 +389,38 @@ jobs:
             artifacts/*.msi
             artifacts/version.json
             scripts/linux-install.sh
+            artifacts/packaging/winget/manifests/**
+
+  check-winget-token:
+    name: Check WinGet Token
+    needs: [release]
+    runs-on: warp-ubuntu-latest-x64-2x
+    outputs:
+      has-token: ${{ steps.check.outputs.has-token }}
+    steps:
+      - name: Check token presence
+        id: check
+        run: echo "has-token=${{ secrets.WINGET_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
+  update-winget:
+    name: Update WinGet Package
+    needs: [version, release, check-winget-token]
+    runs-on: warp-ubuntu-latest-x64-2x
+    if: ${{ needs.check-winget-token.outputs.has-token == 'true' }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Submit package to Windows Package Manager Community Repository
+        uses: vedantmgoyal2009/winget-releaser@v2
+        with:
+          identifier: PortZeroNetwork.PortZero
+          installers-regex: 'portzero-.*-x86_64\.msi$'
+          version: ${{ needs.version.outputs.version }}
+          release-tag: ${{ needs.version.outputs.tag }}
+          release-repository: portzero-local
+          token: ${{ secrets.WINGET_TOKEN }}
+          fork-user: PortZeroNetwork
 
   check-homebrew-token:
     name: Check Homebrew Token
