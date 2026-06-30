@@ -1714,6 +1714,9 @@ pub struct DiscoveredNetworkService {
     /// For Docker this is the container port from the -p mapping.
     /// For plain processes we use the discovered listening port.
     pub service_port: u16,
+    /// Best-effort backend protocol detection, used by the overlay to avoid
+    /// raw-proxying browser TLS into plaintext HTTP services on port 443.
+    pub backend_protocol: Option<protocol_detect::Canonical>,
     /// Owning PID.
     pub pid: u32,
     pub source: ServiceSource,
@@ -1822,6 +1825,7 @@ fn append_registered_network_services(
                 substitutions: BTreeMap::new(),
                 real_addr: std::net::SocketAddr::from(([127, 0, 0, 1], reg.local_port)),
                 service_port: 80,
+                backend_protocol: Some(protocol_detect::Canonical::Http),
                 pid: *pid,
                 source: ServiceSource::Process { cwd: None },
             });
@@ -2273,9 +2277,15 @@ async fn scan_network_processes(
 
         // Precedence (task-16 + task-17):
         //   explicit `:port`  >  detected canonical (HTTP→80 / TLS→443)  >  ephemeral.
+        let detected = if c.needs_probe || c.port == 443 {
+            protocol_detect::detect_canonical_cached(c.real_addr, (c.pid, c.port)).await
+        } else {
+            None
+        };
+
         let service_port = if c.needs_probe {
-            protocol_detect::detect_cached(c.real_addr, (c.pid, c.port))
-                .await
+            detected
+                .map(protocol_detect::Canonical::port)
                 .unwrap_or(c.port)
         } else {
             c.port
@@ -2287,6 +2297,7 @@ async fn scan_network_processes(
             substitutions: c.substitutions,
             real_addr: c.real_addr,
             service_port,
+            backend_protocol: detected,
             pid: c.pid,
             source: ServiceSource::Process { cwd: c.cwd },
         });
@@ -2296,16 +2307,28 @@ async fn scan_network_processes(
 }
 
 async fn scan_network_containers() -> Vec<DiscoveredNetworkService> {
-    match tokio::task::spawn_blocking(scan_network_containers_impl)
+    let mut services = match tokio::task::spawn_blocking(scan_network_containers_impl)
         .await
         .unwrap_or_else(|_| Err(anyhow::anyhow!("spawn_blocking panicked")))
     {
         Ok(v) => v,
         Err(e) => {
             tracing::debug!("Docker network scan failed: {}", e);
-            Vec::new()
+            return Vec::new();
+        }
+    };
+
+    for svc in &mut services {
+        if svc.service_port == 443 {
+            svc.backend_protocol = protocol_detect::detect_canonical_cached(
+                svc.real_addr,
+                (svc.pid, svc.real_addr.port()),
+            )
+            .await;
         }
     }
+
+    services
 }
 
 fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService>> {
@@ -2438,6 +2461,7 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
             substitutions,
             real_addr,
             service_port: svc_port,
+            backend_protocol: None,
             pid,
             source: ServiceSource::Container {
                 id: id.to_string(),
@@ -3096,6 +3120,7 @@ mod tests {
             substitutions: BTreeMap::new(),
             real_addr: std::net::SocketAddr::from(([127, 0, 0, 1], 5173)),
             service_port: 5173,
+            backend_protocol: None,
             pid: 100,
             source: ServiceSource::Process {
                 cwd: Some(PathBuf::from("/work/app")),
@@ -3117,6 +3142,7 @@ mod tests {
             substitutions: BTreeMap::new(),
             real_addr: std::net::SocketAddr::from(([127, 0, 0, 1], 5173)),
             service_port: 5173,
+            backend_protocol: None,
             pid: 100,
             source: ServiceSource::Process {
                 cwd: Some(PathBuf::from("/work/a")),
@@ -3141,6 +3167,7 @@ mod tests {
             substitutions: BTreeMap::new(),
             real_addr: std::net::SocketAddr::from(([127, 0, 0, 1], 5173)),
             service_port: 5173,
+            backend_protocol: None,
             pid: 100,
             source: ServiceSource::Process {
                 cwd: Some(PathBuf::from("/work/a")),
@@ -3166,6 +3193,7 @@ mod tests {
             substitutions: BTreeMap::new(),
             real_addr: std::net::SocketAddr::from(([127, 0, 0, 1], 5173)),
             service_port: 5173,
+            backend_protocol: None,
             pid: 100,
             source: ServiceSource::Process { cwd: None },
         };

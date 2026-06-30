@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use crate::net::virtual_ip::VirtualIpAllocator;
+use crate::protocol_detect::Canonical;
 use smoltcp::wire::Ipv4Address;
 
 /// A discovered network service reachable via the overlay.
@@ -25,6 +26,8 @@ pub struct NetworkService {
     pub service_port: u16,
     /// The actual address on the host that we proxy to.
     pub real_addr: SocketAddr,
+    /// Best-effort protocol detected on the backend, when known.
+    pub backend_protocol: Option<Canonical>,
     /// Owning PID (0 if unknown / container).
     pub pid: u32,
 }
@@ -61,6 +64,18 @@ impl ServiceTable {
         service_port: u16,
         pid: u32,
     ) -> NetworkService {
+        self.register_with_backend_protocol(name, real_addr, service_port, pid, None)
+    }
+
+    /// Register or update a service with optional backend protocol metadata.
+    pub fn register_with_backend_protocol(
+        &mut self,
+        name: String,
+        real_addr: SocketAddr,
+        service_port: u16,
+        pid: u32,
+        backend_protocol: Option<Canonical>,
+    ) -> NetworkService {
         let vip = if let Some(existing) = self.by_name.get(&name) {
             existing.vip
         } else {
@@ -73,6 +88,7 @@ impl ServiceTable {
             vip,
             service_port,
             real_addr,
+            backend_protocol,
             pid,
         };
 

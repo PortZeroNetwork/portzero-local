@@ -174,21 +174,21 @@ fn global_cache() -> &'static Mutex<HashMap<CacheKey, Option<u16>>> {
 // Async detection (I/O, best-effort, never fatal)
 // ---------------------------------------------------------------------------
 
-/// Detect the canonical port for a backend, using the cross-scan cache.
+/// Detect the backend protocol, using the cross-scan cache.
 ///
-/// Returns `Some(80)` for HTTP, `Some(443)` for TLS, or `None` when the
+/// Returns `Some(Http)`, `Some(Tls)`, or `None` when the
 /// protocol is unknown / unreachable (caller falls back to the ephemeral
 /// port). Best-effort: every failure path yields `None` and never panics or
 /// propagates errors into discovery.
 ///
 /// `key` is `(pid, real_port)`; a given backend is probed once and the result
 /// is reused until that key changes.
-pub async fn detect_cached(real_addr: SocketAddr, key: CacheKey) -> Option<u16> {
+pub async fn detect_canonical_cached(real_addr: SocketAddr, key: CacheKey) -> Option<Canonical> {
     // Fast path: cached decision.
     {
         let cache = global_cache().lock().unwrap();
         if let CacheDecision::Hit(v) = cache_lookup(&cache, key) {
-            return v;
+            return v.map(port_to_canonical);
         }
     }
 
@@ -196,7 +196,21 @@ pub async fn detect_cached(real_addr: SocketAddr, key: CacheKey) -> Option<u16> 
 
     let mut cache = global_cache().lock().unwrap();
     cache.insert(key, detected);
-    detected
+    detected.map(port_to_canonical)
+}
+
+/// Detect the canonical port for a backend, using the cross-scan cache.
+pub async fn detect_cached(real_addr: SocketAddr, key: CacheKey) -> Option<u16> {
+    detect_canonical_cached(real_addr, key)
+        .await
+        .map(Canonical::port)
+}
+
+fn port_to_canonical(port: u16) -> Canonical {
+    match port {
+        443 => Canonical::Tls,
+        _ => Canonical::Http,
+    }
 }
 
 /// Probe `real_addr` and return its canonical port, or `None`.

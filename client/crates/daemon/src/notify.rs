@@ -344,6 +344,7 @@ mod tests {
             substitutions: Default::default(),
             real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 30000),
             service_port: 5432,
+            backend_protocol: None,
             pid,
             source: ServiceSource::Process {
                 cwd: cwd.map(PathBuf::from),
@@ -358,6 +359,7 @@ mod tests {
             substitutions: Default::default(),
             real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 30000),
             service_port: 5432,
+            backend_protocol: None,
             pid: 0,
             source: ServiceSource::Container {
                 id: id.to_string(),

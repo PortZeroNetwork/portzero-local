@@ -874,7 +874,13 @@ fn build_overlay_table(services: &[DiscoveredNetworkService], mgmt_port: u16) ->
         table.register("portzero-api".to_string(), backend, 80, 0);
     }
     for svc in services {
-        table.register(svc.name.clone(), svc.real_addr, svc.service_port, svc.pid);
+        table.register_with_backend_protocol(
+            svc.name.clone(),
+            svc.real_addr,
+            svc.service_port,
+            svc.pid,
+            svc.backend_protocol,
+        );
     }
     table
 }
@@ -1471,6 +1477,7 @@ mod tests {
                 substitutions: Default::default(),
                 real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 32768),
                 service_port: 5432,
+                backend_protocol: None,
                 pid: 100,
                 source: ServiceSource::Process { cwd: None },
             },
@@ -1480,6 +1487,7 @@ mod tests {
                 substitutions: Default::default(),
                 real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000),
                 service_port: 8080,
+                backend_protocol: None,
                 pid: 101,
                 source: ServiceSource::Process { cwd: None },
             },

@@ -47,6 +47,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::net::service_table::ServiceTable;
+use crate::protocol_detect::Canonical;
 
 /// MTU used for the virtual interface. Matches the default TUN MTU.
 const STACK_MTU: usize = 1500;
@@ -66,8 +67,8 @@ pub struct OverlayHttpsPolicy {
     pub enable_for_port_80: bool,
     /// Redirect HTTP requests on virtual port 80 to HTTPS.
     pub redirect_port_80: bool,
-    /// When a service is exposed on virtual port 443, pass TLS through to the
-    /// backend because the process already speaks HTTPS.
+    /// When a service is exposed on virtual port 443 and its backend is
+    /// confirmed to speak TLS, pass TLS through to that backend.
     pub passthrough_port_443: bool,
 }
 
@@ -106,9 +107,9 @@ pub struct VirtualStack {
 impl VirtualStack {
     /// Spawn the virtual stack driving the given TUN device.
     ///
-    /// `tls_config` enables TLS termination on port 443: connections to any
-    /// `*.portzero.local` VIP on port 443 are decrypted with the wildcard cert
-    /// and forwarded as plain HTTP to the service's real backend address.
+    /// `tls_config` enables TLS termination on port 443. For plaintext HTTP
+    /// backends, connections to `*.portzero.local` VIPs on port 443 are
+    /// decrypted with the wildcard cert and forwarded to the real backend.
     pub async fn spawn(
         tun: crate::net::tun_device::TunDevice,
         initial: ServiceTable,
@@ -875,11 +876,20 @@ fn select_connection_action(
         {
             Some(ConnectionAction::RedirectToHttps)
         }
-        443 if service.service_port == 443 && policy.passthrough_port_443 => {
+        443 if service.service_port == 443
+            && service.backend_protocol == Some(Canonical::Tls)
+            && policy.passthrough_port_443 =>
+        {
             Some(ConnectionAction::PlainProxy(service.real_addr))
+        }
+        443 if service.service_port == 443 && tls_available => {
+            Some(ConnectionAction::TlsTerminate(service.real_addr))
         }
         443 if service.service_port == 80 && policy.enable_for_port_80 && tls_available => {
             Some(ConnectionAction::TlsTerminate(service.real_addr))
+        }
+        443 if service.service_port == 443 && policy.passthrough_port_443 => {
+            Some(ConnectionAction::PlainProxy(service.real_addr))
         }
         _ if service.service_port == port => Some(ConnectionAction::PlainProxy(service.real_addr)),
         _ => None,
@@ -1317,16 +1327,50 @@ mod tests {
     #[test]
     fn port_443_service_passes_https_through() {
         let mut table = ServiceTable::new();
-        let svc = table.register(
+        let svc = table.register_with_backend_protocol(
             "secure".to_string(),
             "127.0.0.1:49153".parse().unwrap(),
+            443,
+            0,
+            Some(Canonical::Tls),
+        );
+
+        assert_eq!(
+            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 443),
+            Some(ConnectionAction::PlainProxy(svc.real_addr))
+        );
+    }
+
+    #[test]
+    fn port_443_plain_http_backend_terminates_tls() {
+        let mut table = ServiceTable::new();
+        let svc = table.register_with_backend_protocol(
+            "staging".to_string(),
+            "127.0.0.1:49154".parse().unwrap(),
+            443,
+            0,
+            Some(Canonical::Http),
+        );
+
+        assert_eq!(
+            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 443),
+            Some(ConnectionAction::TlsTerminate(svc.real_addr))
+        );
+    }
+
+    #[test]
+    fn port_443_unknown_backend_terminates_tls_when_available() {
+        let mut table = ServiceTable::new();
+        let svc = table.register(
+            "staging".to_string(),
+            "127.0.0.1:49155".parse().unwrap(),
             443,
             0,
         );
 
         assert_eq!(
             select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 443),
-            Some(ConnectionAction::PlainProxy(svc.real_addr))
+            Some(ConnectionAction::TlsTerminate(svc.real_addr))
         );
     }
 
