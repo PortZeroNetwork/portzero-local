@@ -1246,7 +1246,7 @@ function render(d){
   }
   html+='</section>';
 
-  html+='<section class="status-card"><h3>Cloud routes</h3>';
+  html+='<section class="status-card"><h3>Cloud tunnels</h3>';
   html+='<div class="status-row">'+dot(d.cloud_connected)+(d.cloud_connected?'connected':'disconnected');
   if(d.cloud_error) html+=' <span style="color:var(--bad);font-size:13px">- '+esc(d.cloud_error)+'</span>';
   html+='</div>';
@@ -1258,9 +1258,9 @@ function render(d){
     html+='</tbody></table>';
   } else {
     if(!d.auth_authenticated){
-      html+='<div class="empty-action"><p>No cloud routes because you are not logged in.</p><a class="button" href="/login">Log in</a></div>';
+      html+='<div class="empty-action"><p>No cloud tunnels because you are not logged in.</p><a class="button" href="/login">Log in</a></div>';
     } else {
-      html+='<p class="empty">no cloud routes</p>';
+      html+='<p class="empty">no cloud tunnels</p>';
     }
   }
   html+='</section>';

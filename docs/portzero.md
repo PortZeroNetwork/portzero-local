@@ -28,7 +28,7 @@ The daemon routes a service based purely on the **suffix** of the full domain:
   machine. See [architecture.md](architecture.md).
 - `*.<username>.portzero.cloud` → the service is exposed via the cloud edge (requires
   login). Namespaced forms like `foo.team.username.portzero.cloud` are also
-  cloud routes.
+  cloud tunnels.
 
 You choose the path simply by which suffix you put in the value.
 

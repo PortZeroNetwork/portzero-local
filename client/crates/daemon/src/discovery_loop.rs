@@ -566,7 +566,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
 
             // Feed `.portzero.local` services into the virtual overlay. This is a
             // separate discovery pass from the cloud/route discovery above and does
-            // not touch cloud route registration. No-op when the overlay failed to
+            // not touch cloud tunnel registration. No-op when the overlay failed to
             // start (unprivileged environment).
             //
             // Also run the visibility checks (duplicate-name detection + legacy
