@@ -830,8 +830,6 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
 </header>
 <main class="shell">
   <section class="hero" id="getting-started">
-    <img class="hero-brand" src="/assets/portzero-wordmark.jpg" alt="PortZero">
-    <p class="eyebrow">Local developer guide</p>
     <h1>Getting Started</h1>
     <p class="lede">Use <code>portzero.local</code> for the local dashboard. Local processes should call the management API at <code>http://api.portzero.local</code>.</p>
   </section>
