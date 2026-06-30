@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use tokio::net::lookup_host;
 use tokio::time::{timeout, Duration};
 
+use crate::tls::{trust, LocalCa};
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 const PORTZERO_LOCAL_DASHBOARD_IP: &str = "10.254.0.2";
@@ -673,6 +675,67 @@ fn check_ca_cert_exists() -> Option<Diagnostic> {
     }
 }
 
+fn check_local_ca_trust_installation() -> Option<Diagnostic> {
+    let ca_path = match LocalCa::ca_cert_path() {
+        Ok(path) => path,
+        Err(e) => {
+            tracing::warn!(
+                "check_local_ca_trust_installation: could not determine CA cert path: {e}"
+            );
+            return None;
+        }
+    };
+
+    if !ca_path.exists() {
+        return None;
+    }
+
+    let report = match trust::verify_installation(&ca_path) {
+        Ok(report) => report,
+        Err(e) => {
+            tracing::warn!(
+                "check_local_ca_trust_installation: trust verification failed: {e:#}"
+            );
+            return Some(Diagnostic {
+                id: "ca_trust_verification_failed".into(),
+                severity: Severity::Warning,
+                category: "tls".into(),
+                title: "Could not verify local CA installation".to_string(),
+                detail: format!(
+                    "PortZero could not inspect the trust stores that should contain {}.",
+                    ca_path.display()
+                ),
+                fix: Some(Fix {
+                    kind: FixKind::Manual,
+                    description: "Run `portzero trust generate && portzero trust install` again."
+                        .to_string(),
+                    command: Some("portzero trust generate && sudo portzero trust install".to_string()),
+                }),
+            });
+        }
+    };
+
+    if report.is_clean() {
+        return None;
+    }
+
+    Some(Diagnostic {
+        id: "ca_trust_missing".into(),
+        severity: Severity::Warning,
+        category: "tls".into(),
+        title: "Local CA trust installation is incomplete".to_string(),
+        detail: format!(
+            "The PortZero CA is missing from: {}.",
+            report.missing.join(", ")
+        ),
+        fix: Some(Fix {
+            kind: FixKind::Manual,
+            description: "Reinstall the local CA into the trust stores.".to_string(),
+            command: Some("portzero trust generate && sudo portzero trust install".to_string()),
+        }),
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn check_snap_brave_tls_trust() -> Option<Diagnostic> {
     let paths = detected_snap_brave_paths();
@@ -918,6 +981,7 @@ pub async fn run_diagnostics(state_dir: &std::path::Path) -> DiagnosticsReport {
         run!(check_conflicting_vpn_software());
         run!(check_auth_token(&state_dir));
         run!(check_ca_cert_exists());
+        run!(check_local_ca_trust_installation());
         run!(check_snap_brave_tls_trust());
 
         out.sort_by(|a, b| a.severity.cmp(&b.severity));

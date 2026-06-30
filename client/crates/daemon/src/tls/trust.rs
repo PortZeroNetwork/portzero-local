@@ -63,6 +63,26 @@ pub fn uninstall() -> Result<()> {
     uninstall_impl()
 }
 
+/// Summary of trust-store verification results.
+#[derive(Debug, Clone, Default)]
+pub struct TrustVerificationReport {
+    /// Human-readable descriptions of stores that are missing the PortZero CA.
+    pub missing: Vec<String>,
+}
+
+impl TrustVerificationReport {
+    /// Return `true` when every verified store contains the CA.
+    pub fn is_clean(&self) -> bool {
+        self.missing.is_empty()
+    }
+}
+
+/// Verify that the local CA is still installed in the trust stores PortZero
+/// manages on this platform.
+pub fn verify_installation(ca_cert_path: &Path) -> Result<TrustVerificationReport> {
+    verify_installation_impl(ca_cert_path)
+}
+
 // ---------------------------------------------------------------------------
 // Linux
 // ---------------------------------------------------------------------------
@@ -116,6 +136,72 @@ fn uninstall_impl() -> Result<()> {
     uninstall_system_ca(&env)?;
     uninstall_nss_dbs(&env);
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn verify_installation_impl(ca_cert_path: &Path) -> Result<TrustVerificationReport> {
+    let env = detect_trust_env();
+    let mut missing = Vec::new();
+
+    match env.ca_tool {
+        LinuxCaTool::UpdateCaCertificates => {
+            verify_file_matches(
+                ca_cert_path,
+                &system_cert_dest_debian(),
+                "Linux system CA bundle",
+                &mut missing,
+            );
+            verify_file_matches(
+                ca_cert_path,
+                &debian_ssl_cert_path(),
+                "Linux OpenSSL CA bundle",
+                &mut missing,
+            );
+            verify_file_matches(
+                ca_cert_path,
+                &p11_kit_anchor_path(),
+                "Linux p11-kit anchor",
+                &mut missing,
+            );
+            verify_file_contains(
+                "portzero/portzero-local-ca.crt",
+                &debian_ca_config_path(),
+                "Linux CA certificates config",
+                &mut missing,
+            );
+        }
+        LinuxCaTool::UpdateCaTrust => {
+            verify_file_matches(
+                ca_cert_path,
+                &system_cert_dest_rhel(),
+                "Linux system CA bundle",
+                &mut missing,
+            );
+        }
+        LinuxCaTool::None => {
+            missing.push(
+                "Linux system CA update tool not found (update-ca-certificates or update-ca-trust)"
+                    .to_string(),
+            );
+        }
+    }
+
+    if env.nss_db_dirs.is_empty() {
+        tracing::debug!("verify_installation: no NSS databases found to check");
+    } else if let Some(certutil) = env.certutil_path.as_deref() {
+        for db_dir in &env.nss_db_dirs {
+            if !nss_db_contains_ca(certutil, db_dir) {
+                missing.push(format!("NSS database {}", db_dir.display()));
+            }
+        }
+    } else {
+        missing.push(format!(
+            "{} NSS database(s) were found but certutil is not available",
+            env.nss_db_dirs.len()
+        ));
+    }
+
+    Ok(TrustVerificationReport { missing })
 }
 
 #[cfg(target_os = "linux")]
@@ -251,6 +337,27 @@ fn uninstall_system_ca(env: &LinuxTrustEnv) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+fn debian_ca_config_path() -> PathBuf {
+    PathBuf::from("/etc/ca-certificates.conf")
+}
+
+#[cfg(target_os = "linux")]
+fn verify_file_matches(reference: &Path, target: &Path, label: &str, missing: &mut Vec<String>) {
+    match (std::fs::read(reference), std::fs::read(target)) {
+        (Ok(expected), Ok(actual)) if expected == actual => {}
+        _ => missing.push(format!("{label} at {}", target.display())),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn verify_file_contains(expected: &str, path: &Path, label: &str, missing: &mut Vec<String>) {
+    match std::fs::read_to_string(path) {
+        Ok(content) if content.lines().any(|line| line.trim() == expected) => {}
+        _ => missing.push(format!("{label} at {}", path.display())),
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn install_nss_dbs(ca_cert_path: &Path, env: &LinuxTrustEnv) {
     let Some(ref certutil) = env.certutil_path else {
         if !env.nss_db_dirs.is_empty() || !env.provision_nss_db_dirs.is_empty() {
@@ -281,6 +388,19 @@ fn install_nss_dbs(ca_cert_path: &Path, env: &LinuxTrustEnv) {
             tracing::info!("Linux: added CA to NSS DB {}", db_dir.display());
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn nss_db_contains_ca(certutil: &Path, db_dir: &Path) -> bool {
+    let program = certutil.to_string_lossy().to_string();
+    let args = certutil_list_args(db_dir);
+    run_certutil_output(&program, &args)
+        .map(|output| output.status.success() && {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            stdout.contains(CERT_NICKNAME) || stderr.contains(CERT_NICKNAME)
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(target_os = "linux")]
@@ -852,6 +972,39 @@ fn uninstall_impl() -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+fn verify_installation_impl(ca_cert_path: &Path) -> Result<TrustVerificationReport> {
+    let env = detect_macos_trust_env();
+    let mut missing = Vec::new();
+
+    if !system_keychain_contains_ca()? {
+        missing.push("macOS system keychain".to_string());
+    }
+
+    if env.nss_db_dirs.is_empty() {
+        tracing::debug!("verify_installation: no Firefox NSS databases found to check");
+    } else if let Some(certutil) = env.certutil_path.as_deref() {
+        for db_dir in &env.nss_db_dirs {
+            if !nss_db_contains_ca(certutil, db_dir) {
+                missing.push(format!("Firefox NSS database {}", db_dir.display()));
+            }
+        }
+    } else {
+        missing.push(format!(
+            "{} Firefox NSS database(s) were found but certutil is not available",
+            env.nss_db_dirs.len()
+        ));
+    }
+
+    // Keep the signature consistent with other platforms and ensure the CA
+    // file still exists when verification is called.
+    if !ca_cert_path.exists() {
+        missing.push(format!("CA certificate file {}", ca_cert_path.display()));
+    }
+
+    Ok(TrustVerificationReport { missing })
+}
+
+#[cfg(target_os = "macos")]
 fn install_system_keychain(ca_cert_path: &Path) -> Result<()> {
     let cert_str = ca_cert_path
         .to_str()
@@ -871,6 +1024,21 @@ fn install_system_keychain(ca_cert_path: &Path) -> Result<()> {
     .context("security add-trusted-cert")?;
     tracing::info!("macOS: installed CA cert to system keychain");
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn system_keychain_contains_ca() -> Result<bool> {
+    let output = std::process::Command::new("security")
+        .args([
+            "find-certificate",
+            "-c",
+            CERT_NICKNAME,
+            "-a",
+            "/Library/Keychains/System.keychain",
+        ])
+        .output()
+        .context("spawn security find-certificate")?;
+    Ok(output.status.success())
 }
 
 #[cfg(target_os = "macos")]
@@ -1015,6 +1183,38 @@ fn uninstall_impl() -> Result<()> {
     let env = detect_windows_trust_env();
     uninstall_nss_dbs_windows(&env);
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn verify_installation_impl(ca_cert_path: &Path) -> Result<TrustVerificationReport> {
+    let env = detect_windows_trust_env();
+    let mut missing = Vec::new();
+
+    let store = WindowsCertStore::open_current_user_root()?;
+    if !store.contains_subject(CERT_NICKNAME)? {
+        missing.push("Windows CurrentUser\\Root store".to_string());
+    }
+
+    if env.nss_db_dirs.is_empty() {
+        tracing::debug!("verify_installation: no Windows NSS databases found to check");
+    } else if let Some(certutil) = env.certutil_path.as_deref() {
+        for db_dir in &env.nss_db_dirs {
+            if !nss_db_contains_ca(certutil, db_dir) {
+                missing.push(format!("Windows NSS database {}", db_dir.display()));
+            }
+        }
+    } else {
+        missing.push(format!(
+            "{} Windows NSS database(s) were found but Mozilla certutil.exe is not available",
+            env.nss_db_dirs.len()
+        ));
+    }
+
+    if !ca_cert_path.exists() {
+        missing.push(format!("CA certificate file {}", ca_cert_path.display()));
+    }
+
+    Ok(TrustVerificationReport { missing })
 }
 
 #[cfg(target_os = "windows")]
@@ -1281,6 +1481,32 @@ impl WindowsCertStore {
             deleted += 1;
         }
     }
+
+    fn contains_subject(&self, subject: &str) -> Result<bool> {
+        use windows_sys::Win32::Security::Cryptography::{
+            CertFindCertificateInStore, CertFreeCertificateContext, CERT_FIND_SUBJECT_STR_W,
+            PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
+        };
+
+        let subject_wide = wide_null(subject);
+        let context = unsafe {
+            CertFindCertificateInStore(
+                self.0,
+                X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                0,
+                CERT_FIND_SUBJECT_STR_W,
+                subject_wide.as_ptr().cast(),
+                std::ptr::null(),
+            )
+        };
+        if context.is_null() {
+            return Ok(false);
+        }
+        unsafe {
+            CertFreeCertificateContext(context);
+        }
+        Ok(true)
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1297,6 +1523,27 @@ fn wide_null(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn certutil_list_args(db_dir: &Path) -> Vec<String> {
+    vec![
+        "-L".to_string(),
+        "-d".to_string(),
+        format!("sql:{}", db_dir.display()),
+    ]
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn run_certutil_output(
+    program: &str,
+    args: &[String],
+) -> Result<std::process::Output> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .with_context(|| format!("spawn {program}"))?;
+    Ok(output)
+}
+
 // ---------------------------------------------------------------------------
 // Unsupported platforms
 // ---------------------------------------------------------------------------
@@ -1310,6 +1557,11 @@ fn install_impl(_ca_cert_path: &Path) -> Result<()> {
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn uninstall_impl() -> Result<()> {
     Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn verify_installation_impl(_ca_cert_path: &Path) -> Result<TrustVerificationReport> {
+    Ok(TrustVerificationReport::default())
 }
 
 // ---------------------------------------------------------------------------
