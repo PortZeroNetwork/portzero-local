@@ -55,7 +55,7 @@ pub fn is_local_overlay_domain(name: &str) -> bool {
     n.ends_with(".portzero.local") || n == "portzero.local" || n.ends_with(".local")
 }
 
-/// Extract the label for the overlay from a full name like "my-db.portzero.local".
+/// Extract the name for the overlay from a full name like "my-db.portzero.local".
 /// The input must already be a full domain (no implicit suffix added by us).
 pub fn extract_local_label(name: &str) -> String {
     let n = name.trim().to_ascii_lowercase();
@@ -63,8 +63,7 @@ pub fn extract_local_label(name: &str) -> String {
         .strip_suffix(".portzero.local")
         .or_else(|| n.strip_suffix(".local"))
         .unwrap_or(&n);
-    let label = core.split('.').next().unwrap_or(core);
-    sanitize_network_name(label)
+    sanitize_network_name(core)
 }
 
 // ---------------------------------------------------------------------------
@@ -1705,8 +1704,9 @@ fn find_host_project_dir_for_container(mounts_json: &str, labels_json: &str) -> 
 /// A service discovered for the local virtual overlay network.
 #[derive(Debug, Clone)]
 pub struct DiscoveredNetworkService {
-    /// The label extracted from the PZ_TUNNEL value (e.g. "my-db"
-    /// from "my-db.portzero.local").
+    /// The local overlay name extracted from the PZ_TUNNEL value (e.g. "my-db"
+    /// from "my-db.portzero.local", or "staging.portzero.net" from
+    /// "staging.portzero.net.portzero.local").
     pub name: String,
     /// The actual host address we must proxy to (usually 127.0.0.1:random).
     pub real_addr: std::net::SocketAddr,
@@ -2504,22 +2504,27 @@ fn parse_docker_port_mapping(ports_json: &str) -> Option<(u16, u16)> {
 }
 
 fn sanitize_network_name(raw: &str) -> String {
-    // Allow only dns-safe simple labels for the network name.
-    raw.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
+    raw.split('.')
+        .filter_map(|label| {
+            let sanitized = label
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' {
+                        c
+                    } else {
+                        '-'
+                    }
+                })
+                .collect::<String>()
+                .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_ascii_lowercase()
+                .chars()
+                .take(63)
+                .collect::<String>();
+            (!sanitized.is_empty()).then_some(sanitized)
         })
-        .collect::<String>()
-        .trim_matches(|c: char| !c.is_ascii_alphanumeric())
-        .to_string()
-        .to_lowercase()
-        .chars()
-        .take(63)
-        .collect()
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 fn command_on_path(program: &str) -> bool {
@@ -3109,6 +3114,22 @@ mod tests {
         assert_eq!(
             substitutions.get("worktree").map(String::as_str),
             Some("unknown")
+        );
+    }
+
+    #[test]
+    fn test_extract_local_label_preserves_multi_label_prefix() {
+        assert_eq!(
+            extract_local_label("staging.portzero.net.portzero.local"),
+            "staging.portzero.net"
+        );
+        assert_eq!(
+            extract_local_label("Staging.PortZero.Net.PortZero.Local"),
+            "staging.portzero.net"
+        );
+        assert_eq!(
+            extract_local_label("bad_label.example.portzero.local"),
+            "bad-label.example"
         );
     }
 

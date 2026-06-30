@@ -259,7 +259,7 @@ fn reserve_unresolved_overlay_queries(
             && resolve_name_to_vip(q.name(), services).is_none()
         {
             if let Some(label) = service_label(q.name()) {
-                services.reserve_name_on_port(label, 80, hold_connections);
+                services.reserve_name_on_port(&label, 80, hold_connections);
                 reserved = true;
             }
         }
@@ -372,20 +372,8 @@ fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<Ipv4Addr>
         return Some(API_MANAGEMENT_VIP);
     }
 
-    // Expect something like ["my-db", "portzero", "local"]
-    if labels.len() < 3 {
-        return None;
-    }
-
-    // The left-most label is our service name.
-    let candidate = labels[0];
-
-    // Must be under portzero.local
-    if labels.len() >= 3
-        && labels[labels.len() - 2] == "portzero"
-        && labels[labels.len() - 1] == "local"
-    {
-        return services.assigned_vip(candidate).map(|vip| {
+    if let Some(candidate) = service_label(name) {
+        return services.assigned_vip(&candidate).map(|vip| {
             // smoltcp Ipv4Address can be converted via its Display or as_bytes in 0.11
             let b: [u8; 4] = vip.0;
             std::net::Ipv4Addr::new(b[0], b[1], b[2], b[3])
@@ -395,7 +383,7 @@ fn resolve_name_to_vip(name: &Name, services: &ServiceTable) -> Option<Ipv4Addr>
     None
 }
 
-fn service_label(name: &Name) -> Option<&str> {
+fn service_label(name: &Name) -> Option<String> {
     let labels: Vec<_> = name
         .iter()
         .map(|l| std::str::from_utf8(l).unwrap_or(""))
@@ -403,10 +391,13 @@ fn service_label(name: &Name) -> Option<&str> {
     if labels.len() >= 3
         && labels[labels.len() - 2] == "portzero"
         && labels[labels.len() - 1] == "local"
-        && labels[0] != "portzero"
-        && labels[0] != "api"
     {
-        Some(labels[0])
+        let prefix = labels[..labels.len() - 2]
+            .iter()
+            .map(|label| label.to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(".");
+        (!prefix.is_empty()).then_some(prefix)
     } else {
         None
     }
@@ -448,6 +439,14 @@ mod tests {
             1234,
         );
         t
+    }
+
+    fn first_a_record(resp: &[u8]) -> Option<Ipv4Addr> {
+        let msg = Message::from_bytes(resp).unwrap();
+        msg.answers().iter().find_map(|r| match r.data() {
+            Some(RData::A(ip)) => Some(Ipv4Addr::from(*ip)),
+            _ => None,
+        })
     }
 
     #[test]
@@ -511,6 +510,95 @@ mod tests {
         );
     }
 
+    #[test]
+    fn multi_label_subdomain_resolves_by_full_prefix() {
+        let mut table = ServiceTable::new();
+        let nested = table.register(
+            "staging.portzero.net".to_string(),
+            "127.0.0.1:9000".parse().unwrap(),
+            80,
+            1234,
+        );
+        let short = table.register(
+            "staging".to_string(),
+            "127.0.0.1:9001".parse().unwrap(),
+            80,
+            1235,
+        );
+
+        let nested_resp = handle_query_with_services(
+            &a_query_bytes("staging.portzero.net.portzero.local."),
+            &table,
+        )
+        .expect("nested response");
+        let short_resp =
+            handle_query_with_services(&a_query_bytes("staging.portzero.local."), &table)
+                .expect("short response");
+
+        let nested_ip = first_a_record(&nested_resp).expect("nested A record");
+        let short_ip = first_a_record(&short_resp).expect("short A record");
+        assert_eq!(nested_ip.octets(), nested.vip.0);
+        assert_eq!(short_ip.octets(), short.vip.0);
+        assert_ne!(nested_ip, short_ip);
+    }
+
+    #[test]
+    fn unresolved_overlay_query_uses_full_prefix_before_zone() {
+        let mut table = ServiceTable::new();
+        table.register(
+            "staging".to_string(),
+            "127.0.0.1:9001".parse().unwrap(),
+            80,
+            1235,
+        );
+
+        assert!(has_unresolved_overlay_query(
+            &a_query_bytes("staging.portzero.net.portzero.local."),
+            &table
+        ));
+
+        table.register(
+            "staging.portzero.net".to_string(),
+            "127.0.0.1:9000".parse().unwrap(),
+            80,
+            1234,
+        );
+        assert!(!has_unresolved_overlay_query(
+            &a_query_bytes("staging.portzero.net.portzero.local."),
+            &table
+        ));
+    }
+
+    #[test]
+    fn management_names_resolve_to_reserved_vips_even_if_registered() {
+        let mut table = ServiceTable::new();
+        let service = table.register(
+            "api".to_string(),
+            "127.0.0.1:9001".parse().unwrap(),
+            80,
+            1235,
+        );
+
+        let root_resp = handle_query_with_services(&a_query_bytes("portzero.local."), &table)
+            .expect("management response");
+        let api_resp = handle_query_with_services(&a_query_bytes("api.portzero.local."), &table)
+            .expect("api response");
+        let user_resp =
+            handle_query_with_services(&a_query_bytes("api.foo.portzero.local."), &table)
+                .expect("user response");
+
+        assert_eq!(first_a_record(&root_resp), Some(MANAGEMENT_VIP));
+        assert_eq!(first_a_record(&api_resp), Some(API_MANAGEMENT_VIP));
+        assert_ne!(
+            first_a_record(&api_resp),
+            Some(Ipv4Addr::from(service.vip.0))
+        );
+        assert_eq!(
+            Message::from_bytes(&user_resp).unwrap().response_code(),
+            ResponseCode::NXDomain
+        );
+    }
+
     #[tokio::test]
     async fn proactive_first_hit_reserves_and_answers_vip() {
         let services = Arc::new(RwLock::new(ServiceTable::new()));
@@ -533,5 +621,23 @@ mod tests {
         let guard = services.read().await;
         assert!(guard.get("fresh").is_none());
         assert!(guard.assigned_vip("fresh").is_some());
+    }
+
+    #[tokio::test]
+    async fn proactive_first_hit_reserves_full_prefix() {
+        let services = Arc::new(RwLock::new(ServiceTable::new()));
+        let server = OverlayDnsServer::new(services.clone(), "127.0.0.1:0".parse().unwrap())
+            .with_first_hit_policy(DnsFirstHitPolicy::ProactiveVip);
+
+        let resp = server
+            .handle_query(&a_query_bytes("staging.portzero.net.portzero.local."))
+            .await
+            .expect("response");
+        let msg = Message::from_bytes(&resp).unwrap();
+        assert_eq!(msg.response_code(), ResponseCode::NoError);
+
+        let guard = services.read().await;
+        assert!(guard.assigned_vip("staging").is_none());
+        assert!(guard.assigned_vip("staging.portzero.net").is_some());
     }
 }

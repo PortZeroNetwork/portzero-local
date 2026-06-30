@@ -1373,6 +1373,10 @@ mod tests {
             Some("https://web.portzero.local")
         );
         assert_eq!(
+            local_service_link_url("staging.portzero.net.portzero.local", 443).as_deref(),
+            Some("https://staging.portzero.net.portzero.local")
+        );
+        assert_eq!(
             local_service_link_url("api.portzero.local", 443).as_deref(),
             Some("https://api.portzero.local")
         );
@@ -1472,18 +1476,18 @@ mod tests {
         for row in local_services.iter().chain(cloud_routes.iter()) {
             let alerts = row.get("alerts").and_then(|v| v.as_array()).unwrap();
             assert_eq!(alerts.len(), 1);
-        assert_eq!(
-            alerts[0].get("title").and_then(|v| v.as_str()),
-            Some("Duplicate tunnel domain")
-        );
-        assert_eq!(
-            alerts[0].get("severity").and_then(|v| v.as_str()),
-            Some("warning")
-        );
-        assert!(alerts[0]
-            .get("detail")
-            .and_then(|v| v.as_str())
-            .unwrap()
+            assert_eq!(
+                alerts[0].get("title").and_then(|v| v.as_str()),
+                Some("Duplicate tunnel domain")
+            );
+            assert_eq!(
+                alerts[0].get("severity").and_then(|v| v.as_str()),
+                Some("warning")
+            );
+            assert!(alerts[0]
+                .get("detail")
+                .and_then(|v| v.as_str())
+                .unwrap()
                 .contains("3 tunnels materialized to api.portzero.local"));
         }
     }

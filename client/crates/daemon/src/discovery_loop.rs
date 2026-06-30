@@ -1508,6 +1508,70 @@ mod tests {
     }
 
     #[test]
+    fn test_build_overlay_table_keeps_multi_label_names_distinct() {
+        use crate::discovery::{DiscoveredNetworkService, ServiceSource};
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+        let services = vec![
+            DiscoveredNetworkService {
+                name: "staging.portzero.net".to_string(),
+                domain_template: "staging.portzero.net.portzero.local".to_string(),
+                substitutions: Default::default(),
+                real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 32768),
+                service_port: 443,
+                backend_protocol: None,
+                pid: 100,
+                source: ServiceSource::Process { cwd: None },
+            },
+            DiscoveredNetworkService {
+                name: "staging".to_string(),
+                domain_template: "staging.portzero.local".to_string(),
+                substitutions: Default::default(),
+                real_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 41000),
+                service_port: 443,
+                backend_protocol: None,
+                pid: 101,
+                source: ServiceSource::Process { cwd: None },
+            },
+        ];
+
+        let table = build_overlay_table(&services, 0);
+        let nested = table
+            .get("staging.portzero.net")
+            .expect("nested service registered");
+        let short = table.get("staging").expect("short service registered");
+        assert_ne!(nested.vip, short.vip);
+    }
+
+    #[test]
+    fn test_write_overlay_state_preserves_multi_label_domain() {
+        use crate::discovery::{DiscoveredNetworkService, ServiceSource};
+        use crate::route_table::OverlayState;
+
+        let (config, _dir) = temp_config();
+        let services = vec![DiscoveredNetworkService {
+            name: "staging.portzero.net".to_string(),
+            domain_template: "staging.portzero.net.portzero.local".to_string(),
+            substitutions: Default::default(),
+            real_addr: "127.0.0.1:32768".parse().unwrap(),
+            service_port: 443,
+            backend_protocol: None,
+            pid: 100,
+            source: ServiceSource::Process { cwd: None },
+        }];
+
+        write_overlay_state(&config, &services, true);
+
+        let state = OverlayState::load(&config.overlay_path()).expect("overlay state");
+        assert!(state.overlay_active);
+        assert_eq!(state.routes.len(), 1);
+        assert_eq!(
+            state.routes[0].domain,
+            "staging.portzero.net.portzero.local"
+        );
+    }
+
+    #[test]
     fn test_build_overlay_table_empty() {
         let table = build_overlay_table(&[], 0);
         assert!(table.is_empty());

@@ -259,4 +259,32 @@ mod tests {
         assert!(table.pending_ports().collect::<Vec<_>>().is_empty());
         assert!(!table.should_hold_pending_connection(pending_vip));
     }
+
+    #[test]
+    fn full_local_domain_prefixes_are_distinct_keys() {
+        let mut table = ServiceTable::new();
+        let nested = table.register(
+            "staging.portzero.net".to_string(),
+            "127.0.0.1:9000".parse().unwrap(),
+            443,
+            100,
+        );
+        let short = table.register(
+            "staging".to_string(),
+            "127.0.0.1:9001".parse().unwrap(),
+            443,
+            101,
+        );
+
+        assert_eq!(table.len(), 2);
+        assert_eq!(
+            table.get("staging.portzero.net").map(|svc| svc.real_addr),
+            Some("127.0.0.1:9000".parse().unwrap())
+        );
+        assert_eq!(
+            table.get("staging").map(|svc| svc.real_addr),
+            Some("127.0.0.1:9001".parse().unwrap())
+        );
+        assert_ne!(nested.vip, short.vip);
+    }
 }
