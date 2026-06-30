@@ -395,10 +395,12 @@ fn nss_db_contains_ca(certutil: &Path, db_dir: &Path) -> bool {
     let program = certutil.to_string_lossy().to_string();
     let args = certutil_list_args(db_dir);
     run_certutil_output(&program, &args)
-        .map(|output| output.status.success() && {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            stdout.contains(CERT_NICKNAME) || stderr.contains(CERT_NICKNAME)
+        .map(|output| {
+            output.status.success() && {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                stdout.contains(CERT_NICKNAME) || stderr.contains(CERT_NICKNAME)
+            }
         })
         .unwrap_or(false)
 }
@@ -1533,10 +1535,7 @@ fn certutil_list_args(db_dir: &Path) -> Vec<String> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn run_certutil_output(
-    program: &str,
-    args: &[String],
-) -> Result<std::process::Output> {
+fn run_certutil_output(program: &str, args: &[String]) -> Result<std::process::Output> {
     let output = std::process::Command::new(program)
         .args(args)
         .output()

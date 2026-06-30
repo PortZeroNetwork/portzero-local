@@ -80,7 +80,6 @@ impl ApiClient {
 
         Ok(resp)
     }
-
 }
 
 #[cfg(test)]

@@ -693,9 +693,7 @@ fn check_local_ca_trust_installation() -> Option<Diagnostic> {
     let report = match trust::verify_installation(&ca_path) {
         Ok(report) => report,
         Err(e) => {
-            tracing::warn!(
-                "check_local_ca_trust_installation: trust verification failed: {e:#}"
-            );
+            tracing::warn!("check_local_ca_trust_installation: trust verification failed: {e:#}");
             return Some(Diagnostic {
                 id: "ca_trust_verification_failed".into(),
                 severity: Severity::Warning,
@@ -709,7 +707,9 @@ fn check_local_ca_trust_installation() -> Option<Diagnostic> {
                     kind: FixKind::Manual,
                     description: "Run `portzero trust generate && portzero trust install` again."
                         .to_string(),
-                    command: Some("portzero trust generate && sudo portzero trust install".to_string()),
+                    command: Some(
+                        "portzero trust generate && sudo portzero trust install".to_string(),
+                    ),
                 }),
             });
         }

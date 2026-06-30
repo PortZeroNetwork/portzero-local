@@ -14,6 +14,15 @@ use crate::management::port_verify;
 use crate::management::server::{AppState, PortRegistration};
 use crate::route_table::{OverlayState, RouteTable};
 
+const PORTZERO_MARK_JPEG: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/management/assets/portzero-mark.jpg"
+));
+const PORTZERO_WORDMARK_JPEG: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/management/assets/portzero-wordmark.jpg"
+));
+
 // ─── Request / response types ────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -470,6 +479,16 @@ pub async fn start_login() -> impl IntoResponse {
     }
 }
 
+/// GET /assets/portzero-mark.jpg — favicon and compact brand mark.
+pub async fn portzero_mark_asset() -> impl IntoResponse {
+    ([("content-type", "image/jpeg")], PORTZERO_MARK_JPEG)
+}
+
+/// GET /assets/portzero-wordmark.jpg — full PortZero wordmark.
+pub async fn portzero_wordmark_asset() -> impl IntoResponse {
+    ([("content-type", "image/jpeg")], PORTZERO_WORDMARK_JPEG)
+}
+
 /// GET /openapi.json — read-only OpenAPI document for local process clients.
 pub async fn openapi_json() -> impl IntoResponse {
     ([("content-type", "application/json")], OPENAPI_SPEC_JSON)
@@ -704,7 +723,9 @@ const STATUS_UI_HTML: &str = r##"<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>portzero.local</title>
+<title>PortZero Local</title>
+<link rel="icon" type="image/jpeg" href="/assets/portzero-mark.jpg">
+<link rel="apple-touch-icon" href="/assets/portzero-mark.jpg">
 <style>
 :root{color-scheme:light dark;--bg:#fdfdfd;--fg:#1f2328;--muted:#6b7280;--soft:#f3f4f6;--line:#e5e7eb;--accent:#2563eb;--accent-soft:#dbeafe;--ok:#16833a;--warn:#a16207;--bad:#c2410c;--code:#111827;--code-fg:#f9fafb}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e5e7eb;--muted:#9ca3af;--soft:#171a21;--line:#2b303b;--accent:#7dd3fc;--accent-soft:#102a3a;--ok:#86efac;--warn:#facc15;--bad:#fb923c;--code:#05070a;--code-fg:#f3f4f6}}
@@ -717,10 +738,12 @@ code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .shell{width:min(100% - 32px,1120px);margin:0 auto}
 .topbar{position:sticky;top:0;z-index:3;background:color-mix(in srgb,var(--bg) 90%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
 .nav{display:flex;align-items:center;gap:18px;min-height:62px}
-.brand{font-size:18px;font-weight:800}
+.brand{display:inline-flex;align-items:center;gap:12px;font-size:18px;font-weight:800}
+.brand img{display:block;height:28px;width:auto}
 .navlinks{display:flex;gap:14px;margin-left:auto;color:var(--muted);font-size:14px}
 .meta{color:var(--muted);font-size:13px;white-space:nowrap}
-.hero{padding:58px 0 24px}
+.hero{padding:58px 0 24px;display:grid;gap:18px}
+.hero-brand{max-width:620px;width:100%;height:auto;display:block}
 .eyebrow{color:var(--accent);font-size:13px;font-weight:700;margin:0 0 10px}
 h1{font-size:clamp(34px,6vw,64px);line-height:1.05;margin:0 0 18px;max-width:760px}
 .lede{max-width:680px;color:var(--muted);font-size:19px;margin:0}
@@ -782,6 +805,8 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
 .api-note{color:var(--muted);margin:0 0 14px}
 .spec-block{max-height:520px;overflow:auto;background:var(--code);color:var(--code-fg);border-radius:8px;padding:14px;font-size:12px;line-height:1.5}
 .spec-block code{white-space:pre}
+@media (prefers-reduced-motion:no-preference){.hero-brand,.brand img{animation:fade-in .45s ease-out both}}
+@keyframes fade-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @media (max-width:760px){.nav{align-items:flex-start;flex-direction:column;gap:6px;padding:12px 0}.navlinks{margin-left:0;flex-wrap:wrap}.hero{padding-top:36px}.examples,.status-grid{grid-template-columns:1fr}.section-head{display:block}.step{grid-template-columns:1fr}.num{margin-bottom:4px}}
 @media (max-width:860px){.endpoint-grid{grid-template-columns:1fr}}
 </style>
@@ -789,7 +814,10 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
 <body>
 <header class="topbar">
   <nav class="shell nav" aria-label="Main">
-    <a class="brand" href="/">portzero.local</a>
+    <a class="brand" href="/">
+      <img src="/assets/portzero-mark.jpg" alt="" aria-hidden="true">
+      <span>PortZero</span>
+    </a>
     <div class="navlinks">
       <a href="#getting-started">Getting Started</a>
       <a href="#api">API</a>
@@ -802,6 +830,7 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
 </header>
 <main class="shell">
   <section class="hero" id="getting-started">
+    <img class="hero-brand" src="/assets/portzero-wordmark.jpg" alt="PortZero">
     <p class="eyebrow">Local developer guide</p>
     <h1>Getting Started</h1>
     <p class="lede">Use <code>portzero.local</code> for the local dashboard. Local processes should call the management API at <code>http://api.portzero.local</code>.</p>

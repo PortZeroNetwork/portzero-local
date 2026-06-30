@@ -495,11 +495,9 @@ mod tests {
             username: Some("alice".to_string()),
         };
 
-        let result = ctx.resolve("{service}-{project}-{branch}-{user}-{uid}.{username}.portzero.cloud");
-        assert_eq!(
-            result,
-            "api-myapp-main-alice-abc12345.alice.portzero.cloud"
-        );
+        let result =
+            ctx.resolve("{service}-{project}-{branch}-{user}-{uid}.{username}.portzero.cloud");
+        assert_eq!(result, "api-myapp-main-alice-abc12345.alice.portzero.cloud");
     }
 
     #[test]

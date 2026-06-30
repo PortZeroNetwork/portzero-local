@@ -471,9 +471,7 @@ mod tests {
     #[tokio::test]
     async fn test_unregister_route_not_connected() {
         let conn = CloudConnector::new("tok_test".to_string());
-        let result = conn
-            .unregister_route("api-test.alice.portzero.cloud")
-            .await;
+        let result = conn.unregister_route("api-test.alice.portzero.cloud").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Not connected"));
     }

@@ -88,6 +88,14 @@ fn build_router(state: AppState) -> Router {
         // Status UI (served at portzero.local)
         .route("/", routing::get(handlers::status_ui))
         .route("/login", routing::get(handlers::start_login))
+        .route(
+            "/assets/portzero-mark.jpg",
+            routing::get(handlers::portzero_mark_asset),
+        )
+        .route(
+            "/assets/portzero-wordmark.jpg",
+            routing::get(handlers::portzero_wordmark_asset),
+        )
         .route("/openapi.json", routing::get(handlers::openapi_json))
         .route("/status.json", routing::get(handlers::status_json))
         .with_state(state)
