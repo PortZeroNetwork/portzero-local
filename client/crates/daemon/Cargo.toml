@@ -44,10 +44,15 @@ tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 tracing = "0.1"
 tun = { version = "0.6", features = ["async"] }
+utoipa = { version = "5", features = ["yaml"] }
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Diagnostics_Debug", "Win32_System_Threading"] }
+
+[[bin]]
+name = "generate-openapi"
+path = "src/bin/generate_openapi.rs"
 
 [dev-dependencies]
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }

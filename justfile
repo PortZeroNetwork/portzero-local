@@ -309,6 +309,18 @@ check:
     $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
     cargo check --workspace
 
+# Regenerate api/management-v1.yaml from the utoipa annotations on the
+# management API handlers (client/crates/daemon/src/management). CI runs this
+# and fails if the checked-in file has drifted, so the spec can't go stale.
+[unix]
+openapi:
+    CARGO_TARGET_DIR=/private/tmp/portzero-target cargo run -p portzero-daemon --bin generate-openapi
+
+[windows]
+openapi:
+    $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
+    cargo run -p portzero-daemon --bin generate-openapi
+
 # Run the unprivileged local checks from the main CI job.
 # Recommended before pushing. Follow with `just e2e` for current-OS CI parity.
 # This still does not cover the other CI operating systems or release packaging.

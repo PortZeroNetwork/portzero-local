@@ -12,9 +12,17 @@ use tokio::sync::RwLock;
 use crate::management::handlers;
 
 /// A single port registration entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PortRegistration {
+    /// The local TCP port this process is listening on. The daemon verifies
+    /// the calling PID is actually bound to this port before accepting the
+    /// registration.
+    #[schema(minimum = 1, example = 8080)]
     pub local_port: u16,
+    /// Full domain name to map to this port. Accepted patterns:
+    /// `*.portzero.local` for local overlay-only resolution, or
+    /// `*.<username>.portzero.cloud` for a cloud-proxied tunnel domain.
+    #[schema(examples("api.alice.portzero.cloud", "myservice.portzero.local"))]
     pub domain: String,
 }
 

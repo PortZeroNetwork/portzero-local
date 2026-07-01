@@ -8,6 +8,7 @@ use axum::response::Redirect;
 use axum::response::{Html, IntoResponse};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::management::pid_lookup;
 use crate::management::port_verify;
@@ -25,32 +26,49 @@ const PORTZERO_WORDMARK_JPEG: &[u8] = include_bytes!(concat!(
 
 // ─── Request / response types ────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct RegisterRequest {
+    /// One or more port→domain mappings to register. All existing
+    /// registrations for this PID are replaced atomically.
+    #[schema(min_items = 1)]
     pub ports: Vec<PortRegistration>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RegisterResponse {
+    /// PID the daemon resolved from the connection's TCP source port.
+    #[schema(example = 12345)]
     pid: u32,
+    /// Number of port→domain mappings that were successfully stored.
+    #[schema(example = 2)]
     registered: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DeregisterResponse {
+    /// PID the daemon resolved from the connection's TCP source port.
+    #[schema(example = 12345)]
     pid: u32,
+    /// Always `true` on a 200 response.
+    #[schema(example = true)]
     deregistered: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct StatusResponse {
+    /// PID the daemon resolved from the connection's TCP source port.
+    #[schema(example = 12345)]
     pid: u32,
+    /// Port→domain mappings currently registered for this process.
     ports: Vec<PortRegistration>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorResponse {
+    /// Machine-readable error code.
+    #[schema(examples("caller_unidentifiable", "port_not_listening", "not_registered"))]
     error: &'static str,
+    /// Human-readable message with additional detail.
     detail: String,
 }
 
@@ -362,6 +380,37 @@ fn add_duplicate_route_alerts(
 // ─── Management API handlers ──────────────────────────────────────────────────
 
 /// POST /v1/register — register a list of ports for the calling process.
+#[utoipa::path(
+    post,
+    path = "/v1/register",
+    operation_id = "registerPorts",
+    tag = "management",
+    summary = "Register (or replace) port→domain mappings for this process",
+    description = "Registers one or more `local_port` → `domain` mappings for the calling \
+        process. If the process already has registrations they are **replaced** \
+        atomically by this call.\n\n\
+        The daemon resolves the caller's PID from the TCP source port of this \
+        connection, then verifies that the PID is listening on every \
+        `local_port` listed. Any port that fails verification causes the entire \
+        request to be rejected.",
+    request_body(
+        content = RegisterRequest,
+        example = json!({
+            "ports": [
+                {"local_port": 8080, "domain": "api.alice.portzero.cloud"},
+                {"local_port": 9090, "domain": "metrics.alice.portzero.cloud"}
+            ]
+        })
+    ),
+    responses(
+        (status = 200, description = "Mappings registered successfully", body = RegisterResponse,
+            example = json!({"pid": 12345, "registered": 2})),
+        (status = 422, description = "One or more claimed ports could not be verified", body = ErrorResponse,
+            example = json!({"error": "port_not_listening", "detail": "PID 12345 is not listening on port 8080"})),
+        (status = 500, description = "Daemon could not identify the calling process", body = ErrorResponse,
+            example = json!({"error": "caller_unidentifiable", "detail": "could not resolve source port 54321 to a PID"}))
+    )
+)]
 pub async fn register(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -400,6 +449,25 @@ pub async fn register(
 }
 
 /// DELETE /v1/register — remove the registration for the calling process.
+#[utoipa::path(
+    delete,
+    path = "/v1/register",
+    operation_id = "deregisterPorts",
+    tag = "management",
+    summary = "Deregister all port→domain mappings for this process",
+    description = "Removes all port→domain mappings previously registered by the calling \
+        process. The daemon also performs automatic deregistration when it \
+        detects that a PID has exited, so explicit deregistration on graceful \
+        shutdown is optional but recommended.",
+    responses(
+        (status = 200, description = "Mappings deregistered successfully", body = DeregisterResponse,
+            example = json!({"pid": 12345, "deregistered": true})),
+        (status = 404, description = "No registrations found for this process", body = ErrorResponse,
+            example = json!({"error": "not_registered", "detail": "PID 12345 has no active registration"})),
+        (status = 500, description = "Daemon could not identify the calling process", body = ErrorResponse,
+            example = json!({"error": "caller_unidentifiable", "detail": "could not resolve source port 54321 to a PID"}))
+    )
+)]
 pub async fn deregister(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -428,6 +496,29 @@ pub async fn deregister(
 }
 
 /// GET /v1/status — return the current registration for the calling process.
+#[utoipa::path(
+    get,
+    path = "/v1/status",
+    operation_id = "getStatus",
+    tag = "management",
+    summary = "Return current port→domain registrations for this process",
+    description = "Returns the port→domain mappings currently registered for the calling \
+        process. If the process has no active registrations, `404` is returned.",
+    responses(
+        (status = 200, description = "Current registrations for this process", body = StatusResponse,
+            example = json!({
+                "pid": 12345,
+                "ports": [
+                    {"local_port": 8080, "domain": "api.alice.portzero.cloud"},
+                    {"local_port": 9090, "domain": "metrics.alice.portzero.cloud"}
+                ]
+            })),
+        (status = 404, description = "No registrations found for this process", body = ErrorResponse,
+            example = json!({"error": "not_registered", "detail": "PID 12345 has no active registration"})),
+        (status = 500, description = "Daemon could not identify the calling process", body = ErrorResponse,
+            example = json!({"error": "caller_unidentifiable", "detail": "could not resolve source port 54321 to a PID"}))
+    )
+)]
 pub async fn status(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -491,232 +582,12 @@ pub async fn portzero_wordmark_asset() -> impl IntoResponse {
 
 /// GET /openapi.json — read-only OpenAPI document for local process clients.
 pub async fn openapi_json() -> impl IntoResponse {
-    ([("content-type", "application/json")], OPENAPI_SPEC_JSON)
+    use utoipa::OpenApi;
+    let spec = crate::management::openapi::ManagementApiDoc::openapi()
+        .to_pretty_json()
+        .unwrap_or_default();
+    ([("content-type", "application/json")], spec)
 }
-
-const OPENAPI_SPEC_JSON: &str = r##"{
-  "openapi": "3.1.0",
-  "info": {
-    "title": "PortZero Local Management API",
-    "version": "1.0.0",
-    "description": "Local process API served by the PortZero daemon. This API is intended for local processes that are listening on ports, not for browser-origin request forwarding."
-  },
-  "servers": [
-    {
-      "url": "http://api.portzero.local",
-      "description": "PortZero local management API"
-    }
-  ],
-  "paths": {
-    "/v1/register": {
-      "post": {
-        "summary": "Register local ports for the calling process",
-        "description": "Registers one or more local port/domain mappings for the process that opened the TCP connection. Each call replaces any prior registration for that process.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegisterRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Ports registered",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RegisterResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "The caller is not listening on a requested port",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The daemon could not identify the calling process",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "summary": "Remove registrations for the calling process",
-        "responses": {
-          "200": {
-            "description": "Registration removed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeregisterResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No active registration exists for the caller",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The daemon could not identify the calling process",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/status": {
-      "get": {
-        "summary": "Return registration state for the calling process",
-        "responses": {
-          "200": {
-            "description": "Current registration for the caller",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StatusResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No active registration exists for the caller",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The daemon could not identify the calling process",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "PortRegistration": {
-        "type": "object",
-        "required": ["local_port", "domain"],
-        "properties": {
-          "local_port": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535,
-            "example": 3000
-          },
-          "domain": {
-            "type": "string",
-            "example": "web.portzero.local"
-          }
-        }
-      },
-      "RegisterRequest": {
-        "type": "object",
-        "required": ["ports"],
-        "properties": {
-          "ports": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PortRegistration"
-            }
-          }
-        }
-      },
-      "RegisterResponse": {
-        "type": "object",
-        "required": ["pid", "registered"],
-        "properties": {
-          "pid": {
-            "type": "integer",
-            "format": "uint32"
-          },
-          "registered": {
-            "type": "integer"
-          }
-        }
-      },
-      "DeregisterResponse": {
-        "type": "object",
-        "required": ["pid", "deregistered"],
-        "properties": {
-          "pid": {
-            "type": "integer",
-            "format": "uint32"
-          },
-          "deregistered": {
-            "type": "boolean"
-          }
-        }
-      },
-      "StatusResponse": {
-        "type": "object",
-        "required": ["pid", "ports"],
-        "properties": {
-          "pid": {
-            "type": "integer",
-            "format": "uint32"
-          },
-          "ports": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PortRegistration"
-            }
-          }
-        }
-      },
-      "ErrorResponse": {
-        "type": "object",
-        "required": ["error", "detail"],
-        "properties": {
-          "error": {
-            "type": "string",
-            "enum": ["caller_unidentifiable", "port_not_listening", "not_registered"]
-          },
-          "detail": {
-            "type": "string"
-          }
-        }
-      }
-    }
-  }
-}"##;
 
 const STATUS_UI_HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
@@ -893,229 +764,7 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
       </div>
       <div>
         <p class="api-note">OpenAPI 3.1 spec. The raw document is also available at <code>/openapi.json</code>.</p>
-        <pre class="spec-block" aria-label="OpenAPI specification"><code>{
-  "openapi": "3.1.0",
-  "info": {
-    "title": "PortZero Local Management API",
-    "version": "1.0.0",
-    "description": "Local process API served by the PortZero daemon. This API is intended for local processes that are listening on ports, not for browser-origin request forwarding."
-  },
-  "servers": [
-    {
-      "url": "http://api.portzero.local",
-      "description": "PortZero local management API"
-    }
-  ],
-  "paths": {
-    "/v1/register": {
-      "post": {
-        "summary": "Register local ports for the calling process",
-        "description": "Registers one or more local port/domain mappings for the process that opened the TCP connection. Each call replaces any prior registration for that process.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegisterRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Ports registered",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RegisterResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "The caller is not listening on a requested port",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The daemon could not identify the calling process",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "summary": "Remove registrations for the calling process",
-        "responses": {
-          "200": {
-            "description": "Registration removed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeregisterResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No active registration exists for the caller",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The daemon could not identify the calling process",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/status": {
-      "get": {
-        "summary": "Return registration state for the calling process",
-        "responses": {
-          "200": {
-            "description": "Current registration for the caller",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/StatusResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No active registration exists for the caller",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "The daemon could not identify the calling process",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "PortRegistration": {
-        "type": "object",
-        "required": ["local_port", "domain"],
-        "properties": {
-          "local_port": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535,
-            "example": 3000
-          },
-          "domain": {
-            "type": "string",
-            "example": "web.portzero.local"
-          }
-        }
-      },
-      "RegisterRequest": {
-        "type": "object",
-        "required": ["ports"],
-        "properties": {
-          "ports": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PortRegistration"
-            }
-          }
-        }
-      },
-      "RegisterResponse": {
-        "type": "object",
-        "required": ["pid", "registered"],
-        "properties": {
-          "pid": {
-            "type": "integer",
-            "format": "uint32"
-          },
-          "registered": {
-            "type": "integer"
-          }
-        }
-      },
-      "DeregisterResponse": {
-        "type": "object",
-        "required": ["pid", "deregistered"],
-        "properties": {
-          "pid": {
-            "type": "integer",
-            "format": "uint32"
-          },
-          "deregistered": {
-            "type": "boolean"
-          }
-        }
-      },
-      "StatusResponse": {
-        "type": "object",
-        "required": ["pid", "ports"],
-        "properties": {
-          "pid": {
-            "type": "integer",
-            "format": "uint32"
-          },
-          "ports": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PortRegistration"
-            }
-          }
-        }
-      },
-      "ErrorResponse": {
-        "type": "object",
-        "required": ["error", "detail"],
-        "properties": {
-          "error": {
-            "type": "string",
-            "enum": ["caller_unidentifiable", "port_not_listening", "not_registered"]
-          },
-          "detail": {
-            "type": "string"
-          }
-        }
-      }
-    }
-  }
-}</code></pre>
+        <pre class="spec-block" aria-label="OpenAPI specification"><code id="openapi-spec-code">Loading...</code></pre>
       </div>
     </div>
   </section>
@@ -1299,7 +948,16 @@ async function load(){
     document.getElementById('status-root').innerHTML='<p class="loading">Waiting for daemon...</p>';
   }
 }
+async function loadSpec(){
+  try{
+    const r=await fetch('/openapi.json');
+    if(r.ok) document.getElementById('openapi-spec-code').textContent=await r.text();
+  }catch(e){
+    // spec-block keeps its "Loading..." placeholder
+  }
+}
 load();
+loadSpec();
 setInterval(load,3000);
 </script>
 </body>

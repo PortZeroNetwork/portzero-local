@@ -34,6 +34,12 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
+      - name: OpenAPI spec is up to date (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          cargo run -p portzero-daemon --bin generate-openapi
+          git diff --exit-code api/management-v1.yaml
+
       - name: Ensure TUN device (Linux only)
         if: runner.os == 'Linux'
         run: |
