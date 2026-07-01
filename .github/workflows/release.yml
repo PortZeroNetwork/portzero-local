@@ -199,12 +199,49 @@ jobs:
             throw "VC++ redistributable version directory not found under $vsPath"
           }
 
-          $crtDir = Join-Path $redistVersionDir.FullName "x64\Microsoft.VC143.CRT"
-          if (-not (Test-Path $crtDir)) {
-            throw "VC++ x64 CRT redistributable directory not found: $crtDir"
+          Write-Host "VC++ redist root: $(Join-Path $vsPath 'VC\Redist\MSVC')"
+          Write-Host "Selected VC++ redist version directory: $($redistVersionDir.FullName)"
+          $x64Root = Join-Path $redistVersionDir.FullName "x64"
+          if (Test-Path $x64Root) {
+            Write-Host "x64 layout under $x64Root:"
+            Get-ChildItem -Path $x64Root -Force |
+              Select-Object Mode, Length, Name |
+              Format-Table -AutoSize |
+              Out-String -Width 200 |
+              Write-Host
+          } else {
+            Write-Host "x64 layout not found under $x64Root"
           }
 
-          Copy-Item (Join-Path $crtDir "*.dll") "$staging\" -Force
+          $requiredDlls = @(
+            "concrt140.dll",
+            "msvcp140.dll",
+            "msvcp140_1.dll",
+            "msvcp140_2.dll",
+            "msvcp140_atomic_wait.dll",
+            "msvcp140_codecvt_ids.dll",
+            "vccorlib140.dll",
+            "vcruntime140.dll",
+            "vcruntime140_1.dll",
+            "vcruntime140_threads.dll"
+          )
+
+          foreach ($dllName in $requiredDlls) {
+            $dll = Get-ChildItem `
+              -Path $redistVersionDir.FullName `
+              -Recurse `
+              -File `
+              -Filter $dllName |
+              Where-Object { $_.FullName -match '\\x64\\' } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+
+            if (-not $dll) {
+              throw "VC++ x64 redistributable DLL not found under $($redistVersionDir.FullName): $dllName"
+            }
+
+            Copy-Item $dll.FullName "$staging\" -Force
+          }
 
       - name: Azure login for Artifact Signing
         if: matrix.archive_ext == 'zip'
