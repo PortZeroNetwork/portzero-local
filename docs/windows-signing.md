@@ -1,8 +1,6 @@
 # Windows signing runbook
 
-This document tracks the Windows signing work needed for public Port Zero
-releases. It exists so the process can resume cleanly after Microsoft completes
-identity validation for Loum Technologies.
+This document tracks the Windows signing setup for public Port Zero releases.
 
 ## Current state
 
@@ -22,8 +20,10 @@ identity validation for Loum Technologies.
   instead of the nonexistent `daemon` subcommand.
 
 - Azure Artifact Signing is the chosen signing path.
-- A managed identity / signing identity has been started for Loum Technologies.
-- Next external blocker: wait for Microsoft identity validation to complete.
+- Loum Technologies has completed Microsoft identity validation.
+- The release workflow signs `portzero.exe` before creating the Windows ZIP,
+  then signs the MSI before generating the winget manifest and uploading
+  artifacts.
 
 ## Desired release flow
 
@@ -89,7 +89,7 @@ Azure role assignments may take several minutes to propagate.
 ## GitHub Actions values
 
 Prefer GitHub OIDC / Azure federated credentials over long-lived client secrets.
-Store these as GitHub Actions variables when the Azure resources are known:
+Store these as GitHub Actions variables:
 
 ```text
 AZURE_CLIENT_ID
@@ -105,6 +105,11 @@ The endpoint is region-specific, for example:
 ```text
 https://eus.codesigning.azure.net
 ```
+
+The Azure app registration used by GitHub Actions needs a federated credential
+for this repository and the release branch/ref used to publish releases. The
+release workflow grants `id-token: write`, authenticates with `azure/login`,
+and signs with `azure/artifact-signing-action`.
 
 ## Signing command shape
 

@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -173,6 +174,46 @@ jobs:
           Expand-Archive -Path "wintun.zip" -DestinationPath "wintun" -Force
           Copy-Item "wintun\wintun\bin\amd64\wintun.dll" "$staging\"
 
+      - name: Azure login for Artifact Signing
+        if: matrix.archive_ext == 'zip'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows EXE
+        if: matrix.archive_ext == 'zip'
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\${{ matrix.archive_name }}\portzero.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Windows EXE signature
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path ".\${{ matrix.archive_name }}\portzero.exe"
+          signtool verify /pa /v $exe.Path
+          if ($LASTEXITCODE -ne 0) {
+            throw "signtool failed to verify $($exe.Path)"
+          }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $exe.Path
+          if ($signature.Status -ne "Valid") {
+            throw "Invalid Authenticode signature for $($exe.Path): $($signature.Status)"
+          }
+
+      - name: Create Windows ZIP
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          $staging = "${{ matrix.archive_name }}"
           Compress-Archive -Path "$staging" -DestinationPath "$staging.zip"
 
       - name: Compute SHA256 (macOS)
@@ -247,6 +288,9 @@ jobs:
     name: Build Windows MSI
     needs: [version, build]
     runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v5
 
@@ -290,6 +334,43 @@ jobs:
           & $light.FullName `
             -out "portzero-${{ needs.version.outputs.version }}-x86_64.msi" `
             "portzero.wixobj"
+
+      - name: Azure login for Artifact Signing
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign MSI
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}
+          files-folder-filter: portzero-*.msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify MSI signature
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Filter "portzero-*.msi" | Select-Object -First 1
+          if (-not $msi) {
+            throw "MSI artifact not found after signing"
+          }
+
+          signtool verify /pa /v $msi.FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw "signtool failed to verify $($msi.FullName)"
+          }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $msi.FullName
+          if ($signature.Status -ne "Valid") {
+            throw "Invalid Authenticode signature for $($msi.FullName): $($signature.Status)"
+          }
 
       - name: Generate winget manifest
         shell: pwsh
