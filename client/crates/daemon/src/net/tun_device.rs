@@ -563,12 +563,21 @@ impl TunDevice {
                         // Retry also failed: degrade exactly as before by
                         // returning the ORIGINAL error.
                         Err(_) => {
-                            return Err(first_err)
-                                .context("failed to create TUN device (are you root?)");
+                            return Err(first_err).with_context(|| {
+                                format!(
+                                    "failed to create TUN device {requested_name} at {}/{} (are you root?)",
+                                    config.address, config.netmask
+                                )
+                            });
                         }
                     }
                 } else {
-                    return Err(first_err).context("failed to create TUN device (are you root?)");
+                    return Err(first_err).with_context(|| {
+                        format!(
+                            "failed to create TUN device {requested_name} at {}/{} (are you root?)",
+                            config.address, config.netmask
+                        )
+                    });
                 }
             }
         };

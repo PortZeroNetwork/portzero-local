@@ -481,14 +481,30 @@ async fn real_tun_overlay() {
     }
 
     use portzero_daemon::net::overlay::{OverlayConfig, OverlayNetwork};
+    use portzero_daemon::net::tun_device::TunConfig;
 
     println!("real_tun_overlay: bringing up real overlay");
 
     let result = tokio::time::timeout(TEST_TIMEOUT, async {
         // Use the embedded DNS on a high local port to avoid clashing with the
         // system resolver during the test.
+        let mut tun = TunConfig::default();
+        #[cfg(target_os = "windows")]
+        {
+            // Do not collide with the real daemon's default Wintun adapter
+            // (`deven0`). Wintun permits only one active session per adapter,
+            // and `just e2e` is commonly run while the daemon is installed.
+            tun.name = Some("portzero-e2e".to_string());
+            // Windows also rejects assigning the same static IPv4 address to
+            // two adapters. Keep this smoke test off the production overlay
+            // address so it can run while the installed daemon owns
+            // 10.254.0.1/16.
+            tun.address = Ipv4Addr::new(10, 253, 0, 1);
+        }
+
         let config = OverlayConfig {
             dns_listen: "127.0.0.1:53000".parse().unwrap(),
+            tun,
             ..Default::default()
         };
 

@@ -5,6 +5,8 @@
 //! in sync with services that set a full `*.portzero.local` name via PZ_TUNNEL.
 
 use std::net::{IpAddr, SocketAddr};
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -111,6 +113,8 @@ pub struct OverlayNetwork {
     services: Arc<RwLock<ServiceTable>>,
     stack: VirtualStack,
     dns_task: tokio::task::JoinHandle<()>,
+    #[cfg(target_os = "windows")]
+    dns_stop: Arc<AtomicBool>,
     /// Name of the overlay's TUN link (e.g. `deven0`). The scoped resolver is
     /// attached to this real link, so teardown must revert the same one.
     link_name: String,
@@ -182,8 +186,12 @@ impl OverlayNetwork {
         #[cfg(target_os = "windows")]
         let runtime = tokio::runtime::Handle::current();
         #[cfg(target_os = "windows")]
+        let dns_stop = Arc::new(AtomicBool::new(false));
+        #[cfg(target_os = "windows")]
+        let dns_stop_task = dns_stop.clone();
+        #[cfg(target_os = "windows")]
         let dns_task = tokio::task::spawn_blocking(move || {
-            if let Err(e) = dns_server.run_blocking(runtime) {
+            if let Err(e) = dns_server.run_blocking_until(runtime, dns_stop_task) {
                 tracing::error!("overlay DNS server exited: {}", e);
             }
         });
@@ -210,6 +218,8 @@ impl OverlayNetwork {
             services,
             stack,
             dns_task,
+            #[cfg(target_os = "windows")]
+            dns_stop,
             link_name,
             ca,
             dns_updated,
@@ -243,6 +253,8 @@ impl OverlayNetwork {
         }
 
         let _ = self.stack.shutdown().await;
+        #[cfg(target_os = "windows")]
+        self.dns_stop.store(true, Ordering::Relaxed);
         self.dns_task.abort();
     }
 }

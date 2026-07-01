@@ -9,6 +9,8 @@
 #[cfg(target_os = "windows")]
 use std::net::UdpSocket as StdUdpSocket;
 use std::net::{Ipv4Addr, SocketAddr};
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 #[cfg(target_os = "windows")]
 use std::time::Duration;
@@ -137,12 +139,18 @@ impl OverlayDnsServer {
     /// resolution once the resolver is configured.
     #[cfg(target_os = "windows")]
     pub fn run_blocking(self, runtime: Handle) -> Result<()> {
+        self.run_blocking_until(runtime, Arc::new(AtomicBool::new(false)))
+    }
+
+    /// Run the Windows blocking DNS loop until `stop` is set.
+    #[cfg(target_os = "windows")]
+    pub fn run_blocking_until(self, runtime: Handle, stop: Arc<AtomicBool>) -> Result<()> {
         let sock = StdUdpSocket::bind(self.listen_addr)?;
-        sock.set_read_timeout(Some(Duration::from_secs(30)))?;
+        sock.set_read_timeout(Some(Duration::from_millis(200)))?;
         tracing::info!("overlay DNS listening on {}", self.listen_addr);
 
         let mut buf = vec![0u8; 512];
-        loop {
+        while !stop.load(Ordering::Relaxed) {
             let (len, src) = match sock.recv_from(&mut buf) {
                 Ok(v) => v,
                 Err(e)
@@ -169,6 +177,8 @@ impl OverlayDnsServer {
                 tracing::debug!("DNS send error to {}: {}", src, e);
             }
         }
+        tracing::debug!("overlay DNS blocking loop exiting");
+        Ok(())
     }
 
     async fn handle_query(&self, data: &[u8]) -> Option<Vec<u8>> {
