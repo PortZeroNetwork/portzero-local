@@ -828,10 +828,7 @@ async fn probe_portzero_local_dns() -> Diagnostic {
         },
         Ok(Ok(addrs)) => {
             let ips = unique_ips(addrs.map(|addr| addr.ip()));
-            if ips
-                .iter()
-                .any(|ip| *ip == IpAddr::V4(PORTZERO_LOCAL_DASHBOARD_IPV4))
-            {
+            if ips.contains(&IpAddr::V4(PORTZERO_LOCAL_DASHBOARD_IPV4)) {
                 Diagnostic {
                     id: "dns_probe_ok".into(),
                     severity: Severity::Info,
@@ -1057,7 +1054,7 @@ fn analyze_portzero_hosts_entries(content: &str) -> PortzeroHostsAnalysis {
         };
 
         let names: Vec<&str> = parts.collect();
-        if !names.iter().any(|name| *name == "portzero.local") {
+        if !names.contains(&"portzero.local") {
             continue;
         }
 

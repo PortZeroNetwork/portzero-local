@@ -240,7 +240,7 @@ fn scan_processes(account_id: Option<&str>, username: Option<&str>) -> Vec<Disco
 
         let mut services = Vec::new();
 
-        for (pid, _process) in sys.processes() {
+        for pid in sys.processes().keys() {
             let pid_u32 = pid.as_u32();
             if pid_u32 <= 1 {
                 continue;
@@ -1833,20 +1833,21 @@ fn append_registered_network_services(
     }
 }
 
+/// Key used to deduplicate network services discovered from processes/containers.
+type NetworkServiceDedupeKey = (
+    String,
+    String,
+    BTreeMap<String, String>,
+    std::net::SocketAddr,
+    u16,
+    String,
+);
+
 fn dedupe_network_services(
     services: Vec<DiscoveredNetworkService>,
 ) -> Vec<DiscoveredNetworkService> {
-    let mut deduped: std::collections::BTreeMap<
-        (
-            String,
-            String,
-            BTreeMap<String, String>,
-            std::net::SocketAddr,
-            u16,
-            String,
-        ),
-        DiscoveredNetworkService,
-    > = std::collections::BTreeMap::new();
+    let mut deduped: std::collections::BTreeMap<NetworkServiceDedupeKey, DiscoveredNetworkService> =
+        std::collections::BTreeMap::new();
 
     for svc in services {
         let key = dedupe_network_service_key(&svc);
@@ -1867,16 +1868,7 @@ fn dedupe_network_services(
     deduped.into_values().collect()
 }
 
-fn dedupe_network_service_key(
-    svc: &DiscoveredNetworkService,
-) -> (
-    String,
-    String,
-    BTreeMap<String, String>,
-    std::net::SocketAddr,
-    u16,
-    String,
-) {
+fn dedupe_network_service_key(svc: &DiscoveredNetworkService) -> NetworkServiceDedupeKey {
     (
         svc.name.clone(),
         svc.domain_template.clone(),
@@ -1935,7 +1927,7 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
         let daemon_no_probe = std::env::var(ENV_NO_PROBE_VAR).ok();
         let mut candidates = Vec::new();
 
-        for (pid, _process) in sys.processes() {
+        for pid in sys.processes().keys() {
             let pid_u32 = pid.as_u32();
             if pid_u32 <= 1 {
                 continue;

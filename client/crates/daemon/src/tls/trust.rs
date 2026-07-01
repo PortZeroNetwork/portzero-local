@@ -749,8 +749,7 @@ pub(crate) fn certutil_sudo_args(program: &str, args: &[String]) -> Vec<String> 
 /// Collect all NSS database directories found under `home`.
 ///
 /// Checked locations:
-/// - `~/.pki/nssdb`                                               (Chrome, Chromium,
-///                                                                 native Brave)
+/// - `~/.pki/nssdb` (Chrome, Chromium, native Brave)
 /// - `~/.mozilla/firefox/*/`                                      (Firefox)
 /// - `~/.var/app/org.mozilla.firefox/.mozilla/firefox/*/`         (Firefox Flatpak)
 /// - `~/snap/firefox/current/.mozilla/firefox/*/`                 (Firefox Snap)
