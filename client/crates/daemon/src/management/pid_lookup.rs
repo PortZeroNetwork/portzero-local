@@ -145,11 +145,13 @@ fn pid_for_source_port_impl(source_port: u16) -> Option<u32> {
         if fields.len() < 5 {
             continue;
         }
-        if fields[0].eq_ignore_ascii_case("TCP") && fields[3].eq_ignore_ascii_case("ESTABLISHED") {
-            if fields[1].ends_with(&port_suffix) {
-                if let Ok(pid) = fields[4].parse::<u32>() {
-                    return Some(pid);
-                }
+        if fields[0].eq_ignore_ascii_case("TCP")
+            && fields[3].eq_ignore_ascii_case("ESTABLISHED")
+            && fields[1].ends_with(&port_suffix)
+        {
+            match fields[4].parse::<u32>() {
+                Ok(pid) => return Some(pid),
+                Err(_) => {}
             }
         }
     }

@@ -655,6 +655,7 @@ fn ensure_nss_db_exists(program: &str, db_dir: &Path) -> Result<()> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn delete_nss_cert(certutil: &Path, db_dir: &Path) -> Result<()> {
     let program = certutil.to_str().unwrap_or("certutil");
     let args = certutil_delete_args(db_dir);
