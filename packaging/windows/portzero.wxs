@@ -34,6 +34,36 @@
       <Component Id="WintunDllComponent" Guid="{55DA79C9-8C87-4A76-99EB-A5D14160E3D3}" Win64="yes">
         <File Id="WintunDll" Source="$(var.SourceDir)\wintun.dll" KeyPath="yes" />
       </Component>
+      <Component Id="Concrt140DllComponent" Guid="{7CE6336F-E05F-4C2A-BFF7-4C0835E22BD7}" Win64="yes">
+        <File Id="Concrt140Dll" Source="$(var.SourceDir)\concrt140.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="Msvcp140DllComponent" Guid="{4C6F5AE7-CB70-4031-83C5-81B42C0839D7}" Win64="yes">
+        <File Id="Msvcp140Dll" Source="$(var.SourceDir)\msvcp140.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="Msvcp1401DllComponent" Guid="{13C933C4-3050-40DA-8126-BA48950E4682}" Win64="yes">
+        <File Id="Msvcp1401Dll" Source="$(var.SourceDir)\msvcp140_1.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="Msvcp1402DllComponent" Guid="{177976D7-567A-451A-9003-58F32D90225B}" Win64="yes">
+        <File Id="Msvcp1402Dll" Source="$(var.SourceDir)\msvcp140_2.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="Msvcp140AtomicWaitDllComponent" Guid="{B4C0A79C-105A-4433-9D48-AC2B26BE03B3}" Win64="yes">
+        <File Id="Msvcp140AtomicWaitDll" Source="$(var.SourceDir)\msvcp140_atomic_wait.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="Msvcp140CodecvtIdsDllComponent" Guid="{905BE22A-B07E-4C50-9561-9F76D4E37D08}" Win64="yes">
+        <File Id="Msvcp140CodecvtIdsDll" Source="$(var.SourceDir)\msvcp140_codecvt_ids.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="Vccorlib140DllComponent" Guid="{780F0A69-178C-449D-8411-6B1A69405B05}" Win64="yes">
+        <File Id="Vccorlib140Dll" Source="$(var.SourceDir)\vccorlib140.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="Vcruntime140DllComponent" Guid="{10667CD2-64AA-4097-BA65-086558041532}" Win64="yes">
+        <File Id="Vcruntime140Dll" Source="$(var.SourceDir)\vcruntime140.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="Vcruntime1401DllComponent" Guid="{08441A5D-3E4C-4837-BEFC-0B2898A6EE00}" Win64="yes">
+        <File Id="Vcruntime1401Dll" Source="$(var.SourceDir)\vcruntime140_1.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="Vcruntime140ThreadsDllComponent" Guid="{932E0E39-7D87-46E1-B7D1-2764449BBF54}" Win64="yes">
+        <File Id="Vcruntime140ThreadsDll" Source="$(var.SourceDir)\vcruntime140_threads.dll" KeyPath="yes" />
+      </Component>
       <Component Id="PathEnvironmentComponent" Guid="{00F14B15-B376-4948-A059-2851780D0434}" Win64="yes">
         <CreateFolder />
         <Environment
@@ -50,6 +80,16 @@
     <ComponentGroup Id="PortZeroComponents">
       <ComponentRef Id="PortzeroExeComponent" />
       <ComponentRef Id="WintunDllComponent" />
+      <ComponentRef Id="Concrt140DllComponent" />
+      <ComponentRef Id="Msvcp140DllComponent" />
+      <ComponentRef Id="Msvcp1401DllComponent" />
+      <ComponentRef Id="Msvcp1402DllComponent" />
+      <ComponentRef Id="Msvcp140AtomicWaitDllComponent" />
+      <ComponentRef Id="Msvcp140CodecvtIdsDllComponent" />
+      <ComponentRef Id="Vccorlib140DllComponent" />
+      <ComponentRef Id="Vcruntime140DllComponent" />
+      <ComponentRef Id="Vcruntime1401DllComponent" />
+      <ComponentRef Id="Vcruntime140ThreadsDllComponent" />
       <ComponentRef Id="PathEnvironmentComponent" />
     </ComponentGroup>
   </Product>

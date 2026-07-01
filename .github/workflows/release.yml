@@ -176,6 +176,36 @@ jobs:
           Expand-Archive -Path "wintun.zip" -DestinationPath "wintun" -Force
           Copy-Item "wintun\wintun\bin\amd64\wintun.dll" "$staging\"
 
+          $vswhere = Join-Path "${env:ProgramFiles(x86)}" "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe not found; cannot locate VC++ redistributable DLLs"
+          }
+
+          $vsPath = & $vswhere `
+            -latest `
+            -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Redist.14.Latest `
+            -property installationPath
+          if (-not $vsPath) {
+            throw "Visual Studio installation with VC++ redistributable files not found"
+          }
+
+          $redistVersionDir = Get-ChildItem `
+              -Directory `
+              -Path (Join-Path $vsPath "VC\Redist\MSVC") |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $redistVersionDir) {
+            throw "VC++ redistributable version directory not found under $vsPath"
+          }
+
+          $crtDir = Join-Path $redistVersionDir.FullName "x64\Microsoft.VC143.CRT"
+          if (-not (Test-Path $crtDir)) {
+            throw "VC++ x64 CRT redistributable directory not found: $crtDir"
+          }
+
+          Copy-Item (Join-Path $crtDir "*.dll") "$staging\" -Force
+
       - name: Azure login for Artifact Signing
         if: matrix.archive_ext == 'zip'
         uses: azure/login@v3
