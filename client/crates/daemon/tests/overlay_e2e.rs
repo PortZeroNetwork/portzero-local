@@ -258,6 +258,41 @@ Remove-NetRoute -DestinationPrefix "{}" -InterfaceAlias "{}" -Confirm:$false -Er
     }
 }
 
+#[cfg(target_os = "linux")]
+struct LinuxHostRoute {
+    prefix: String,
+    iface: &'static str,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxHostRoute {
+    fn install(ip: Ipv4Addr, iface: &'static str) -> Self {
+        let prefix = format!("{ip}/32");
+        let output = std::process::Command::new("ip")
+            .args(["route", "replace", &prefix, "dev", iface])
+            .output()
+            .expect("failed to run ip to install Linux e2e host route");
+
+        assert!(
+            output.status.success(),
+            "failed to install Linux e2e host route {prefix} on {iface}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        Self { prefix, iface }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for LinuxHostRoute {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("ip")
+            .args(["route", "del", &self.prefix, "dev", self.iface])
+            .status();
+    }
+}
+
 /// Unprivileged, in-process e2e: wires together the public overlay surface and
 /// asserts name -> VIP resolution plus a reachable real backend. No root, no
 /// real TUN, no network/cloud login. All waits are bounded.
@@ -640,7 +675,23 @@ async fn real_tun_overlay() {
     let result = tokio::time::timeout(TEST_TIMEOUT, async {
         // Use the embedded DNS on a high local port to avoid clashing with the
         // system resolver during the test.
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let mut tun = TunConfig::default();
+
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        let tun = TunConfig::default();
+
+        #[cfg(target_os = "linux")]
+        {
+            // Do not collide with the real daemon's default TUN interface
+            // (`deven0`). `just e2e` is commonly run while the daemon is
+            // installed or active.
+            tun.name = Some("portzero-e2e".to_string());
+            // Keep the test gateway inside 10.254.0.0/16 without reusing the
+            // daemon's production gateway address.
+            tun.address = Ipv4Addr::new(10, 254, 250, 1);
+        }
+
         #[cfg(target_os = "windows")]
         {
             // Do not collide with the real daemon's default Wintun adapter
@@ -679,6 +730,8 @@ async fn real_tun_overlay() {
         tokio::time::sleep(Duration::from_millis(200)).await;
         let ip = dns_query_a("127.0.0.1:53000".parse().unwrap(), "rooted.portzero.local").await;
         let ip = ip.expect("real overlay DNS did not resolve service");
+        #[cfg(target_os = "linux")]
+        let _route = LinuxHostRoute::install(ip, "portzero-e2e");
         #[cfg(target_os = "windows")]
         let _route = WindowsHostRoute::install(ip, "portzero-e2e");
 
