@@ -6,7 +6,7 @@ PackageLocale: en-US
 Publisher: Port Zero Network
 PublisherUrl: https://portzero.cloud/
 PublisherSupportUrl: https://github.com/PortZeroNetwork/portzero-local/issues
-PackageName: Port Zero
+PackageName: PortZero
 PackageUrl: https://portzero.cloud/
 License: PolyForm-Shield-1.0.0
 LicenseUrl: https://github.com/PortZeroNetwork/portzero-local/blob/main/LICENSE
