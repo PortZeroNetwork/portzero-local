@@ -184,26 +184,36 @@ jobs:
           $vsPath = & $vswhere `
             -latest `
             -products * `
-            -requires Microsoft.VisualStudio.Component.VC.Redist.14.Latest `
+            -requiresAny `
+            -requires Microsoft.VisualStudio.Component.VC.Redist.14.Latest Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
             -property installationPath
           if (-not $vsPath) {
             throw "Visual Studio installation with VC++ redistributable files not found"
           }
 
-          $redistVersionDir = Get-ChildItem `
-              -Directory `
-              -Path (Join-Path $vsPath "VC\Redist\MSVC") |
-            Sort-Object Name -Descending |
-            Select-Object -First 1
-          if (-not $redistVersionDir) {
-            throw "VC++ redistributable version directory not found under $vsPath"
+          $redistRoot = Join-Path $vsPath "VC\Redist\MSVC"
+          if (-not (Test-Path $redistRoot)) {
+            throw "VC++ redistributable root not found under $vsPath"
           }
 
-          Write-Host "VC++ redist root: $(Join-Path $vsPath 'VC\Redist\MSVC')"
+          $redistVersionDir = Get-ChildItem `
+              -Directory `
+              -Path $redistRoot |
+            Where-Object {
+              $_.Name -match '^\d+\.' -and
+              (Test-Path (Join-Path $_.FullName "x64"))
+            } |
+            Sort-Object { [version]$_.Name } -Descending |
+            Select-Object -First 1
+          if (-not $redistVersionDir) {
+            throw "VC++ redistributable version directory with an x64 layout not found under $redistRoot"
+          }
+
+          Write-Host "VC++ redist root: $redistRoot"
           Write-Host "Selected VC++ redist version directory: $($redistVersionDir.FullName)"
           $x64Root = Join-Path $redistVersionDir.FullName "x64"
           if (Test-Path $x64Root) {
-            Write-Host "x64 layout under $x64Root:"
+            Write-Host "x64 layout under ${x64Root}:"
             Get-ChildItem -Path $x64Root -Force |
               Select-Object Mode, Length, Name |
               Format-Table -AutoSize |
@@ -228,16 +238,15 @@ jobs:
 
           foreach ($dllName in $requiredDlls) {
             $dll = Get-ChildItem `
-              -Path $redistVersionDir.FullName `
+              -Path $x64Root `
               -Recurse `
               -File `
               -Filter $dllName |
-              Where-Object { $_.FullName -match '\\x64\\' } |
               Sort-Object FullName -Descending |
               Select-Object -First 1
 
             if (-not $dll) {
-              throw "VC++ x64 redistributable DLL not found under $($redistVersionDir.FullName): $dllName"
+              throw "VC++ x64 redistributable DLL not found under ${x64Root}: $dllName"
             }
 
             Copy-Item $dll.FullName "$staging\" -Force
