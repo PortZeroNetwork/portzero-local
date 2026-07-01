@@ -9,6 +9,8 @@ operate it.
   suffix selects cloud vs. local, and the `{branch}` / `{worktree}` templates.
 - [Platform privileges](privileges.md) — what needs root / `CAP_NET_ADMIN`, and
   what degrades gracefully without it.
+- [Software delivery lifecycle](sdlc.md) - branch flow, release validation, and
+  manual GitHub release publishing.
 - [Troubleshooting](troubleshooting.md) — common failure modes and fixes.
 
 - [Windows signing runbook](windows-signing.md) - Azure Artifact Signing setup,
