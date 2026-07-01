@@ -1,0 +1,51 @@
+# lefthook.yml
+#
+# Git hooks manager config for PortZero.
+# https://github.com/evilmartians/lefthook
+#
+# Cross-platform support for Linux, macOS, and Windows.
+#
+# Quick start (run once per clone / machine):
+#   just install-hooks
+#
+# The hooks call recipes defined in the justfile so behavior stays
+# consistent and all platforms are handled in one place.
+#
+# What runs:
+#   pre-commit: fast format check (catches style before you even commit)
+#   pre-push:   the important CI-parity checks (fmt + clippy -D warnings + tests)
+#
+# Privileged / root-gated tests are NEVER run automatically here.
+# See `just e2e` (and docs/privileges.md) for the real TUN overlay test.
+# It requires sudo and is intended to be run manually or by CI.
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      run: just fmt-check
+      # We deliberately do not auto-fix here. Run `cargo fmt` yourself if needed.
+
+pre-push:
+  # Run sequentially so failures are easy to attribute.
+  # You can set parallel: true if you want clippy + test to race.
+  parallel: false
+  commands:
+    fmt:
+      run: just fmt-check
+    clippy:
+      run: just clippy
+      # This is the check that recently failed in GitHub Actions.
+      # Catching it locally saves expensive CI minutes.
+    test:
+      run: just test
+      # Unprivileged suite only. Matches the main "Check & Test" CI job.
+      # The real_tun_overlay test skips cleanly when not root.
+
+# Optional: you can also run specific stages manually:
+#   lefthook run pre-push
+#   lefthook run pre-commit
+#
+# Emergency bypass (not recommended):
+#   git push --no-verify
+#   git commit --no-verify

@@ -227,3 +227,112 @@ test:
 # Without root the test skips cleanly; use `just test` for everyday work.
 e2e:
     sudo -E cargo test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+
+# =============================================================================
+# Local checks & CI parity (run these to avoid wasting GitHub Actions minutes)
+# =============================================================================
+
+# Check formatting (fast, used by hooks).
+fmt-check:
+    cargo fmt -- --check
+
+# Strict clippy (matches CI "Check & Test" job exactly). This is the one that
+# recently failed on GitHub Actions.
+clippy:
+    cargo clippy --workspace -- -D warnings
+
+# Clippy on tests + bins + examples + all features.
+clippy-all:
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# Fast type check.
+check:
+    cargo check --workspace
+
+# Run the full set of local checks that mirror the main CI job.
+# Recommended before pushing. Does NOT include privileged real-TUN e2e.
+verify:
+    just fmt-check
+    just clippy
+    just test
+
+# -----------------------------------------------------------------------------
+# Git hooks setup (cross platform via lefthook)
+#
+# After cloning (or when you want to refresh on a new machine):
+#     just install-hooks
+#
+# This enables:
+#   - pre-commit : fmt check
+#   - pre-push   : fmt + clippy (-D warnings) + unprivileged tests
+#
+# These are the same checks GitHub Actions runs. Catching clippy/test
+# failures locally is much cheaper.
+#
+# IMPORTANT:
+#   - Privileged tests (`just e2e`) are deliberately NOT included.
+#     See explanation below and in docs/privileges.md.
+#   - You can still bypass with `git push --no-verify` in emergencies.
+# -----------------------------------------------------------------------------
+
+# Install (or repair) git hooks using lefthook (cross-platform).
+[unix]
+install-hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v lefthook >/dev/null 2>&1; then
+        echo "→ lefthook not found in PATH."
+        echo ""
+        echo "Install lefthook (one-time):"
+        echo "  macOS:   brew install lefthook"
+        echo "  Linux:   https://github.com/evilmartians/lefthook#install"
+        echo "           (also available via many distro package managers)"
+        echo ""
+        echo "Then re-run this command:"
+        echo "  just install-hooks"
+        echo ""
+        echo "After hooks are installed you will get pre-commit and pre-push checks."
+        exit 1
+    fi
+    lefthook install
+    echo ""
+    echo "✓ lefthook git hooks installed."
+    echo "   pre-commit : just fmt-check"
+    echo "   pre-push   : just fmt-check + just clippy + just test"
+    echo ""
+    echo "Also run (recommended):"
+    echo "  ticketry init     # sets up background ticket indexing hooks"
+    echo ""
+    echo "To skip hooks in a pinch:"
+    echo "  git commit --no-verify"
+    echo "  git push --no-verify"
+
+[windows]
+install-hooks:
+    $ErrorActionPreference = "Stop"
+    if (-not (Get-Command lefthook -ErrorAction SilentlyContinue)) {
+        Write-Host "→ lefthook not found on PATH."
+        Write-Host ""
+        Write-Host "Install lefthook (one-time per machine):"
+        Write-Host "  winget install evilmartians.lefthook"
+        Write-Host "  scoop install lefthook"
+        Write-Host "  choco install lefthook"
+        Write-Host "  or download the binary from:"
+        Write-Host "  https://github.com/evilmartians/lefthook/releases"
+        Write-Host ""
+        Write-Host "After installing, re-run:"
+        Write-Host "  just install-hooks"
+        exit 1
+    }
+    lefthook install
+    Write-Host ""
+    Write-Host "✓ lefthook git hooks installed."
+    Write-Host "   pre-commit : just fmt-check"
+    Write-Host "   pre-push   : just fmt-check + just clippy + just test"
+    Write-Host ""
+    Write-Host "Also run (recommended):"
+    Write-Host "  ticketry init     # sets up background ticket indexing hooks"
+    Write-Host ""
+    Write-Host "To skip hooks in a pinch:"
+    Write-Host "  git commit --no-verify"
+    Write-Host "  git push --no-verify"

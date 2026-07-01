@@ -21,3 +21,14 @@ See also:
 - [`../examples/docker-templated-tunnel/`](../examples/docker-templated-tunnel/) —
   templated names + Docker discovery.
 - [`../sdks/`](../sdks/) — thin language helpers (direnv, Node, Python, Go).
+
+## For contributors
+
+See [troubleshooting.md](troubleshooting.md) for:
+
+- How to run the test suite (`just test` vs `just e2e`)
+- Setting up automatic local checks with git hooks (`just install-hooks`)
+- Reproducing the CI checks locally to avoid burning GitHub Actions minutes
+
+The project uses `just` as the task runner everywhere. Run `just --list` to see
+available commands.
