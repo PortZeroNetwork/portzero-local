@@ -258,6 +258,51 @@ Remove-NetRoute -DestinationPrefix "{}" -InterfaceAlias "{}" -Confirm:$false -Er
     }
 }
 
+#[cfg(target_os = "macos")]
+struct MacHostRoute {
+    ip: String,
+    interface_name: String,
+}
+
+#[cfg(target_os = "macos")]
+impl MacHostRoute {
+    fn install(ip: Ipv4Addr, interface_name: &str) -> Self {
+        let ip = ip.to_string();
+        let output = std::process::Command::new("route")
+            .args(["-n", "add", "-host", &ip, "-interface", interface_name])
+            .output()
+            .expect("failed to run route to install macOS e2e host route");
+
+        assert!(
+            output.status.success(),
+            "failed to install macOS e2e host route {ip}/32 on {interface_name}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        Self {
+            ip,
+            interface_name: interface_name.to_string(),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for MacHostRoute {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("route")
+            .args([
+                "-n",
+                "delete",
+                "-host",
+                &self.ip,
+                "-interface",
+                &self.interface_name,
+            ])
+            .status();
+    }
+}
+
 #[cfg(target_os = "linux")]
 struct LinuxHostRoute {
     prefix: String,
@@ -732,6 +777,8 @@ async fn real_tun_overlay() {
         let ip = ip.expect("real overlay DNS did not resolve service");
         #[cfg(target_os = "linux")]
         let _route = LinuxHostRoute::install(ip, "portzero-e2e");
+        #[cfg(target_os = "macos")]
+        let _route = MacHostRoute::install(ip, overlay.link_name());
         #[cfg(target_os = "windows")]
         let _route = WindowsHostRoute::install(ip, "portzero-e2e");
 

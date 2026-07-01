@@ -257,6 +257,15 @@ impl OverlayNetwork {
         self.dns_stop.store(true, Ordering::Relaxed);
         self.dns_task.abort();
     }
+
+    /// Return the actual TUN link name chosen by the kernel/driver.
+    ///
+    /// The real E2E test uses this to install a host route on platforms that
+    /// need an explicit per-VIP route to reach the overlay from the host OS.
+    #[doc(hidden)]
+    pub fn link_name(&self) -> &str {
+        &self.link_name
+    }
 }
 
 #[cfg(test)]
