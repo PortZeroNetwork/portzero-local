@@ -311,18 +311,18 @@ install-hooks:
 install-hooks:
     $ErrorActionPreference = "Stop"
     if (-not (Get-Command lefthook -ErrorAction SilentlyContinue)) {
-        Write-Host "→ lefthook not found on PATH."
-        Write-Host ""
-        Write-Host "Install lefthook (one-time per machine):"
-        Write-Host "  winget install evilmartians.lefthook"
-        Write-Host "  scoop install lefthook"
-        Write-Host "  choco install lefthook"
-        Write-Host "  or download the binary from:"
-        Write-Host "  https://github.com/evilmartians/lefthook/releases"
-        Write-Host ""
-        Write-Host "After installing, re-run:"
-        Write-Host "  just install-hooks"
-        exit 1
+    Write-Host "→ lefthook not found on PATH."
+    Write-Host ""
+    Write-Host "Install lefthook (one-time per machine):"
+    Write-Host "  winget install evilmartians.lefthook"
+    Write-Host "  scoop install lefthook"
+    Write-Host "  choco install lefthook"
+    Write-Host "  or download the binary from:"
+    Write-Host "  https://github.com/evilmartians/lefthook/releases"
+    Write-Host ""
+    Write-Host "After installing, re-run:"
+    Write-Host "  just install-hooks"
+    exit 1
     }
     lefthook install
     Write-Host ""
