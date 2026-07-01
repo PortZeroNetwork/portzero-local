@@ -5,7 +5,8 @@ This repository uses a lightweight Git Flow model:
 - `develop` is the default branch for day-to-day integration.
 - `release/current` is the release gate branch.
 - GitHub Actions CI runs when `release/current` is updated.
-- Publishing a GitHub Release is manual and runs from `release/current`.
+- Publishing a GitHub Release happens automatically after CI succeeds on
+  `release/current`.
 
 ## Local validation before release
 
@@ -41,15 +42,10 @@ gh run list --branch release/current
 gh run watch
 ```
 
-## Publish a release manually
+## Publish a release
 
-After CI passes on `release/current`, trigger the release workflow manually:
-
-```bash
-gh workflow run release.yml --ref release/current
-```
-
-Then inspect or follow the release workflow:
+After CI passes on `release/current`, the release workflow starts
+automatically. Inspect or follow it with:
 
 ```bash
 gh run list --workflow Release
