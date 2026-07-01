@@ -43,10 +43,10 @@ jobs:
             sudo modprobe tun
           fi
 
-      - name: E2E - real TUN overlay (root-gated)
+      - name: E2E - real TUN overlay (privileged opt-in)
         if: runner.os != 'Windows'
         timeout-minutes: 5
-        run: sudo -E $(which cargo) test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+        run: sudo -E env PORTZERO_REQUIRE_REAL_TUN_E2E=1 $(which cargo) test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
 
       - name: Prepare Wintun (Windows only)
         if: runner.os == 'Windows'

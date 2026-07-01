@@ -17,12 +17,10 @@
 //!   `net::stack::tests::vip_connect_proxies_to_backend`) using the
 //!   `#[doc(hidden)]` test-support helpers exposed from `net::stack`.
 //!
-//! * [`real_tun_overlay`] — on Unix, gated on `geteuid() == 0`. When not root
-//!   it SKIPS cleanly (prints a clear line and passes) so unprivileged
-//!   `cargo test` never fails or hangs. On Windows it attempts the real Wintun
-//!   path and fails if the host is not able to create the adapter. When
-//!   privileged it stands up a real [`OverlayNetwork`] (TUN + stack + DNS) and
-//!   tears it down. Run it via `just e2e`.
+//! * [`real_tun_overlay`] — gated behind `PORTZERO_REQUIRE_REAL_TUN_E2E=1` on
+//!   every platform, then behind the platform privilege check (root on Unix,
+//!   elevated Administrator on Windows). Plain `cargo test` skips cleanly; run
+//!   it via `just e2e` when you want the real TUN/Wintun path.
 //!
 //! Every wait is bounded by a timeout — there is no unbounded blocking.
 
@@ -445,12 +443,18 @@ async fn unprivileged_tls_vip_proxy() {
     .expect("unprivileged TLS vip proxy timed out");
 }
 
-/// Privileged real-TUN e2e. On Unix this SKIPS cleanly when not root so
-/// unprivileged `cargo test` passes; on Windows it requires a working Wintun
-/// setup and fails if the adapter cannot be created.
+/// Privileged real-TUN e2e. Skips unless explicitly opted in, so ordinary
+/// `cargo test` stays side-effect safe even if it is run as root/Admin.
 #[cfg(any(unix, target_os = "windows"))]
 #[tokio::test]
 async fn real_tun_overlay() {
+    if std::env::var("PORTZERO_REQUIRE_REAL_TUN_E2E").as_deref() != Ok("1") {
+        println!(
+            "real_tun_overlay: skipped: set PORTZERO_REQUIRE_REAL_TUN_E2E=1 to run privileged real-TUN e2e"
+        );
+        return;
+    }
+
     #[cfg(unix)]
     {
         // SAFETY: geteuid is always safe to call.
@@ -462,13 +466,6 @@ async fn real_tun_overlay() {
     }
     #[cfg(target_os = "windows")]
     {
-        if std::env::var("PORTZERO_REQUIRE_REAL_TUN_E2E").as_deref() != Ok("1") {
-            println!(
-                "real_tun_overlay: skipped: set PORTZERO_REQUIRE_REAL_TUN_E2E=1 to run Windows Wintun e2e"
-            );
-            return;
-        }
-
         let elevated = std::process::Command::new("fltmc")
             .arg("filters")
             .status()

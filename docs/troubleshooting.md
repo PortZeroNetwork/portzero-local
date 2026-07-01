@@ -72,9 +72,11 @@ uses the installed CA correctly.
 
 ## Running the test suite
 
-- `just test` — full unprivileged suite; the root-gated real-TUN test skips
-  cleanly (prints `skipped: requires root`).
-- `just e2e` — runs the real-TUN end-to-end test under `sudo`.
+- `just test` — full unprivileged suite; the real-TUN/Wintun test skips cleanly
+  because `PORTZERO_REQUIRE_REAL_TUN_E2E=1` is not set.
+- `just e2e` — explicitly opts into the real adapter smoke test and runs it with
+  the current OS's required privileges (`sudo` on Unix, Administrator + Wintun
+  on Windows).
 
 ## Local checks to save GitHub Actions minutes
 
@@ -131,15 +133,16 @@ up to date after commits, checkouts, etc. It is idempotent.
 
 ### Privileged / real TUN tests and hooks
 
-**The root-gated test is deliberately not run by the hooks.**
+**The privileged real adapter test is deliberately not run by the hooks.**
 
-- `just e2e` (and the `real_tun_overlay` test) requires `sudo` / root.
+- `just e2e` (and the `real_tun_overlay` test) requires root/Admin.
 - Running `sudo` from inside a git hook is unreliable:
   - Hooks often have no controlling tty → password prompt fails or hangs.
   - Behavior is different on Windows (no sudo).
   - It would be surprising and annoying on every push.
 - The unprivileged `just test` (which the hooks run) is already comprehensive.
-  The privileged test **skips cleanly and passes** when you are not root.
+  The privileged test **skips cleanly and passes** unless it is explicitly opted
+  into with `PORTZERO_REQUIRE_REAL_TUN_E2E=1`.
 - The real E2E is still run by CI in the separate "E2E (privileged real TUN)" job.
 
 Run `just e2e` manually when you are working on TUN/overlay networking changes

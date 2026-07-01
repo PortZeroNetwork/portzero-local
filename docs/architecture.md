@@ -93,12 +93,27 @@ service-table updates from discovery via `update_services`.
 
 ## Testing the data path
 
-- **Unprivileged** (`client/crates/daemon/tests/overlay_e2e.rs`,
-  `unprivileged_overlay_round_trip`): asserts the wiring — VIP allocation,
-  name → VIP via the real embedded DNS server, and a reachable real backend —
-  with no root and no real TUN.
-- **smoltcp byte proxy** (`net::stack::tests::vip_connect_proxies_to_backend`):
-  drives a smoltcp client through an in-memory device pair against the real stack
-  engine and a real tokio echo backend.
-- **Root-gated** (`real_tun_overlay`, run via `just e2e`): stands up the real
-  `OverlayNetwork` (TUN + stack + DNS) under `sudo` and resolves a service.
+- **Unprivileged wiring** (`client/crates/daemon/tests/overlay_e2e.rs`,
+  `unprivileged_overlay_round_trip`): asserts VIP allocation, name-to-VIP
+  resolution via the real embedded DNS server, and a reachable real backend with
+  no root/Admin and no real TUN.
+- **Unprivileged byte path** (`unprivileged_vip_byte_proxy` and
+  `unprivileged_tls_vip_proxy`): drives a smoltcp client through an in-memory
+  device pair against the real stack engine and a real tokio echo backend. These
+  tests are platform-neutral and run on Linux, macOS, and Windows.
+- **Privileged adapter smoke** (`real_tun_overlay`, run via `just e2e`): stands
+  up the real `OverlayNetwork` (TUN/Wintun + stack + DNS), registers a service,
+  resolves it through the embedded DNS server, and shuts down cleanly.
+
+Plain `cargo test` is side-effect safe on every platform: `real_tun_overlay`
+skips unless `PORTZERO_REQUIRE_REAL_TUN_E2E=1` is set. `just e2e` sets that
+variable and performs the platform setup needed for the current OS.
+
+Current parity boundary:
+
+| Layer | Linux | macOS | Windows |
+|-------|-------|-------|---------|
+| Unprivileged wiring and smoltcp byte path | yes | yes | yes |
+| Privileged real adapter startup/shutdown smoke via `just e2e` | yes | yes | yes, with Wintun |
+| Full external OS client TCP through `<svc>.portzero.local` | not covered | not covered | not covered |
+| Installer/autostart/discovery parity | separate platform work | separate platform work | tracked by `work/task-28.task.md` |

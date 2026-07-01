@@ -218,18 +218,19 @@ uninstall:
     echo "✓ portzero uninstalled."
 
 # Run the full unprivileged test suite (no root required).
-# The root-gated real-TUN e2e (`real_tun_overlay`) skips cleanly here.
+# The privileged real-TUN/Wintun e2e (`real_tun_overlay`) skips cleanly here
+# unless explicitly opted in with PORTZERO_REQUIRE_REAL_TUN_E2E=1.
 test:
     cargo test --workspace
 
 # Run the CI e2e overlay step for this OS.
 #
-# Linux/macOS: runs under sudo so the real-TUN path can create the device.
-# Windows: prepares wintun.dll, then runs the real Wintun overlay path.
+# Linux/macOS: opts in and runs under sudo so the real-TUN path can create the device.
+# Windows: prepares wintun.dll, opts in, then runs the real Wintun overlay path.
 # Use together with `just verify` for current-OS CI parity.
 [unix]
 e2e:
-    sudo -E cargo test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+    sudo -E env PORTZERO_REQUIRE_REAL_TUN_E2E=1 cargo test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
 
 [script('powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File')]
 [windows]

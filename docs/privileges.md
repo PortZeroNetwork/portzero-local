@@ -132,6 +132,9 @@ though the service was discovered. See [troubleshooting.md](troubleshooting.md).
 
 ## Testing implications
 
-- `cargo test` / `just test` run fully unprivileged. The root-gated real-TUN
-  test (`real_tun_overlay`) detects `geteuid() != 0` and **skips cleanly**.
-- To exercise the real TUN path, run `just e2e`, which uses `sudo`.
+- `cargo test` / `just test` run fully unprivileged and are side-effect safe on
+  Linux, macOS, and Windows. The privileged real-TUN/Wintun test
+  (`real_tun_overlay`) skips unless `PORTZERO_REQUIRE_REAL_TUN_E2E=1` is set.
+- To exercise the real adapter path, run `just e2e`. It sets the opt-in
+  variable and performs the current OS's privileged setup (`sudo` on Unix,
+  Administrator + Wintun on Windows).
