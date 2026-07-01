@@ -222,11 +222,37 @@ uninstall:
 test:
     cargo test --workspace
 
-# Run the root-gated real-TUN end-to-end overlay test.
-# Requires root/CAP_NET_ADMIN to create the TUN device, so it runs under sudo.
-# Without root the test skips cleanly; use `just test` for everyday work.
+# Run the CI e2e overlay step for this OS.
+#
+# Linux/macOS: runs under sudo so the real-TUN path can create the device.
+# Windows: prepares wintun.dll, then runs the real Wintun overlay path.
+# Use together with `just verify` for current-OS CI parity.
+[unix]
 e2e:
     sudo -E cargo test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+
+[script('powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File')]
+[windows]
+e2e:
+    $ErrorActionPreference = "Stop"
+    $wintunDir = Join-Path (Get-Location) ".wintun"
+    $wintunDll = Join-Path $wintunDir "wintun.dll"
+    fltmc filters *> $null
+    if ($LASTEXITCODE -ne 0) {
+    Write-Error "just e2e requires an elevated Administrator PowerShell on Windows."
+    exit 1
+    }
+    if (-not (Test-Path $wintunDll)) {
+    New-Item -ItemType Directory -Force -Path $wintunDir | Out-Null
+    $zip = Join-Path $wintunDir "wintun.zip"
+    Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile $zip -TimeoutSec 60
+    Expand-Archive -Path $zip -DestinationPath $wintunDir -Force
+    Copy-Item (Join-Path $wintunDir "wintun\bin\amd64\wintun.dll") $wintunDll -Force
+    }
+    $env:PATH = "$wintunDir;$env:PATH"
+    $env:PORTZERO_REQUIRE_REAL_TUN_E2E = "1"
+    cargo test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 # =============================================================================
 # Local checks & CI parity (run these to avoid wasting GitHub Actions minutes)
@@ -249,8 +275,9 @@ clippy-all:
 check:
     cargo check --workspace
 
-# Run the full set of local checks that mirror the main CI job.
-# Recommended before pushing. Does NOT include privileged real-TUN e2e.
+# Run the unprivileged local checks from the main CI job.
+# Recommended before pushing. Follow with `just e2e` for current-OS CI parity.
+# This still does not cover the other CI operating systems or release packaging.
 verify:
     just fmt-check
     just clippy

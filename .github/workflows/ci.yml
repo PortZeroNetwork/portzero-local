@@ -45,8 +45,30 @@ jobs:
 
       - name: E2E - real TUN overlay (root-gated)
         if: runner.os != 'Windows'
+        timeout-minutes: 5
         run: sudo -E $(which cargo) test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
 
-      - name: E2E - real TUN overlay (Windows skip path)
+      - name: Prepare Wintun (Windows only)
         if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $wintunDir = Join-Path $PWD ".wintun"
+          New-Item -ItemType Directory -Force -Path $wintunDir | Out-Null
+          $zip = Join-Path $wintunDir "wintun.zip"
+          Invoke-WebRequest `
+            -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" `
+            -OutFile $zip `
+            -TimeoutSec 60
+          Expand-Archive -Path $zip -DestinationPath $wintunDir -Force
+          Copy-Item `
+            (Join-Path $wintunDir "wintun\bin\amd64\wintun.dll") `
+            (Join-Path $wintunDir "wintun.dll") `
+            -Force
+          Add-Content $env:GITHUB_PATH $wintunDir
+
+      - name: E2E - real TUN overlay (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        env:
+          PORTZERO_REQUIRE_REAL_TUN_E2E: "1"
         run: cargo test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture

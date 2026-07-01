@@ -19,10 +19,10 @@
 //!
 //! * [`real_tun_overlay`] — on Unix, gated on `geteuid() == 0`. When not root
 //!   it SKIPS cleanly (prints a clear line and passes) so unprivileged
-//!   `cargo test` never fails or hangs. When root it stands up a real
-//!   [`OverlayNetwork`] (TUN + stack + DNS) and tears it down. Run it via
-//!   `just e2e` (uses `sudo`). On non-Unix platforms it skips because this test
-//!   is specifically the Unix privileged-TUN path.
+//!   `cargo test` never fails or hangs. On Windows it attempts the real Wintun
+//!   path and fails if the host is not able to create the adapter. When
+//!   privileged it stands up a real [`OverlayNetwork`] (TUN + stack + DNS) and
+//!   tears it down. Run it via `just e2e`.
 //!
 //! Every wait is bounded by a timeout — there is no unbounded blocking.
 
@@ -445,21 +445,44 @@ async fn unprivileged_tls_vip_proxy() {
     .expect("unprivileged TLS vip proxy timed out");
 }
 
-/// Root-gated real-TUN e2e. SKIPS cleanly when not root so unprivileged
-/// `cargo test` passes; exercises the real overlay when run as root (`just e2e`).
-#[cfg(unix)]
+/// Privileged real-TUN e2e. On Unix this SKIPS cleanly when not root so
+/// unprivileged `cargo test` passes; on Windows it requires a working Wintun
+/// setup and fails if the adapter cannot be created.
+#[cfg(any(unix, target_os = "windows"))]
 #[tokio::test]
 async fn real_tun_overlay() {
-    // SAFETY: geteuid is always safe to call.
-    let euid = unsafe { libc::geteuid() };
-    if euid != 0 {
-        println!("real_tun_overlay: skipped: requires root (euid={euid})");
-        return;
+    #[cfg(unix)]
+    {
+        // SAFETY: geteuid is always safe to call.
+        let euid = unsafe { libc::geteuid() };
+        if euid != 0 {
+            println!("real_tun_overlay: skipped: requires root (euid={euid})");
+            return;
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if std::env::var("PORTZERO_REQUIRE_REAL_TUN_E2E").as_deref() != Ok("1") {
+            println!(
+                "real_tun_overlay: skipped: set PORTZERO_REQUIRE_REAL_TUN_E2E=1 to run Windows Wintun e2e"
+            );
+            return;
+        }
+
+        let elevated = std::process::Command::new("fltmc")
+            .arg("filters")
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        assert!(
+            elevated,
+            "real_tun_overlay requires an elevated Administrator process on Windows"
+        );
     }
 
     use portzero_daemon::net::overlay::{OverlayConfig, OverlayNetwork};
 
-    println!("real_tun_overlay: running as root; bringing up real overlay");
+    println!("real_tun_overlay: bringing up real overlay");
 
     let result = tokio::time::timeout(TEST_TIMEOUT, async {
         // Use the embedded DNS on a high local port to avoid clashing with the
@@ -498,10 +521,9 @@ async fn real_tun_overlay() {
 }
 
 /// Non-Unix builds still compile and report this privileged Unix TUN scenario
-/// as skipped. Windows coverage for unprivileged overlay wiring and smoltcp
-/// byte-proxying lives in the tests above.
-#[cfg(not(unix))]
+/// as skipped when they do not support the privileged test path.
+#[cfg(not(any(unix, target_os = "windows")))]
 #[tokio::test]
 async fn real_tun_overlay() {
-    println!("real_tun_overlay: skipped: privileged Unix TUN test");
+    println!("real_tun_overlay: skipped: unsupported platform");
 }

@@ -1,5 +1,6 @@
 /target
 **/target/
+.wintun/
 .env
 .devenv/
 devenv-tunnel.db
