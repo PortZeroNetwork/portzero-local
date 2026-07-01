@@ -220,7 +220,13 @@ uninstall:
 # Run the full unprivileged test suite (no root required).
 # The privileged real-TUN/Wintun e2e (`real_tun_overlay`) skips cleanly here
 # unless explicitly opted in with PORTZERO_REQUIRE_REAL_TUN_E2E=1.
+[unix]
 test:
+    CARGO_TARGET_DIR=/private/tmp/portzero-target cargo test --workspace
+
+[windows]
+test:
+    $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
     cargo test --workspace
 
 # Run the CI e2e overlay step for this OS.
@@ -274,15 +280,33 @@ fmt-check:
 
 # Strict clippy (matches CI "Check & Test" job exactly). This is the one that
 # recently failed on GitHub Actions.
+[unix]
 clippy:
+    CARGO_TARGET_DIR=/private/tmp/portzero-target cargo clippy --workspace -- -D warnings
+
+[windows]
+clippy:
+    $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
     cargo clippy --workspace -- -D warnings
 
 # Clippy on tests + bins + examples + all features.
+[unix]
 clippy-all:
+    CARGO_TARGET_DIR=/private/tmp/portzero-target cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+[windows]
+clippy-all:
+    $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
     cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Fast type check.
+[unix]
 check:
+    CARGO_TARGET_DIR=/private/tmp/portzero-target cargo check --workspace
+
+[windows]
+check:
+    $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
     cargo check --workspace
 
 # Run the unprivileged local checks from the main CI job.
