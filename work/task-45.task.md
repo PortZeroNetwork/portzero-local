@@ -4,8 +4,8 @@ slug: task-45
 status: todo
 title: Add lefthook + just recipes for pre-push CI checks (local clippy + tests)
 depends_on:
-- task-20
-- task-27
+- 8e41a52d-0248-40e3-b1b5-686242c60281
+- 094ba6d7-7f78-47b0-8565-84fbce2c3f76
 created_at: 2026-07-01T13:22:44.139043082Z
 updated_at: 2026-07-01T13:22:44.139043082Z
 ---
