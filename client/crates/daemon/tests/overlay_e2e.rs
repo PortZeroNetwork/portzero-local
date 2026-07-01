@@ -20,7 +20,8 @@
 //! * [`real_tun_overlay`] — gated behind `PORTZERO_REQUIRE_REAL_TUN_E2E=1` on
 //!   every platform, then behind the platform privilege check (root on Unix,
 //!   elevated Administrator on Windows). Plain `cargo test` skips cleanly; run
-//!   it via `just e2e` when you want the real TUN/Wintun path.
+//!   it via `just e2e` when you want the real TUN/Wintun path. This verifies
+//!   both DNS and a real OS TCP socket talking to a VIP through the tunnel.
 //!
 //! Every wait is bounded by a timeout — there is no unbounded blocking.
 
@@ -106,6 +107,155 @@ async fn dns_query_a(dns_addr: SocketAddr, name: &str) -> Option<Ipv4Addr> {
         }
     }
     None
+}
+
+/// Connect to `addr`, send `payload`, and require the exact echo. Retries are
+/// intentionally short-lived: the privileged e2e may race listener installation
+/// or route propagation for a few milliseconds after `update_services`.
+async fn assert_tcp_echo(addr: SocketAddr, payload: &[u8]) {
+    let mut last_error = String::new();
+
+    for _ in 0..20 {
+        let attempt = tokio::time::timeout(Duration::from_millis(250), async {
+            let mut client = tokio::net::TcpStream::connect(addr).await?;
+            client.write_all(payload).await?;
+            let mut got = vec![0u8; payload.len()];
+            client.read_exact(&mut got).await?;
+            Ok::<Vec<u8>, std::io::Error>(got)
+        })
+        .await;
+
+        match attempt {
+            Ok(Ok(got)) if got == payload => return,
+            Ok(Ok(got)) => {
+                last_error = format!("echo mismatch: got {got:?}, expected {payload:?}");
+            }
+            Ok(Err(e)) => {
+                last_error = e.to_string();
+            }
+            Err(_) => {
+                last_error = "connect/read/write timed out".to_string();
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    #[cfg(target_os = "windows")]
+    let diagnostics = windows_route_diagnostics(addr);
+    #[cfg(not(target_os = "windows"))]
+    let diagnostics = String::new();
+
+    panic!("TCP tunnel echo to {addr} failed: {last_error}{diagnostics}");
+}
+
+#[cfg(target_os = "windows")]
+fn windows_route_diagnostics(addr: SocketAddr) -> String {
+    let ip = addr.ip();
+    let script = format!(
+        r#"
+$ErrorActionPreference = "Continue"
+$ip = "{ip}"
+$alias = "portzero-e2e"
+"`n--- portzero-e2e adapter ---"
+Get-NetAdapter -Name $alias -ErrorAction SilentlyContinue | Format-List Name,InterfaceIndex,Status,MacAddress,LinkSpeed
+"`n--- portzero-e2e addresses ---"
+Get-NetIPAddress -InterfaceAlias $alias -AddressFamily IPv4 -ErrorAction SilentlyContinue | Format-List IPAddress,PrefixLength,PrefixOrigin,SuffixOrigin,AddressState
+"`n--- route selected for VIP ---"
+Find-NetRoute -RemoteIPAddress $ip -ErrorAction SilentlyContinue | Format-List DestinationPrefix,NextHop,InterfaceAlias,InterfaceIndex,RouteMetric,InterfaceMetric,PolicyStore
+"`n--- relevant routes ---"
+Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object {{ $_.DestinationPrefix -eq "$ip/32" -or $_.DestinationPrefix -eq "10.254.0.0/16" -or $_.InterfaceAlias -eq $alias }} |
+  Sort-Object DestinationPrefix,RouteMetric |
+  Format-Table DestinationPrefix,NextHop,InterfaceAlias,InterfaceIndex,RouteMetric,InterfaceMetric,PolicyStore -AutoSize
+"`n--- netsh ipv4 config ---"
+netsh interface ipv4 show config name="$alias"
+"#
+    );
+
+    match std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
+        .output()
+    {
+        Ok(output) => format!(
+            "\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+        Err(e) => format!("\nfailed to collect Windows route diagnostics: {e}"),
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsHostRoute {
+    prefix: String,
+    interface_alias: &'static str,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsHostRoute {
+    fn install(ip: Ipv4Addr, interface_alias: &'static str) -> Self {
+        let prefix = format!("{ip}/32");
+        let script = format!(
+            r#"
+$ErrorActionPreference = "Stop"
+$prefix = "{prefix}"
+$alias = "{interface_alias}"
+Remove-NetRoute -DestinationPrefix $prefix -InterfaceAlias $alias -Confirm:$false -ErrorAction SilentlyContinue
+$adapter = Get-NetAdapter -Name $alias -ErrorAction Stop
+New-NetRoute -DestinationPrefix $prefix -InterfaceIndex $adapter.InterfaceIndex -NextHop 0.0.0.0 -RouteMetric 1 -PolicyStore ActiveStore | Out-Null
+"#
+        );
+        let output = std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .output()
+            .expect("failed to run PowerShell to install Windows e2e host route");
+
+        assert!(
+            output.status.success(),
+            "failed to install Windows e2e host route {prefix} on {interface_alias}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        Self {
+            prefix,
+            interface_alias,
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsHostRoute {
+    fn drop(&mut self) {
+        let script = format!(
+            r#"
+Remove-NetRoute -DestinationPrefix "{}" -InterfaceAlias "{}" -Confirm:$false -ErrorAction SilentlyContinue
+"#,
+            self.prefix, self.interface_alias
+        );
+        let _ = std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .status();
+    }
 }
 
 /// Unprivileged, in-process e2e: wires together the public overlay surface and
@@ -445,6 +595,11 @@ async fn unprivileged_tls_vip_proxy() {
 
 /// Privileged real-TUN e2e. Skips unless explicitly opted in, so ordinary
 /// `cargo test` stays side-effect safe even if it is run as root/Admin.
+///
+/// This is the path behind `just e2e`: it creates the real OS TUN/Wintun
+/// interface, registers a service, resolves its overlay name via the embedded
+/// DNS server, then opens a normal OS TCP socket to the VIP and verifies that
+/// bytes pass through the tunnel to the backend and back.
 #[cfg(any(unix, target_os = "windows"))]
 #[tokio::test]
 async fn real_tun_overlay() {
@@ -492,11 +647,11 @@ async fn real_tun_overlay() {
             // (`deven0`). Wintun permits only one active session per adapter,
             // and `just e2e` is commonly run while the daemon is installed.
             tun.name = Some("portzero-e2e".to_string());
-            // Windows also rejects assigning the same static IPv4 address to
-            // two adapters. Keep this smoke test off the production overlay
-            // address so it can run while the installed daemon owns
-            // 10.254.0.1/16.
-            tun.address = Ipv4Addr::new(10, 253, 0, 1);
+            // Windows rejects assigning the same static IPv4 address to two
+            // adapters. Keep this test off the production gateway address while
+            // staying inside 10.254.0.0/16 so VIP routes still target the real
+            // overlay subnet.
+            tun.address = Ipv4Addr::new(10, 254, 250, 1);
         }
 
         let config = OverlayConfig {
@@ -523,7 +678,16 @@ async fn real_tun_overlay() {
         // embedded DNS.
         tokio::time::sleep(Duration::from_millis(200)).await;
         let ip = dns_query_a("127.0.0.1:53000".parse().unwrap(), "rooted.portzero.local").await;
-        assert!(ip.is_some(), "real overlay DNS did not resolve service");
+        let ip = ip.expect("real overlay DNS did not resolve service");
+        #[cfg(target_os = "windows")]
+        let _route = WindowsHostRoute::install(ip, "portzero-e2e");
+
+        // Prove this is a real end-to-end tunnel check: a normal OS TCP socket
+        // connects to the service VIP, the packet enters the TUN/Wintun
+        // interface, the stack proxies it to the localhost backend, and the echo
+        // comes back through the same path.
+        let tunnel_addr = SocketAddr::from((ip, 5432));
+        assert_tcp_echo(tunnel_addr, b"hello real tun overlay").await;
 
         overlay.shutdown().await;
     })
