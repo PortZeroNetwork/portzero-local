@@ -391,13 +391,21 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         docker_shutdown.clone(),
     ));
 
-    let (mgmt_server, mgmt_listener) =
-        crate::management::ManagementServer::bind(config.state_dir.clone())
-            .await
-            .expect("failed to bind management API server");
-    let mgmt_port = mgmt_server.bound_port;
-    let mgmt_store = mgmt_server.store.clone();
-    tokio::spawn(mgmt_server.serve(mgmt_listener));
+    let (mgmt_port, mgmt_store) =
+        match crate::management::ManagementServer::bind(config.state_dir.clone()).await {
+            Ok((mgmt_server, mgmt_listener)) => {
+                let mgmt_port = mgmt_server.bound_port;
+                let mgmt_store = mgmt_server.store.clone();
+                tokio::spawn(mgmt_server.serve(mgmt_listener));
+                (mgmt_port, mgmt_store)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Management API server could not bind; continuing without local API: {e:#}"
+                );
+                (0, Arc::new(tokio::sync::RwLock::new(HashMap::new())))
+            }
+        };
 
     let overlay: Option<Arc<OverlayNetwork>> = match OverlayNetwork::start(
         OverlayConfig {
