@@ -368,6 +368,7 @@ install-hooks:
     echo "  git commit --no-verify"
     echo "  git push --no-verify"
 
+[script('powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File')]
 [windows]
 install-hooks:
     $ErrorActionPreference = "Stop"
