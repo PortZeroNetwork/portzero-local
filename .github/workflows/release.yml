@@ -341,6 +341,30 @@ jobs:
         shell: pwsh
         run: choco install wixtoolset --no-progress -y
 
+      - name: Locate signtool
+        shell: pwsh
+        run: |
+          $signtoolPath = $null
+
+          $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue
+          if ($signtool) {
+            $signtoolPath = Split-Path -Parent $signtool.Source
+          } else {
+            $kitRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10\bin"
+            $signtool = Get-ChildItem $kitRoot -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if ($signtool) {
+              $signtoolPath = $signtool.DirectoryName
+            }
+          }
+
+          if (-not $signtoolPath) {
+            throw "signtool.exe was not found on the runner"
+          }
+
+          Add-Content $env:GITHUB_PATH $signtoolPath
+
       - name: Build MSI
         shell: pwsh
         run: |
