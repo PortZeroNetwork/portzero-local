@@ -1084,6 +1084,7 @@ fn avahi_can_intercept_portzero_local() -> bool {
         .is_some_and(nsswitch_prefers_mdns_for_local_hosts)
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn nsswitch_prefers_mdns_for_local_hosts(content: &str) -> bool {
     content.lines().any(|line| {
         let trimmed = line.trim();

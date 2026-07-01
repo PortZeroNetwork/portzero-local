@@ -48,6 +48,7 @@ use anyhow::{Context, Result};
 
 const CERT_NICKNAME: &str = "PortZero Local CA";
 const SYSTEM_CERT_NAME: &str = "portzero-local-ca.crt";
+#[cfg(target_os = "linux")]
 const DEBIAN_CA_CONFIG_LINE: &str = "portzero/portzero-local-ca.crt";
 
 /// Install the PortZero local CA into OS trust stores.
