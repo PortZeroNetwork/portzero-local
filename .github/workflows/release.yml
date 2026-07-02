@@ -1,9 +1,11 @@
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
     branches:
-      - release/current
+      - 'release/*'
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -17,6 +19,7 @@ jobs:
   version:
     name: Determine Version
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -24,6 +27,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Generate version
         id: version
@@ -91,6 +95,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set CLI package version
         run: scripts/set-cli-version.sh "${{ needs.version.outputs.version }}"
@@ -347,6 +353,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set CLI package version
         run: scripts/set-cli-version.sh "${{ needs.version.outputs.version }}"
@@ -399,6 +407,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Download amd64 Windows artifact
         uses: actions/download-artifact@v5
@@ -562,6 +572,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Download build artifacts
         uses: actions/download-artifact@v5
@@ -591,7 +603,7 @@ jobs:
 
       - name: Generate version manifest
         run: |
-          echo "{\"version\":\"${{ needs.version.outputs.version }}\",\"commit\":\"${GITHUB_SHA}\"}" \
+          echo "{\"version\":\"${{ needs.version.outputs.version }}\",\"commit\":\"${{ github.event.workflow_run.head_sha || github.sha }}\"}" \
             > artifacts/version.json
 
       - name: Create GitHub Release
