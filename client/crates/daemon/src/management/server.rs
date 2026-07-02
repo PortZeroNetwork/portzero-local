@@ -93,6 +93,10 @@ fn build_router(state: AppState) -> Router {
             routing::post(handlers::register).delete(handlers::deregister),
         )
         .route("/v1/status", routing::get(handlers::status))
+        .route(
+            "/v1/config/https",
+            routing::put(handlers::update_https_policy),
+        )
         // Status UI (served at portzero.local)
         .route("/", routing::get(handlers::status_ui))
         .route("/login", routing::get(handlers::start_login))

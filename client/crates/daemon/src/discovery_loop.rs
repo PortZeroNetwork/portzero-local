@@ -163,6 +163,61 @@ impl DaemonConfig {
     pub fn diagnostics_path(&self) -> PathBuf {
         self.state_dir.join("diagnostics.json")
     }
+
+    /// Write (or update) only the HTTPS policy section in the config file (next to state dir,
+    /// typically `~/.portzero/config.toml`). Preserves other existing keys/sections using
+    /// a TOML value merge.
+    pub fn write_https_policy(&self, policy: OverlayHttpsPolicy) -> Result<()> {
+        let path = self.config_path();
+
+        let mut root: toml::Value = if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(raw) => {
+                    toml::from_str(&raw).unwrap_or_else(|_| toml::Value::Table(Default::default()))
+                }
+                Err(_) => toml::Value::Table(Default::default()),
+            }
+        } else {
+            toml::Value::Table(Default::default())
+        };
+
+        // Ensure [overlay.https] table exists and set the three keys.
+        if let Some(tbl) = root.as_table_mut() {
+            let overlay = tbl
+                .entry("overlay".to_owned())
+                .or_insert(toml::Value::Table(Default::default()));
+            if let Some(ov) = overlay.as_table_mut() {
+                let https = ov
+                    .entry("https".to_owned())
+                    .or_insert(toml::Value::Table(Default::default()));
+                if let Some(h) = https.as_table_mut() {
+                    h.insert(
+                        "enable_for_port_80".to_owned(),
+                        toml::Value::Boolean(policy.enable_for_port_80),
+                    );
+                    h.insert(
+                        "redirect_port_80".to_owned(),
+                        toml::Value::Boolean(policy.redirect_port_80),
+                    );
+                    h.insert(
+                        "passthrough_port_443".to_owned(),
+                        toml::Value::Boolean(policy.passthrough_port_443),
+                    );
+                }
+            }
+        }
+
+        let serialized =
+            toml::to_string_pretty(&root).context("serializing config.toml for https policy")?;
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating parent dir for {}", path.display()))?;
+        }
+        std::fs::write(&path, serialized)
+            .with_context(|| format!("writing https policy to {}", path.display()))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1696,5 +1751,29 @@ mod tests {
         file.apply_to(&mut config);
 
         assert_eq!(config.dns_first_hit_policy, DnsFirstHitPolicy::ProactiveVip);
+    }
+
+    #[test]
+    fn test_write_https_policy_roundtrips_via_file() {
+        let (cfg, _dir) = temp_config();
+        // config.toml lives in parent of the (temp) state dir
+        let policy = OverlayHttpsPolicy {
+            enable_for_port_80: false,
+            redirect_port_80: true,
+            passthrough_port_443: false,
+        };
+        cfg.write_https_policy(policy)
+            .expect("write should succeed for temp dir");
+
+        // Load by pointing a fresh default? Simulate: parse the sibling config.toml directly
+        let cfg_path = cfg.config_path();
+        let raw = std::fs::read_to_string(&cfg_path).expect("config file written");
+        let parsed: FileConfig = toml::from_str(&raw).unwrap();
+        let mut loaded = DaemonConfig::default();
+        parsed.apply_to(&mut loaded);
+
+        assert!(!loaded.overlay_https.enable_for_port_80);
+        assert!(loaded.overlay_https.redirect_port_80);
+        assert!(!loaded.overlay_https.passthrough_port_443);
     }
 }

@@ -13,6 +13,7 @@ use utoipa::ToSchema;
 use crate::management::pid_lookup;
 use crate::management::port_verify;
 use crate::management::server::{AppState, PortRegistration};
+use crate::net::stack::OverlayHttpsPolicy;
 use crate::route_table::{OverlayState, RouteTable};
 
 const PORTZERO_MARK_JPEG: &[u8] = include_bytes!(concat!(
@@ -70,6 +71,14 @@ pub struct ErrorResponse {
     error: &'static str,
     /// Human-readable message with additional detail.
     detail: String,
+}
+
+/// Partial or full update for the HTTPS policy that controls *.portzero.local behavior.
+#[derive(Debug, Deserialize, ToSchema, Default)]
+pub struct HttpsPolicyUpdate {
+    pub enable_for_port_80: Option<bool>,
+    pub redirect_port_80: Option<bool>,
+    pub passthrough_port_443: Option<bool>,
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -669,6 +678,9 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
 .diag-fix code{background:var(--soft);color:var(--fg);padding:1px 5px;border-radius:4px}
 .no-issues{color:var(--ok);font-size:14px;margin:0}
 .loading{color:var(--muted);padding:32px 0}
+.settings label{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:14px;cursor:pointer}
+.settings input[type=checkbox]{accent-color:var(--accent)}
+.hint{color:var(--muted);font-size:12px;margin-top:4px}
 .endpoint-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:22px;align-items:start}
 .endpoint-list{display:grid;gap:12px}
 .endpoint{border-top:1px solid var(--line);padding-top:12px}
@@ -928,6 +940,16 @@ function render(d){
   }
   html+='</section>';
 
+  // HTTPS policy editor (config change)
+  html+='<section class="section"><div class="section-head"><h2>HTTPS settings</h2><span class="section-note">for *.portzero.local</span></div>';
+  html+='<div class="settings" id="https-settings">';
+  const hp = (d.https_policy || {});
+  html += '<label><input type="checkbox" id="https-enable-80" '+(hp.enable_for_port_80?'checked':'')+'> Enable HTTPS (port 443) for backends on port 80</label>';
+  html += '<label><input type="checkbox" id="https-redirect-80" '+(hp.redirect_port_80?'checked':'')+'> Redirect HTTP port 80 → HTTPS</label>';
+  html += '<label><input type="checkbox" id="https-passthrough-443" '+(hp.passthrough_port_443?'checked':'')+'> Passthrough TLS on port 443 when backend speaks TLS</label>';
+  html+='<p class="hint">Saved to ~/.portzero/config.toml. Restart the daemon to apply to the overlay stack.</p>';
+  html+='</div></section>';
+
   html+='<section class="section" id="diagnostics"><div class="section-head"><h2>Diagnostics</h2></div>';
   const diags=d.diagnostics&&d.diagnostics.issues;
   if(!diags||diags.length===0){
@@ -939,6 +961,36 @@ function render(d){
   html+='</section>';
 
   document.getElementById('status-root').innerHTML=html;
+
+  bindHttpsControls(d);
+}
+
+function bindHttpsControls(d){
+  const ids = ['https-enable-80','https-redirect-80','https-passthrough-443'];
+  const keys = ['enable_for_port_80','redirect_port_80','passthrough_port_443'];
+  ids.forEach(function(id, i){
+    const el = document.getElementById(id);
+    if(!el) return;
+    // avoid stacking by replacing listener via clone (simple)
+    const fresh = el.cloneNode(true);
+    el.parentNode.replaceChild(fresh, el);
+    fresh.addEventListener('change', async function(){
+      const patch = {};
+      patch[keys[i]] = fresh.checked;
+      try{
+        const res = await fetch('/v1/config/https',{
+          method:'PUT',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(patch)
+        });
+        if(!res.ok){
+          console.warn('https policy update failed', res.status);
+        }
+      }catch(e){ console.warn('https update error', e); }
+      // refresh data shortly
+      setTimeout(load, 200);
+    });
+  });
 }
 
 async function load(){
@@ -1031,6 +1083,8 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
 
     add_duplicate_route_alerts(&mut local_services, &mut cloud_routes);
 
+    let https_policy = crate::discovery_loop::DaemonConfig::load().overlay_https;
+
     Json(serde_json::json!({
         "daemon_pid": daemon_pid,
         "overlay_active": overlay.overlay_active,
@@ -1042,7 +1096,43 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         "management_registrations": management_registrations,
         "diagnostics": diagnostics,
         "languages": detected_languages(),
+        "https_policy": {
+            "enable_for_port_80": https_policy.enable_for_port_80,
+            "redirect_port_80": https_policy.redirect_port_80,
+            "passthrough_port_443": https_policy.passthrough_port_443,
+        },
     }))
+}
+
+/// PUT /v1/config/https — update the overlay HTTPS policy persisted in config.toml.
+/// The change is written to disk; the running daemon typically needs a restart
+/// for the new policy to take effect on the virtual stack.
+pub async fn update_https_policy(
+    State(_state): State<AppState>,
+    Json(body): Json<HttpsPolicyUpdate>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let current = crate::discovery_loop::DaemonConfig::load().overlay_https;
+    let policy = OverlayHttpsPolicy {
+        enable_for_port_80: body
+            .enable_for_port_80
+            .unwrap_or(current.enable_for_port_80),
+        redirect_port_80: body.redirect_port_80.unwrap_or(current.redirect_port_80),
+        passthrough_port_443: body
+            .passthrough_port_443
+            .unwrap_or(current.passthrough_port_443),
+    };
+
+    if let Err(e) = crate::discovery_loop::DaemonConfig::load().write_https_policy(policy) {
+        tracing::warn!(?e, "failed to write https policy");
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "config_write_failed",
+                detail: format!("Failed to persist config: {e}"),
+            }),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]
