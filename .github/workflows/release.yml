@@ -577,6 +577,18 @@ jobs:
           pattern: portzero-{deb,rpm,msi,winget}
           merge-multiple: true
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: extractions/setup-just@v3
+
+      - name: Generate OpenAPI spec
+        run: just openapi
+
+      - name: Copy OpenAPI spec into release assets
+        run: cp api/management-v1.yaml artifacts/management-v1.yaml
+
       - name: Generate version manifest
         run: |
           echo "{\"version\":\"${{ needs.version.outputs.version }}\",\"commit\":\"${GITHUB_SHA}\"}" \
@@ -623,6 +635,7 @@ jobs:
             artifacts/*.rpm
             artifacts/*.msi
             artifacts/version.json
+            artifacts/management-v1.yaml
             scripts/linux-install.sh
             artifacts/packaging/winget/manifests/**
 
