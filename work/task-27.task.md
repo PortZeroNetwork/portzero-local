@@ -1,7 +1,7 @@
 ---
 id: 094ba6d7-7f78-47b0-8565-84fbce2c3f76
 slug: task-27
-status: todo
+status: done
 title: Add macOS to the CI test matrix (currently ubuntu-only)
 milestones:
 - milestone-2

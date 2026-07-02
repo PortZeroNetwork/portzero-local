@@ -1,7 +1,7 @@
 ---
 id: 11d9e269-5796-43de-9903-c8d541210572
 slug: task-28
-status: todo
+status: done
 title: 'Windows parity: wintun data path, NRPT DNS, scheduled-task autostart'
 milestones:
 - milestone-2

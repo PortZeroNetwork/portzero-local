@@ -1,10 +1,11 @@
 ---
 id: 078b63c3-ab20-40fc-a3ba-0dce518777c6
 slug: task-26
-status: todo
+status: archived
 title: Harden macOS process/port discovery (lsof accuracy + system-wide perf)
-milestones:
-- milestone-2
+relations:
+  contains:
+  - milestone-2
 depends_on:
 - 2a8cf42b-859e-449a-802b-6f8ffa24caf0
 created_at: 2026-06-23T12:51:59.846197Z

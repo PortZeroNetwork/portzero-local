@@ -1,7 +1,7 @@
 ---
 id: deadae2f-b8d3-4b14-b4c4-6cffde7bc2a1
 slug: task-41
-status: todo
+status: done
 title: Deduplicate duplicate overlay dashboard entries for the same local process
 created_at: 2026-06-29T13:25:17.096099510Z
 updated_at: 2026-06-29T13:25:17.096099510Z

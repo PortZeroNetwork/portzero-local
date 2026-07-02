@@ -1,7 +1,7 @@
 ---
 id: d8f896b1-7f1d-4bfc-8817-a0f0d60246bd
 slug: task-49
-status: todo
+status: done
 title: Split discovery.rs into process and Docker discovery modules
 relations:
   contains:
