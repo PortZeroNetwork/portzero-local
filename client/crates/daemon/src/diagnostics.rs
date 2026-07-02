@@ -18,7 +18,7 @@ use crate::tls::{trust, LocalCa};
 
 const PORTZERO_LOCAL_DASHBOARD_IP: &str = "10.254.0.2";
 const PORTZERO_LOCAL_DASHBOARD_IPV4: Ipv4Addr = Ipv4Addr::new(10, 254, 0, 2);
-const PORTZERO_LOCAL_HTTPS_URL: &str = "https://portzero.local/status.json";
+const PORTZERO_LOCAL_HTTP_URL: &str = "http://portzero.local/status.json";
 const ACTIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -863,7 +863,7 @@ async fn probe_portzero_local_dns() -> Diagnostic {
     }
 }
 
-async fn probe_portzero_local_https() -> Diagnostic {
+async fn probe_portzero_local_http() -> Diagnostic {
     let client = match reqwest::Client::builder()
         .no_proxy()
         .timeout(ACTIVE_PROBE_TIMEOUT)
@@ -872,68 +872,55 @@ async fn probe_portzero_local_https() -> Diagnostic {
         Ok(client) => client,
         Err(err) => {
             return Diagnostic {
-                id: "https_probe_unavailable".into(),
+                id: "http_probe_unavailable".into(),
                 severity: Severity::Warning,
-                category: "tls".into(),
-                title: "Could not initialize HTTPS probe".to_string(),
-                detail: format!("Failed to build the HTTPS probe client: {err}"),
+                category: "network".into(),
+                title: "Could not initialize HTTP dashboard probe".to_string(),
+                detail: format!("Failed to build the HTTP dashboard probe client: {err}"),
                 fix: None,
             }
         }
     };
 
-    match client.get(PORTZERO_LOCAL_HTTPS_URL).send().await {
+    match client.get(PORTZERO_LOCAL_HTTP_URL).send().await {
         Ok(response) if response.status() == StatusCode::OK => Diagnostic {
-            id: "https_probe_ok".into(),
+            id: "http_probe_ok".into(),
             severity: Severity::Info,
-            category: "tls".into(),
-            title: "HTTPS trust works for portzero.local".to_string(),
+            category: "network".into(),
+            title: "HTTP dashboard works for portzero.local".to_string(),
             detail: format!(
-                "Active HTTPS probe fetched {} with a trusted certificate.",
-                PORTZERO_LOCAL_HTTPS_URL
+                "Active HTTP probe fetched {} successfully.",
+                PORTZERO_LOCAL_HTTP_URL
             ),
             fix: None,
         },
         Ok(response) => Diagnostic {
-            id: "https_probe_bad_status".into(),
+            id: "http_probe_bad_status".into(),
             severity: Severity::Warning,
-            category: "tls".into(),
-            title: "HTTPS probe reached portzero.local but got an unexpected response".to_string(),
+            category: "network".into(),
+            title: "HTTP probe reached portzero.local but got an unexpected response".to_string(),
             detail: format!(
-                "Active HTTPS probe fetched {} but received HTTP {}.",
-                PORTZERO_LOCAL_HTTPS_URL,
+                "Active HTTP probe fetched {} but received HTTP {}.",
+                PORTZERO_LOCAL_HTTP_URL,
                 response.status()
             ),
             fix: None,
         },
-        Err(err) if is_certificate_validation_error(&err) => Diagnostic {
-            id: "https_probe_cert_untrusted".into(),
-            severity: Severity::Error,
-            category: "tls".into(),
-            title: "HTTPS certificate trust failed for portzero.local".to_string(),
-            detail: format!(
-                "Active HTTPS probe could resolve portzero.local but the TLS certificate was not trusted: {}",
-                summarize_reqwest_error(&err)
-            ),
-            fix: Some(Fix {
-                kind: FixKind::Manual,
-                description: "Install the local CA into the system trust store.".to_string(),
-                command: Some("portzero trust generate && sudo portzero trust install".to_string()),
-            }),
-        },
         Err(err) => Diagnostic {
-            id: "https_probe_failed".into(),
+            id: "http_probe_failed".into(),
             severity: Severity::Warning,
-            category: "tls".into(),
-            title: "HTTPS probe could not reach portzero.local".to_string(),
+            category: "network".into(),
+            title: "HTTP probe could not reach portzero.local".to_string(),
             detail: format!(
-                "Active HTTPS probe to {} failed: {}",
-                PORTZERO_LOCAL_HTTPS_URL,
+                "Active HTTP probe to {} failed: {}",
+                PORTZERO_LOCAL_HTTP_URL,
                 summarize_reqwest_error(&err)
             ),
             fix: Some(Fix {
                 kind: FixKind::Manual,
-                description: "Check that the overlay network and local dashboard are reachable over HTTPS.".to_string(),
+                description:
+                    "Check that the overlay network and local dashboard are reachable over HTTP."
+                        .to_string(),
                 command: None,
             }),
         },
@@ -994,14 +981,14 @@ pub async fn run_diagnostics(state_dir: &std::path::Path) -> DiagnosticsReport {
 
     checks_run += 1;
     if dns_probe_ok {
-        issues.push(probe_portzero_local_https().await);
+        issues.push(probe_portzero_local_http().await);
     } else {
         issues.push(Diagnostic {
-            id: "https_probe_skipped".into(),
+            id: "http_probe_skipped".into(),
             severity: Severity::Info,
-            category: "tls".into(),
-            title: "HTTPS probe skipped because DNS resolution failed".to_string(),
-            detail: "The active HTTPS probe did not run because portzero.local did not resolve to the expected dashboard address.".to_string(),
+            category: "network".into(),
+            title: "HTTP dashboard probe skipped because DNS resolution failed".to_string(),
+            detail: "The active HTTP dashboard probe did not run because portzero.local did not resolve to the expected dashboard address.".to_string(),
             fix: None,
         });
     }
@@ -1111,23 +1098,6 @@ fn format_ip_list(ips: &[IpAddr]) -> String {
         .join(", ")
 }
 
-fn is_certificate_validation_error(err: &reqwest::Error) -> bool {
-    if err.is_builder() {
-        return false;
-    }
-    error_chain_contains(
-        err,
-        &[
-            "certificate",
-            "unknown issuer",
-            "bad certificate",
-            "ca used as end entity",
-            "certificateverifyfailed",
-            "invalid peer certificate",
-        ],
-    )
-}
-
 fn summarize_reqwest_error(err: &reqwest::Error) -> String {
     let mut parts = Vec::new();
     parts.push(err.to_string());
@@ -1142,13 +1112,6 @@ fn summarize_reqwest_error(err: &reqwest::Error) -> String {
     }
 
     parts.join(": ")
-}
-
-fn error_chain_contains(err: &reqwest::Error, needles: &[&str]) -> bool {
-    let text = summarize_reqwest_error(err).to_ascii_lowercase();
-    needles
-        .iter()
-        .any(|needle| text.contains(&needle.to_ascii_lowercase()))
 }
 
 #[cfg(test)]

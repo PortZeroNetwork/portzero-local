@@ -869,6 +869,10 @@ fn select_connection_action(
     let service = services.get_by_vip(vip)?;
 
     match port {
+        80 if is_management_service(&service.name) => {
+            Some(ConnectionAction::PlainProxy(service.real_addr))
+        }
+        443 if is_management_service(&service.name) => None,
         80 if service.service_port == 80
             && policy.enable_for_port_80
             && policy.redirect_port_80
@@ -894,6 +898,10 @@ fn select_connection_action(
         _ if service.service_port == port => Some(ConnectionAction::PlainProxy(service.real_addr)),
         _ => None,
     }
+}
+
+fn is_management_service(name: &str) -> bool {
+    matches!(name, "portzero" | "portzero-api")
 }
 
 fn spawn_https_redirect(
@@ -1371,6 +1379,46 @@ mod tests {
         assert_eq!(
             select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 443),
             Some(ConnectionAction::TlsTerminate(svc.real_addr))
+        );
+    }
+
+    #[test]
+    fn management_dashboard_remains_http_only() {
+        let mut table = ServiceTable::new();
+        let svc = table.register(
+            "portzero".to_string(),
+            "127.0.0.1:49156".parse().unwrap(),
+            80,
+            0,
+        );
+
+        assert_eq!(
+            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 80),
+            Some(ConnectionAction::PlainProxy(svc.real_addr))
+        );
+        assert_eq!(
+            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 443),
+            None
+        );
+    }
+
+    #[test]
+    fn management_api_remains_http_only() {
+        let mut table = ServiceTable::new();
+        let svc = table.register(
+            "portzero-api".to_string(),
+            "127.0.0.1:49157".parse().unwrap(),
+            80,
+            0,
+        );
+
+        assert_eq!(
+            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 80),
+            Some(ConnectionAction::PlainProxy(svc.real_addr))
+        );
+        assert_eq!(
+            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 443),
+            None
         );
     }
 

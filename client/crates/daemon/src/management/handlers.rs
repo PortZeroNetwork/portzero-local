@@ -241,7 +241,8 @@ fn display_substitutions(
 
 fn local_service_link_url(domain: &str, service_port: u16) -> Option<String> {
     match service_port {
-        80 | 443 => Some(format!("https://{domain}")),
+        80 => Some(format!("http://{domain}")),
+        443 => Some(format!("https://{domain}")),
         _ => None,
     }
 }
@@ -1052,10 +1053,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn local_service_link_url_prefers_https_for_web_ports() {
+    fn local_service_link_url_uses_scheme_for_web_port() {
         assert_eq!(
             local_service_link_url("web.portzero.local", 80).as_deref(),
-            Some("https://web.portzero.local")
+            Some("http://web.portzero.local")
         );
         assert_eq!(
             local_service_link_url("staging.portzero.net.portzero.local", 443).as_deref(),
