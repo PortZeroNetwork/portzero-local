@@ -201,6 +201,12 @@ install:
     echo "✓ portzero installed. Open http://portzero.local in your browser."
 
 # Uninstall the CLI, stop the daemon, and remove the autostart service.
+[script('powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File')]
+[windows]
+uninstall:
+    & ".\scripts\windows-uninstall.ps1"
+
+[unix]
 uninstall:
     #!/usr/bin/env bash
     set -euo pipefail
