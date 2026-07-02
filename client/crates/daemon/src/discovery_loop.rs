@@ -343,7 +343,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     // resources, escalate to SIGKILL if it overstays) before claiming the PID
     // file. This runs BEFORE OverlayNetwork::start so the old daemon has released
     // the TUN device and DNS port by the time we create ours.
-    acquire_singleton_or_take_over(&config)?;
+    acquire_singleton_or_take_over(config)?;
 
     let mut config = config.clone();
 
@@ -398,7 +398,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         Instant::now() + Duration::from_secs(TOKEN_REFRESH_CHECK_INTERVAL_SECS);
     let mut next_config_check = Instant::now() + Duration::from_secs(CONFIG_RELOAD_INTERVAL_SECS);
     let mut last_config_mtime: Option<std::time::SystemTime> =
-        std::fs::metadata(&config.config_path())
+        std::fs::metadata(config.config_path())
             .ok()
             .and_then(|m| m.modified().ok());
 
@@ -1423,7 +1423,7 @@ pub fn stop_daemon(config: &DaemonConfig) -> Result<()> {
 
     signal_pid(pid, false)?;
 
-    remove_pid_file(&config);
+    remove_pid_file(config);
 
     Ok(())
 }
