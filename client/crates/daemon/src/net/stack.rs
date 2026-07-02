@@ -84,6 +84,10 @@ impl Default for OverlayHttpsPolicy {
 
 pub enum StackCommand {
     UpdateServices(Box<ServiceTable>),
+    /// Apply a new HTTPS policy without restarting the stack. This may add or
+    /// remove the synthetic 443 listener (for 80->443 redirect/term) but will
+    /// not terminate any established proxied connections.
+    UpdateHttpsPolicy(OverlayHttpsPolicy),
     Shutdown,
 }
 
@@ -196,6 +200,17 @@ impl VirtualStack {
         let _ = self
             .cmd_tx
             .send(StackCommand::UpdateServices(Box::new(table)))
+            .await;
+        Ok(())
+    }
+
+    /// Update HTTPS policy live. Affects decisions for *new* connections only
+    /// (and whether a 443 listener exists); established TCP sessions continue
+    /// with the action chosen at their accept time. No connections are dropped.
+    pub async fn update_https_policy(&self, policy: OverlayHttpsPolicy) -> Result<()> {
+        let _ = self
+            .cmd_tx
+            .send(StackCommand::UpdateHttpsPolicy(policy))
             .await;
         Ok(())
     }
@@ -496,6 +511,15 @@ where
                     match cmd {
                         Some(StackCommand::UpdateServices(table)) => {
                             self.apply_services(*table);
+                        }
+                        Some(StackCommand::UpdateHttpsPolicy(policy)) => {
+                            self.https_policy = policy;
+                            // Re-evaluate listeners (e.g. whether 443 should be
+                            // present for http-80 services under the new policy).
+                            // Safe: only listener sockets are added/removed; any
+                            // accepted connections keep their original action.
+                            let table = self.services.clone();
+                            self.apply_services(table);
                         }
                         Some(StackCommand::Shutdown) | None => {
                             tracing::debug!("virtual stack shutting down");

@@ -6,7 +6,8 @@
 
 use std::net::{IpAddr, SocketAddr};
 #[cfg(target_os = "windows")]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -127,6 +128,9 @@ pub struct OverlayNetwork {
     /// re-resolve immediately. Paired with the `dns_rescan` signal the DNS
     /// server fires on a miss.
     dns_updated: Arc<Notify>,
+    /// Atomic holder for the live-reloadable DNS first-hit policy. Shared with
+    /// the DNS server task; updated by the config poller in the discovery loop.
+    dns_first_hit_policy: Arc<AtomicU8>,
 }
 
 impl OverlayNetwork {
@@ -183,6 +187,7 @@ impl OverlayNetwork {
             .with_first_hit_policy(config.dns_first_hit_policy)
             .with_stack_updates(stack.command_sender())
             .with_rescan(dns_rescan, dns_updated.clone());
+        let dns_first_hit_policy = dns_server.first_hit_policy_holder();
         #[cfg(target_os = "windows")]
         let runtime = tokio::runtime::Handle::current();
         #[cfg(target_os = "windows")]
@@ -223,6 +228,7 @@ impl OverlayNetwork {
             link_name,
             ca,
             dns_updated,
+            dns_first_hit_policy,
         })
     }
 
@@ -243,6 +249,25 @@ impl OverlayNetwork {
         // appear so it can re-resolve against the fresh table right away.
         self.dns_updated.notify_waiters();
         Ok(())
+    }
+
+    /// Apply an updated HTTPS policy to the running virtual stack.
+    ///
+    /// Safe to call while the daemon is serving traffic: only future
+    /// connection *accept* decisions and the set of listening ports are
+    /// affected. In-progress proxied sessions are not torn down.
+    pub async fn update_https_policy(&self, policy: OverlayHttpsPolicy) -> Result<()> {
+        self.stack.update_https_policy(policy).await
+    }
+
+    /// Apply an updated DNS first-hit policy live.
+    ///
+    /// Only affects how the DNS server reacts to queries for names that are
+    /// not yet in the service table; has no effect on established resolutions
+    /// or open connections.
+    pub fn update_dns_first_hit_policy(&self, policy: DnsFirstHitPolicy) {
+        self.dns_first_hit_policy
+            .store(DnsFirstHitPolicy::to_u8(policy), Ordering::Relaxed);
     }
 
     /// Shutdown the overlay components.

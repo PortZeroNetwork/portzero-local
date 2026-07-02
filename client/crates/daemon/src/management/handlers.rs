@@ -1105,8 +1105,9 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
 }
 
 /// PUT /v1/config/https — update the overlay HTTPS policy persisted in config.toml.
-/// The change is written to disk; the running daemon typically needs a restart
-/// for the new policy to take effect on the virtual stack.
+/// The change is written to disk. The running daemon polls the file and applies
+/// the new policy within a few seconds. Existing connections are not dropped;
+/// only new connection decisions and listener presence are affected.
 pub async fn update_https_policy(
     State(_state): State<AppState>,
     Json(body): Json<HttpsPolicyUpdate>,

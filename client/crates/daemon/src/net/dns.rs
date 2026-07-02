@@ -10,7 +10,8 @@
 use std::net::UdpSocket as StdUdpSocket;
 use std::net::{Ipv4Addr, SocketAddr};
 #[cfg(target_os = "windows")]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 #[cfg(target_os = "windows")]
 use std::time::Duration;
@@ -56,11 +57,33 @@ pub enum DnsFirstHitPolicy {
     ProactiveVipHold,
 }
 
+impl DnsFirstHitPolicy {
+    pub(crate) fn to_u8(self) -> u8 {
+        match self {
+            DnsFirstHitPolicy::FastScan => 0,
+            DnsFirstHitPolicy::ProactiveVip => 1,
+            DnsFirstHitPolicy::ProactiveVipHold => 2,
+        }
+    }
+
+    pub(crate) fn from_u8(v: u8) -> Self {
+        match v {
+            1 => DnsFirstHitPolicy::ProactiveVip,
+            2 => DnsFirstHitPolicy::ProactiveVipHold,
+            _ => DnsFirstHitPolicy::FastScan,
+        }
+    }
+}
+
 /// Runs a simple UDP DNS server that answers A queries for the overlay.
 pub struct OverlayDnsServer {
     services: Arc<RwLock<ServiceTable>>,
     listen_addr: SocketAddr,
-    first_hit_policy: DnsFirstHitPolicy,
+    /// Stored as AtomicU8 so the policy can be updated live by the config
+    /// poller (from another task) without restarting the DNS server. The
+    /// value only affects "first hit" behavior for unknown *.portzero.local
+    /// names; it never impacts established services or in-flight connections.
+    first_hit_policy: Arc<AtomicU8>,
     stack_updates: Option<mpsc::Sender<StackCommand>>,
     /// Pinged when a query arrives for an unknown `*.portzero.local` name, so the
     /// discovery loop rescans immediately. `None` in standalone/test setups.
@@ -77,21 +100,35 @@ impl OverlayDnsServer {
         Self {
             services,
             listen_addr,
-            first_hit_policy: DnsFirstHitPolicy::default(),
+            first_hit_policy: Arc::new(AtomicU8::new(DnsFirstHitPolicy::default().to_u8())),
             stack_updates: None,
             dns_rescan: None,
             dns_updated: None,
         }
     }
 
-    pub fn with_first_hit_policy(mut self, policy: DnsFirstHitPolicy) -> Self {
-        self.first_hit_policy = policy;
+    pub fn with_first_hit_policy(self, policy: DnsFirstHitPolicy) -> Self {
+        self.first_hit_policy
+            .store(policy.to_u8(), Ordering::Relaxed);
         self
     }
 
     pub fn with_stack_updates(mut self, stack_updates: mpsc::Sender<StackCommand>) -> Self {
         self.stack_updates = Some(stack_updates);
         self
+    }
+
+    /// Returns a shareable atomic for the first-hit policy. The discovery loop's
+    /// config poller keeps a clone of this so it can change the value at runtime
+    /// (the DNS server task will observe it on the next query).
+    pub fn first_hit_policy_holder(&self) -> Arc<AtomicU8> {
+        Arc::clone(&self.first_hit_policy)
+    }
+
+    /// Update policy live (equivalent to calling store via the holder).
+    pub fn update_first_hit_policy(&self, policy: DnsFirstHitPolicy) {
+        self.first_hit_policy
+            .store(policy.to_u8(), Ordering::Relaxed);
     }
 
     /// Wire up the rescan/refresh signals so a miss on an unknown subdomain
@@ -190,8 +227,10 @@ impl OverlayDnsServer {
             }
         }
 
+        let current_policy =
+            DnsFirstHitPolicy::from_u8(self.first_hit_policy.load(Ordering::Relaxed));
         if matches!(
-            self.first_hit_policy,
+            current_policy,
             DnsFirstHitPolicy::ProactiveVip | DnsFirstHitPolicy::ProactiveVipHold
         ) {
             let (reserved, table) = {
@@ -199,7 +238,7 @@ impl OverlayDnsServer {
                 let reserved = reserve_unresolved_overlay_queries(
                     data,
                     &mut services,
-                    self.first_hit_policy == DnsFirstHitPolicy::ProactiveVipHold,
+                    current_policy == DnsFirstHitPolicy::ProactiveVipHold,
                 );
                 (reserved, services.clone())
             };

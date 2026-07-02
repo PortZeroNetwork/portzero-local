@@ -23,6 +23,11 @@ const AUTH_CHECK_INTERVAL_SECS: u64 = 30;
 const TOKEN_REFRESH_THRESHOLD_SECS: u64 = 3600;
 /// How often to check if the token needs refreshing.
 const TOKEN_REFRESH_CHECK_INTERVAL_SECS: u64 = 300;
+/// How often to poll ~/.portzero/config.toml for external changes (or writes
+/// performed via the local management API) and hot-reload the effective values.
+/// A short interval makes `scan_interval`, overlay https policy, and dns
+/// first-hit policy updates visible quickly without requiring a daemon restart.
+const CONFIG_RELOAD_INTERVAL_SECS: u64 = 5;
 const OVERLAY_REFRESH_TIMEOUT: Duration = Duration::from_secs(3);
 
 struct ReconnectBackoff {
@@ -338,7 +343,9 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     // resources, escalate to SIGKILL if it overstays) before claiming the PID
     // file. This runs BEFORE OverlayNetwork::start so the old daemon has released
     // the TUN device and DNS port by the time we create ours.
-    acquire_singleton_or_take_over(config)?;
+    acquire_singleton_or_take_over(&config)?;
+
+    let mut config = config.clone();
 
     let pid = std::process::id();
     tracing::info!("Discovery daemon started (PID {})", pid);
@@ -366,7 +373,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         let mut connector = CloudConnector::new(token.clone());
         match connector.connect(domain_router.clone()).await {
             Ok(()) => {
-                write_cloud_state(config, true, None);
+                write_cloud_state(&config, true, None);
                 cloud = Some(connector);
             }
             Err(e) => {
@@ -375,21 +382,25 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                     "Failed to connect to cloud edge: {}. Running in local-only mode.",
                     e
                 );
-                write_cloud_state(config, false, Some(err_msg));
+                write_cloud_state(&config, false, Some(err_msg));
             }
         }
     } else {
         tracing::info!("No auth token found, running in local-only mode");
-        write_cloud_state(config, false, None);
+        write_cloud_state(&config, false, None);
     }
 
     let mut route_table = RouteTable::load(&config.routes_path()).unwrap_or_default();
     let mut grace_tracker = GracePeriodTracker::new();
     let mut reconnect_backoff = ReconnectBackoff::new();
-    let interval = Duration::from_secs(config.scan_interval_secs);
     let mut next_auth_check = Instant::now() + Duration::from_secs(AUTH_CHECK_INTERVAL_SECS);
     let mut next_token_refresh_check =
         Instant::now() + Duration::from_secs(TOKEN_REFRESH_CHECK_INTERVAL_SECS);
+    let mut next_config_check = Instant::now() + Duration::from_secs(CONFIG_RELOAD_INTERVAL_SECS);
+    let mut last_config_mtime: Option<std::time::SystemTime> =
+        std::fs::metadata(&config.config_path())
+            .ok()
+            .and_then(|m| m.modified().ok());
 
     // Seed the domain router from any pre-existing routes
     for (domain, route) in &route_table.routes {
@@ -488,10 +499,10 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                     (Vec::new(), Vec::new())
                 }
             };
-            write_overlay_state(config, &overlay_services, true);
+            write_overlay_state(&config, &overlay_services, true);
             let docker_conflicts = conflicts.snapshot().await;
             gather_and_publish_issues(
-                config,
+                &config,
                 &route_table,
                 overlay_issues,
                 &overlay_services,
@@ -507,7 +518,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                  The overlay needs elevated privileges (root / CAP_NET_ADMIN) to create a TUN device.",
                 e
             );
-            write_overlay_state(config, &[], false);
+            write_overlay_state(&config, &[], false);
             None
         }
     };
@@ -644,7 +655,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 .await
                 {
                     Ok(result) => {
-                        write_overlay_state(config, &result.1, true);
+                        write_overlay_state(&config, &result.1, true);
                         result
                     }
                     Err(_) => {
@@ -668,12 +679,12 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                     }
                 };
                 let issues = notify::detect_duplicate_names(&services);
-                write_overlay_state(config, &services, false);
+                write_overlay_state(&config, &services, false);
                 (issues, services)
             };
             let docker_conflicts = conflicts.snapshot().await;
             gather_and_publish_issues(
-                config,
+                &config,
                 &route_table,
                 overlay_issues,
                 &overlay_services,
@@ -709,7 +720,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                         Some(_) => tracing::info!("Auth token changed, will reconnect to cloud"),
                         None if had_cloud => {
                             tracing::info!("Logged out, disconnecting from cloud");
-                            write_cloud_state(config, false, None);
+                            write_cloud_state(&config, false, None);
                         }
                         None => {}
                     }
@@ -748,6 +759,55 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 }
             }
 
+            // Poll config file for changes (scan interval, overlay https policy,
+            // dns first-hit policy). Changes are applied without restarting the
+            // daemon and without dropping any active tunnel or overlay connections.
+            if Instant::now() >= next_config_check {
+                next_config_check =
+                    Instant::now() + Duration::from_secs(CONFIG_RELOAD_INTERVAL_SECS);
+                let path = config.config_path();
+                let current_mtime = std::fs::metadata(&path)
+                    .ok()
+                    .and_then(|m| m.modified().ok());
+                if current_mtime.is_some() && current_mtime != last_config_mtime
+                    || (last_config_mtime.is_some() && current_mtime.is_none())
+                {
+                    let reloaded = DaemonConfig::load();
+                    let changed_scan = reloaded.scan_interval_secs != config.scan_interval_secs;
+                    let changed_https = reloaded.overlay_https != config.overlay_https;
+                    let changed_dns = reloaded.dns_first_hit_policy != config.dns_first_hit_policy;
+
+                    if changed_scan || changed_https || changed_dns {
+                        tracing::info!("daemon config file changed; reloading");
+                    }
+                    if changed_scan {
+                        tracing::info!(
+                            "scan_interval_secs now {} (was {})",
+                            reloaded.scan_interval_secs,
+                            config.scan_interval_secs
+                        );
+                    }
+                    if changed_https {
+                        tracing::info!("overlay https policy updated");
+                        if let Some(ref ov) = overlay {
+                            if let Err(e) = ov.update_https_policy(reloaded.overlay_https).await {
+                                tracing::warn!(?e, "failed to push https policy to overlay stack");
+                            }
+                        }
+                    }
+                    if changed_dns {
+                        tracing::info!("dns_first_hit_policy updated");
+                        if let Some(ref ov) = overlay {
+                            ov.update_dns_first_hit_policy(reloaded.dns_first_hit_policy);
+                        }
+                    }
+                    config = reloaded;
+                    last_config_mtime = current_mtime;
+                } else if current_mtime.is_some() {
+                    last_config_mtime = current_mtime;
+                }
+            }
+
             // Detect when the server rejected our token (expired or revoked).
             if let Some(ref connector) = cloud {
                 if connector.is_auth_failed() {
@@ -756,7 +816,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                      Run `portzero login` to re-authenticate."
                     );
                     write_cloud_state(
-                        config,
+                        &config,
                         false,
                         Some(
                             "Authentication failed. Run `portzero login` to re-authenticate."
@@ -789,7 +849,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                         match connector.connect(domain_router.clone()).await {
                             Ok(()) => {
                                 reconnect_backoff.on_success();
-                                write_cloud_state(config, true, None);
+                                write_cloud_state(&config, true, None);
                                 for (domain, route) in &route_table.routes {
                                     if let Err(e) =
                                         connector.register_route(domain, route.port).await
@@ -807,7 +867,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                                 let err_msg = e.root_cause().to_string();
                                 tracing::warn!("Cloud connect failed: {}", e);
                                 reconnect_backoff.on_failure();
-                                write_cloud_state(config, false, Some(err_msg));
+                                write_cloud_state(&config, false, Some(err_msg));
                             }
                         }
                     }
@@ -819,8 +879,10 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             // reflected promptly instead of waiting the full poll interval. The
             // shutdown signal is handled one level up (the top-level `select!`
             // below), so it can interrupt this sleep AND any of the scan work above.
+            // Uses the (possibly reloaded) scan interval.
+            let sleep_dur = Duration::from_secs(config.scan_interval_secs);
             tokio::select! {
-                _ = tokio::time::sleep(interval) => {}
+                _ = tokio::time::sleep(sleep_dur) => {}
                 _ = docker_rescan.notified() => {
                     tracing::trace!("Docker event triggered an immediate rescan");
                 }
@@ -867,7 +929,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         }
     }
 
-    remove_pid_file(config);
+    remove_pid_file(&config);
     tracing::info!("Discovery daemon stopped");
 
     Ok(())
@@ -1361,7 +1423,7 @@ pub fn stop_daemon(config: &DaemonConfig) -> Result<()> {
 
     signal_pid(pid, false)?;
 
-    remove_pid_file(config);
+    remove_pid_file(&config);
 
     Ok(())
 }
