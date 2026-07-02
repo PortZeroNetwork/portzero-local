@@ -53,14 +53,9 @@ export PZ_TUNNEL=hello.portzero.local
 # shell one-off
 export PZ_TUNNEL=hello.portzero.local && python3 server.py
 
-# the exec launcher from the SDKs
-sdks/direnv/portzero-exec hello.portzero.local python3 server.py
-
 # docker (passed at container start)
 docker run -e PZ_TUNNEL=hello.portzero.local -p 0:8080 myimage
 ```
-
-See [`../sdks/direnv/README.md`](../sdks/direnv/README.md) for details.
 
 ## `{branch}` and `{worktree}` templates
 
@@ -83,9 +78,6 @@ so the literal `{branch}` works even inside a container where no shell ran. When
 using direnv you may also resolve the branch directly in the shell with
 `$(git rev-parse --abbrev-ref HEAD)` — both approaches yield a fully-resolved
 domain by the time the daemon reads it.
-
-The SDK helpers may resolve these locally too, but **for display/logging only** —
-the daemon resolves independently.
 
 ## Bind to port 0
 
