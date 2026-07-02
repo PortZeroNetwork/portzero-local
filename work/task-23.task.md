@@ -1,10 +1,11 @@
 ---
 id: c4bd24a6-7b74-4d87-96bb-3329e7e2b5de
 slug: task-23
-status: todo
+status: archived
 title: 'macOS privilege & autostart model: LaunchDaemon (root) so the overlay actually runs'
-milestones:
-- milestone-2
+relations:
+  contains:
+  - milestone-2
 created_at: 2026-06-23T12:51:58.135867Z
 updated_at: 2026-06-23T12:51:58.135867Z
 ---
