@@ -656,9 +656,7 @@ fn check_cloud_plan(state_dir: &Path) -> Option<Diagnostic> {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| state_dir.to_path_buf());
     let auth = crate::auth::AuthConfig::load_from(&config_dir);
-    if auth.token.is_none() {
-        return None;
-    }
+    auth.token?;
 
     let plan = crate::discovery_loop::read_cloud_plan_from_path(state_dir);
     let is_free_or_unknown = match plan.as_deref() {
@@ -679,14 +677,14 @@ fn check_cloud_plan(state_dir: &Path) -> Option<Diagnostic> {
         .and_then(|r| {
             if let Some(obj) = r.as_object() {
                 Some(obj.keys().any(|k| k.contains(".portzero.cloud")))
-            } else if let Some(arr) = r.as_array() {
-                Some(arr.iter().any(|row| {
-                    row.get("domain")
-                        .and_then(|d| d.as_str())
-                        .map_or(false, |d| d.contains(".portzero.cloud"))
-                }))
             } else {
-                None
+                r.as_array().map(|arr| {
+                    arr.iter().any(|row| {
+                        row.get("domain")
+                            .and_then(|d| d.as_str())
+                            .is_some_and(|d| d.contains(".portzero.cloud"))
+                    })
+                })
             }
         })
         .unwrap_or(false);
