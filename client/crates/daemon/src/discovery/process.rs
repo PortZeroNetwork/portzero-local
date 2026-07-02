@@ -1461,7 +1461,7 @@ fn scan_network_processes_sync_macos() -> Vec<NetProcessCandidate> {
 }
 
 #[cfg(target_os = "macos")]
-fn parse_macos_ps_env_candidates(stdout: &str, var_name: &str) -> Vec<(u32, String)> {
+pub(super) fn parse_macos_ps_env_candidates(stdout: &str, var_name: &str) -> Vec<(u32, String)> {
     stdout
         .lines()
         .filter_map(|line| parse_macos_ps_env_candidate(line, var_name))
@@ -1469,7 +1469,7 @@ fn parse_macos_ps_env_candidates(stdout: &str, var_name: &str) -> Vec<(u32, Stri
 }
 
 #[cfg(target_os = "macos")]
-fn parse_macos_ps_env_candidate(line: &str, var_name: &str) -> Option<(u32, String)> {
+pub(super) fn parse_macos_ps_env_candidate(line: &str, var_name: &str) -> Option<(u32, String)> {
     let trimmed = line.trim_start();
     let (pid, rest) = trimmed.split_once(char::is_whitespace)?;
     let pid = pid.parse::<u32>().ok()?;

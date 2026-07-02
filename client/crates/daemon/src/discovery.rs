@@ -34,13 +34,30 @@ use docker::{parse_docker_ports, scan_docker_containers, scan_network_containers
 #[allow(unused_imports)]
 use process::{
     discover_process_ports, looks_like_repo_path, parse_extra_ports, parse_http_port_selection,
-    parse_lsof_line, parse_lsof_stdout, parse_proc_net_tcp_line, parse_windows_environment_block,
-    parse_windows_netstat_line, parse_windows_netstat_stdout, parse_windows_netstat_stdout_by_pid,
-    parse_windows_tcp_connection_line, parse_windows_tcp_connection_stdout,
     resolve_tunnel_template, scan_network_processes, scan_process_env, scan_processes,
     select_http_port, template_substitutions, warn_if_port_like_rejected,
 };
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[allow(unused_imports)]
+use process::{parse_lsof_line, parse_lsof_stdout};
+
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)]
+use process::{parse_macos_ps_env_candidate, parse_macos_ps_env_candidates};
+
+#[cfg(target_os = "linux")]
+#[allow(unused_imports)]
+use process::parse_proc_net_tcp_line;
+
 pub use process::{enumerate_system_listeners, SystemListener};
+#[cfg(target_os = "windows")]
+#[allow(unused_imports)]
+use process::{
+    parse_windows_environment_block, parse_windows_netstat_line, parse_windows_netstat_stdout,
+    parse_windows_netstat_stdout_by_pid, parse_windows_tcp_connection_line,
+    parse_windows_tcp_connection_stdout,
+};
 
 /// The single environment variable used to tag services.
 ///
@@ -626,6 +643,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn test_parse_windows_tcp_connection_lines() {
         assert_eq!(
@@ -653,6 +671,7 @@ mod tests {
         assert_eq!(parse_windows_tcp_connection_line("bad"), None);
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn test_parse_windows_netstat_lines() {
         assert_eq!(
@@ -701,6 +720,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn test_parse_windows_environment_block() {
         let mut words: Vec<u16> = "Path=C:\\Windows\0PZ_TUNNEL=api.portzero.local\0\0"
