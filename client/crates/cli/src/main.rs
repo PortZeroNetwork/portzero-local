@@ -29,6 +29,10 @@ enum Command {
         /// Run in the foreground instead of daemonizing (used internally).
         #[arg(long, hide = true)]
         foreground: bool,
+
+        /// Do not automatically open the dashboard in a browser.
+        #[arg(long)]
+        no_browser: bool,
     },
     /// Stop the discovery daemon.
     Stop,
@@ -121,11 +125,14 @@ async fn main() -> anyhow::Result<()> {
     let update_handle = tokio::spawn(update::check_for_update());
 
     match cli.command {
-        Command::Start { foreground } => {
+        Command::Start {
+            foreground,
+            no_browser,
+        } => {
             if foreground {
                 daemon::start_foreground().await?;
             } else {
-                daemon::start()?;
+                daemon::start(!no_browser)?;
             }
         }
         Command::Stop => daemon::stop()?,

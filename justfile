@@ -86,6 +86,33 @@ install:
 
       sudo install -m 0644 "$rule_tmp" /etc/polkit-1/rules.d/50-portzero-resolved.rules
     }
+    open_dashboard() {
+      local url="http://portzero.local"
+
+      case "$(uname -s)" in
+        Darwin*)
+          if has_cmd open; then
+            open "$url" >/dev/null 2>&1 && return 0
+          fi
+          ;;
+        Linux*)
+          if has_cmd xdg-open; then
+            xdg-open "$url" >/dev/null 2>&1 && return 0
+          fi
+          if has_cmd gio; then
+            gio open "$url" >/dev/null 2>&1 && return 0
+          fi
+          for opener in gnome-open kde-open5 kde-open sensible-browser; do
+            if has_cmd "$opener"; then
+              "$opener" "$url" >/dev/null 2>&1 && return 0
+            fi
+          done
+          ;;
+      esac
+
+      echo "warning: Could not open $url automatically." >&2
+      return 1
+    }
 
     cargo install --path client/crates/cli
     cargo_bin="$HOME/.cargo/bin/portzero"
@@ -124,7 +151,8 @@ install:
           echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts >/dev/null
         fi
         echo "→ Starting daemon..."
-        portzero start
+        portzero start --no-browser
+        open_dashboard || true
         ;;
       Darwin*)
         echo "→ Generating CA certificate for *.portzero.local HTTPS..."
@@ -149,6 +177,8 @@ install:
         if ! grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
           echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts >/dev/null
         fi
+        echo "→ Opening dashboard..."
+        open_dashboard || true
         echo "→ Daemon installed and started via LaunchDaemon."
         ;;
       MINGW*|MSYS*|CYGWIN*)

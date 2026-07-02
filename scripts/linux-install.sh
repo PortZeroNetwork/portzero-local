@@ -101,6 +101,25 @@ RULE
     fi
 }
 
+open_dashboard() {
+    url="http://portzero.local"
+
+    if has_cmd xdg-open; then
+        xdg-open "$url" >/dev/null 2>&1 && return 0
+    fi
+    if has_cmd gio; then
+        gio open "$url" >/dev/null 2>&1 && return 0
+    fi
+    for opener in gnome-open kde-open5 kde-open sensible-browser; do
+        if has_cmd "$opener"; then
+            "$opener" "$url" >/dev/null 2>&1 && return 0
+        fi
+    done
+
+    warn "Could not open $url automatically."
+    return 1
+}
+
 # --- Detect platform ---
 case "$(uname -s)" in
     Linux*)  os="linux" ;;
@@ -241,8 +260,9 @@ UNIT
             || warn "Could not pin portzero.local in /etc/hosts; the dashboard name may not resolve."
     fi
 
-    info "Starting portzero and opening http://portzero.local..."
-    "$bin_path" start || warn "Could not start portzero automatically. Run later: portzero start"
+    info "Starting portzero..."
+    "$bin_path" start --no-browser || warn "Could not start portzero automatically. Run later: portzero start"
+    open_dashboard || true
 fi
 
 echo ""

@@ -188,6 +188,19 @@ function Sync-ActiveInstall {
     }
 }
 
+function Open-Browser {
+    param([string] $Url)
+
+    try {
+        Start-Process -FilePath $Url | Out-Null
+        return $true
+    }
+    catch {
+        Write-Warning "Could not open $Url automatically."
+        return $false
+    }
+}
+
 if ($env:OS -ne "Windows_NT") {
     Fail "scripts/windows-install.ps1 can only be run on Windows."
 }
@@ -241,11 +254,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Step "Starting daemon"
-& $portzeroExe start
+& $portzeroExe start --no-browser
 if ($LASTEXITCODE -ne 0) {
     Fail "portzero start failed."
 }
 
 Write-Host ""
-Write-Host "portzero installed. Open http://portzero.local in your browser."
+if (-not (Open-Browser -Url "http://portzero.local")) {
+    Write-Host "portzero installed. Open http://portzero.local in your browser."
+} else {
+    Write-Host "portzero installed and should now be open in your browser."
+}
 Write-Host "If this terminal was already open, PATH has been updated for this process; new terminals will also find portzero.exe."

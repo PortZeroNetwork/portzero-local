@@ -2,12 +2,41 @@
 /// Returns true if the command was spawned successfully.
 pub(crate) fn open_browser(url: &str) -> bool {
     #[cfg(target_os = "linux")]
-    let result = std::process::Command::new("xdg-open")
-        .arg(url)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    let result = {
+        let candidates: &[(&str, &[&str])] = &[
+            ("xdg-open", &[]),
+            ("gio", &["open"]),
+            ("gnome-open", &[]),
+            ("kde-open5", &[]),
+            ("kde-open", &[]),
+            ("sensible-browser", &[]),
+        ];
+
+        let mut spawned = Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no browser opener found",
+        ));
+        for &(command, args) in candidates {
+            let mut cmd = std::process::Command::new(command);
+            cmd.args(args)
+                .arg(url)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            match cmd.spawn() {
+                Ok(child) => {
+                    spawned = Ok(child);
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    spawned = Err(error);
+                    break;
+                }
+            }
+        }
+        spawned
+    };
 
     #[cfg(target_os = "macos")]
     let result = std::process::Command::new("open")
