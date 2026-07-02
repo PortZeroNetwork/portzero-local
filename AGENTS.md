@@ -35,6 +35,14 @@ ticketry list blocked                       # waiting on dependencies
 ticketry board                              # kanban view
 ticketry commits <slug-or-id> [...]         # find commits mentioning ticket slugs/UUIDs
 ticketry commits --plain <slug>             # machine-readable commit list
+ticketry new "t" --body-file -              # create WITH body from stdin (one shot)
+ticketry edit <id> --body-file -            # replace body from stdin, atomic reindex
+ticketry new "t" --type decision|doc        # built-in record types (ADR / doc templates)
+ticketry new|list|show --json               # machine-readable JSON (do not scrape prose)
+ticketry plan apply <plan.yaml>             # batch: milestone + tickets + deps, atomic
+ticketry field <id> <key>                   # get a custom frontmatter field
+ticketry field <id> <key> <value>           # set it (e.g. preferred-model opus)
+ticketry field <id> <key> --unset           # remove it
 ```
 
 Append `--help` to any command for full flag reference.
@@ -44,6 +52,40 @@ and `query` for search. `find_ticket_commits` searches git history for ticket
 references (case-insensitive, with child-ticket awareness). Use the MCP `describe`
 helper to inspect parameters.
 
+### Agent-ergonomic creation, output, and batch planning
+
+Prefer these over the read → edit → reindex loop:
+
+- **Body at creation/update**: `new --body "text"` or `--body-file <path>` (`-` reads
+  stdin) writes the body and indexes in one call — no manual `ticketry index`. The same
+  flags on `edit <id>` replace an existing body and reindex atomically. An explicit body
+  always wins over the type template (`.ticketry/templates/<type>.md`, which otherwise
+  fills the body for the implicit `task` type).
+- **`--json`**: `new`, `list`, and `show` accept `--json`, emitting pure JSON on stdout
+  (prose and health warnings go to stderr). `new --json` → `{id, slug, path, full_path}`.
+  Parse this instead of scraping slugs out of human-readable lines.
+- **Built-in record types**: `--type decision` (ADR shape: Context / Options / Decision /
+  Consequences) and `--type doc` work with no `[[ticket_types]]` config. A
+  `.ticketry/templates/<type>.md` overrides the built-in template.
+- **Loud filters**: `-f key=value` errors on an unknown or relational key instead of
+  silently returning nothing (e.g. filter milestones with `-m`, not `-f milestone=`).
+- **Batch planning**: `ticketry plan apply <plan.yaml>` creates a milestone, all its
+  tickets, and the dependency edges in one atomic operation. Tickets are referenced by a
+  local `alias`; ticketry assigns the real slugs and wires `depends_on` (forward
+  references allowed). `--json` returns an `alias → {id, slug, path, full_path}` map.
+  Validation (unique aliases, known deps, acyclic) runs before any write, and a failure
+  leaves no partial graph on disk.
+
+  ```yaml
+  milestone: Search revamp
+  tickets:
+    - alias: schema
+      title: Design the index schema
+    - alias: api
+      title: Expose the query API
+      depends_on: [schema]    # forward references are allowed
+  ```
+
 ### Key concepts
 
 - **IDs are UUIDs** (canonical), **slugs are labels** (`task-42`). Use either.
@@ -52,7 +94,10 @@ helper to inspect parameters.
   shows unblocked work, `ticketry list blocked` shows waiting work.
 - **Milestones**: `ticketry milestone new "title"`, then
   `ticketry new --milestone <slug>` to add tickets.
-- **Custom fields**: any YAML frontmatter fields survive round-trips.
+- **Custom fields**: any YAML frontmatter fields survive round-trips. Get/set/unset one
+  with `ticketry field <id> <key> [value] [--unset] [--json]` — e.g. `ticketry field <id>
+  preferred-model opus` to assign a ticket to a specific model. No value prints the
+  current one; `--json` emits `{"key","value"}`; `--unset` removes the field.
   Filter with `-f key=value`, sort with `-S key`.
   Limit output columns with `-c slug,title,preferred-model` to reduce context.
 - **Path fields**: `path` is repo-relative; `full_path` is absolute (`list -c`, `show --plain`,
@@ -90,3 +135,4 @@ with "refactor thread" in the subject. View pre-refactor history with
 `ticketry thread history <id>` or `thread_history` (MCP).
 
 [//]: # (END TICKETRY DESCRIPTION)
+
