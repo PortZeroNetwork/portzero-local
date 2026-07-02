@@ -222,7 +222,7 @@ uninstall:
 # unless explicitly opted in with PORTZERO_REQUIRE_REAL_TUN_E2E=1.
 [unix]
 test:
-    CARGO_TARGET_DIR=/private/tmp/portzero-target cargo test --workspace
+    CARGO_TARGET_DIR=/tmp/portzero-target cargo test --workspace
 
 [windows]
 test:
@@ -282,7 +282,7 @@ fmt-check:
 # recently failed on GitHub Actions.
 [unix]
 clippy:
-    CARGO_TARGET_DIR=/private/tmp/portzero-target cargo clippy --workspace -- -D warnings
+    CARGO_TARGET_DIR=/tmp/portzero-target cargo clippy --workspace -- -D warnings
 
 [windows]
 clippy:
@@ -292,7 +292,7 @@ clippy:
 # Clippy on tests + bins + examples + all features.
 [unix]
 clippy-all:
-    CARGO_TARGET_DIR=/private/tmp/portzero-target cargo clippy --workspace --all-targets --all-features -- -D warnings
+    CARGO_TARGET_DIR=/tmp/portzero-target cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 [windows]
 clippy-all:
@@ -302,7 +302,7 @@ clippy-all:
 # Fast type check.
 [unix]
 check:
-    CARGO_TARGET_DIR=/private/tmp/portzero-target cargo check --workspace
+    CARGO_TARGET_DIR=/tmp/portzero-target cargo check --workspace
 
 [windows]
 check:
@@ -314,7 +314,7 @@ check:
 # and fails if the checked-in file has drifted, so the spec can't go stale.
 [unix]
 openapi:
-    CARGO_TARGET_DIR=/private/tmp/portzero-target cargo run -p portzero-daemon --bin generate-openapi
+    CARGO_TARGET_DIR=/tmp/portzero-target cargo run -p portzero-daemon --bin generate-openapi
 
 [windows]
 openapi:
