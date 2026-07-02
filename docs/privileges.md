@@ -40,7 +40,7 @@ names and halts the lookup before systemd-resolved is consulted — so the bare
 dashboard name would never resolve through the overlay DNS. `just install`
 therefore writes a static `10.254.0.2 portzero.local` line (tagged
 `# portzero-local`) to `/etc/hosts`, which `files` resolves ahead of mdns.
-Multi-label service names (e.g. `app.portzero.local`) get `UNAVAIL` from mdns,
+Multi-label Local tunnel names (e.g. `app.portzero.local`) get `UNAVAIL` from mdns,
 fall through to systemd-resolved, and resolve via the overlay DNS as normal.
 
 The simplest path for local development is to start the daemon with `sudo`:
@@ -56,12 +56,12 @@ sudo -E port-zero start --foreground
 To have the overlay come up automatically, the daemon must autostart **with
 privileges** — otherwise it would relaunch unprivileged and silently degrade to
 cloud/local-only mode (see "Graceful degradation" below). Each platform uses the
-native mechanism for a privileged service:
+native mechanism for a privileged daemon:
 
 | Platform | Autostart mechanism                                                        |
 |----------|----------------------------------------------------------------------------|
 | macOS    | **Root LaunchDaemon** at `/Library/LaunchDaemons/tools.devenv.daemon.plist`. Runs as root, so utun + `/etc/resolver` + routes all succeed. |
-| Linux    | systemd **user** unit (`~/.config/systemd/user/portzero-daemon.service`); the binary itself carries `CAP_NET_ADMIN` + `CAP_NET_BIND_SERVICE`, so the user-level service is sufficient. |
+| Linux    | systemd **user** unit (`~/.config/systemd/user/portzero-daemon.service`); the binary itself carries `CAP_NET_ADMIN` + `CAP_NET_BIND_SERVICE`, so the user-level unit is sufficient. |
 | Windows  | Scheduled task at logon (admin for adapter setup). |
 
 ### Enabling / disabling autostart
@@ -69,7 +69,7 @@ native mechanism for a privileged service:
 Manage autostart with the `autostart` subcommands:
 
 ```bash
-portzero autostart enable    # install the system service
+portzero autostart enable    # install the system unit
 portzero autostart disable   # remove it
 portzero autostart status    # show whether it's installed
 ```
@@ -90,7 +90,7 @@ logged-in user and is unprivileged, so the overlay would never come up. The
 autostart installer therefore writes a system-domain **LaunchDaemon**, which
 launchd runs as **root**.
 
-Installing or removing this system service is a **one-time privileged step** and
+Installing or removing this system unit is a **one-time privileged step** and
 must be run with `sudo`. Logs are written to a root-writable location
 (`/Library/Logs/devenv/daemon.log`), since root's home is not the installing
 user's. The installer loads the daemon with the modern
@@ -125,10 +125,10 @@ work without root; only the local overlay data path needs it.
 ## Consequence: `.portzero.local` visibility
 
 Because the overlay (TUN + scoped resolver) is what makes `.portzero.local` names
-resolvable and routable, **`.portzero.local` services are only visible once the
+resolvable and routable, **`.portzero.local` tunnels are only visible once the
 overlay is running — i.e. when the daemon was started with root.** If you run the
 daemon unprivileged, `curl http://hello.portzero.local/` will not resolve even
-though the service was discovered. See [troubleshooting.md](troubleshooting.md).
+though the tunnel was discovered. See [troubleshooting.md](troubleshooting.md).
 
 ## Testing implications
 

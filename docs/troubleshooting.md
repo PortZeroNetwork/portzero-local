@@ -14,9 +14,9 @@ If you started the daemon unprivileged it logged `continuing in
 cloud/local-only mode` and the overlay (TUN + scoped resolver) is inactive. See
 [privileges.md](privileges.md).
 
-## My service was never discovered
+## My process was never discovered
 
-`PZ_TUNNEL` must be set **before** the service process starts. The daemon
+`PZ_TUNNEL` must be set **before** the process starts. The daemon
 reads the frozen `execve()` environment (`/proc/<pid>/environ` on Linux,
 `sysctl KERN_PROCARGS2` on macOS) — a value set after launch (in
 `os.environ` / `process.env` / `os.Setenv`) is invisible to it.
@@ -52,9 +52,9 @@ Ensure `/dev/net/tun` exists and the `tun` module is loaded
 ## DNS resolves but the connection hangs / refuses
 
 The name resolved to a `10.254.x.y` VIP but the proxy could not reach the
-backend. Check that the backend service is still listening on its ephemeral port
-and that `port-zero status` shows the expected real address. Restarting the
-service re-registers it on the same stable VIP.
+backend. Check that the backend process or Docker container is still listening
+on its ephemeral port and that `port-zero status` shows the expected real
+address. Restarting it re-registers the same stable VIP.
 
 ## Brave shows `ERR_CERT_AUTHORITY_INVALID` for `https://portzero.local`
 
@@ -68,7 +68,7 @@ uses the installed CA correctly.
 
 - `~/.portzero/daemon/daemon.log` (background mode).
 - Or run `--foreground` to see logs on the console.
-- `port-zero status` shows the current discovered services and routes.
+- `port-zero status` shows the current discovered Local tunnels and routes.
 
 ## Running the test suite
 

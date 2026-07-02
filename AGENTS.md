@@ -136,3 +136,11 @@ with "refactor thread" in the subject. View pre-refactor history with
 
 [//]: # (END TICKETRY DESCRIPTION)
 
+### Terminology
+
+- In code, `service` is an acceptable umbrella term for the discovered thing when
+  the implementation is modeling both processes and Docker containers together.
+- In user-facing text, prefer `process`, `Docker container`, `Local tunnel`, or
+  `Cloud tunnel` when that wording is clearer.
+- Avoid `service` in user-facing copy unless it is the most precise term in the
+  local context.

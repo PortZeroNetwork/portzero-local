@@ -147,7 +147,7 @@ pub async fn status() -> Result<()> {
         }
         None => {
             println!("Daemon: stopped");
-            println!("\nRun `portzero start` to begin discovering services.");
+            println!("\nRun `portzero start` to begin discovering local tunnels.");
             return Ok(());
         }
     }
@@ -344,23 +344,23 @@ fn print_routes(config: &DaemonConfig) {
 fn overlay_inactive_hint() -> &'static str {
     #[cfg(target_os = "windows")]
     {
-        "Note: .portzero.local services are not reachable — the overlay network requires\n\
+        "Note: .portzero.local tunnels are not reachable — the overlay network requires\n\
          Administrator privileges and wintun.dll next to portzero.exe or in PATH."
     }
     #[cfg(target_os = "linux")]
     {
-        "Note: .portzero.local services are not reachable — the overlay network requires\n\
+        "Note: .portzero.local tunnels are not reachable — the overlay network requires\n\
          CAP_NET_ADMIN and CAP_NET_BIND_SERVICE. Grant both capabilities:\n\
          \n  sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $(which portzero)"
     }
     #[cfg(target_os = "macos")]
     {
-        "Note: .portzero.local services are not reachable — the overlay network requires\n\
+        "Note: .portzero.local tunnels are not reachable — the overlay network requires\n\
          root privileges or the networking Network Extension entitlement."
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
-        "Note: .portzero.local services are not reachable — the overlay network requires\n\
+        "Note: .portzero.local tunnels are not reachable — the overlay network requires\n\
          platform-specific privileges to create a TUN device and configure DNS."
     }
 }

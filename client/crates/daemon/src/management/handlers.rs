@@ -895,7 +895,7 @@ function render(d){
   let html='';
 
   html+='<div class="status-grid">';
-  html+='<section class="status-card"><h3>Local .local services</h3>';
+  html+='<section class="status-card"><h3>Local tunnels</h3>';
   html+='<div class="status-row">'+dot(d.overlay_active)+(d.overlay_active?'active':'inactive')+'</div>';
   if(d.local_services&&d.local_services.length>0){
     html+='<table><thead><tr><th>domain</th><th>substitutions</th><th>real addr</th><th>port</th><th>pid</th></tr></thead><tbody>';

@@ -1,6 +1,6 @@
 # Architecture: the virtual overlay data path
 
-The local overlay implements **"Port 0 + Virtual Mesh"**: a service binds an
+The local overlay implements **"Port 0 + Virtual Mesh"**: a process or Docker container binds an
 ephemeral port and is reachable by a stable name + virtual IP, with no manual
 port wiring. This document traces the full data path.
 
@@ -11,7 +11,7 @@ All overlay code lives in `client/crates/daemon/src/net/`:
 | Module               | Responsibility                                                       |
 |----------------------|---------------------------------------------------------------------|
 | `virtual_ip.rs`      | Allocates stable virtual IPs from `10.254.0.0/16` per name.          |
-| `service_table.rs`   | Maps `name` ⇄ `VIP` ⇄ real ephemeral `SocketAddr` + service port.    |
+| `service_table.rs`   | Maps `name` ⇄ `VIP` ⇄ real ephemeral `SocketAddr` + tunnel port.    |
 | `dns.rs`             | Embedded authoritative DNS server for `*.portzero.local` → VIP.        |
 | `resolver_config.rs` | Installs a *scoped* OS resolver so only `.portzero.local` is sent to it. |
 | `tun_device.rs`      | Creates the TUN interface and routes `10.254.0.0/16` into it.         |
@@ -21,7 +21,7 @@ All overlay code lives in `client/crates/daemon/src/net/`:
 ## The data path, step by step
 
 ```
-service (port 0)        daemon                              client (curl)
+process/container (port 0)  daemon                          client (curl)
       |                   |                                     |
   [1] |  set PZ_TUNNEL=hello.portzero.local before exec       |
       |                   |                                     |
@@ -48,19 +48,19 @@ service (port 0)        daemon                              client (curl)
 
 ### 1–2. Discovery
 
-A service sets `PZ_TUNNEL` to a **full domain** and binds **port 0**. The
+A process or Docker container sets `PZ_TUNNEL` to a **full domain** and binds **port 0**. The
 long-running daemon (`port-zero start [--foreground]`) reads each process's
 environment from the outside: `/proc/<pid>/environ` on Linux,
 `sysctl KERN_PROCARGS2` on macOS. Both are **frozen at `execve()` time**, which
 is why the variable must be set before launch. The `.portzero.local` suffix routes
-the service to the overlay; the daemon discovers the real ephemeral host port.
+the process or container to the overlay; the daemon discovers the real ephemeral host port.
 
 ### 3. VIP allocation
 
 `VirtualIpAllocator` (`net/virtual_ip.rs`) hands each name a stable IP inside
 `10.254.0.0/16` (`.0` and `.1` reserved; `.1` is the gateway). The same name
 always gets the same VIP for the daemon's lifetime, so DNS answers are stable
-across service restarts. The `ServiceTable` keys both `name → service` and
+across process restarts. The `ServiceTable` keys both `name → entry` and
 `vip → name` for the fast packet-path reverse lookup.
 
 ### 4. Scoped DNS
@@ -79,7 +79,7 @@ gateway address (`10.254.0.1/16`), and ensures `10.254.0.0/16` routes into it.
 When a client connects to a VIP, the kernel routes those packets into the TUN.
 
 `VirtualStack` (`net/stack.rs`) runs a single dedicated task that owns the
-smoltcp `Interface` + `SocketSet` and an `AnyIP` wildcard listener per service
+smoltcp `Interface` + `SocketSet` and an `AnyIP` wildcard listener per tunnel
 port — so a SYN to **any** VIP on a registered port completes the TCP handshake
 **entirely in user space** (no OS sockets on the client side). Once established,
 the stack looks up which VIP the client targeted, opens a real
@@ -89,7 +89,7 @@ sockets aren't `Send` across `await`, so all of this lives in one task; backend
 I/O runs in small async helper tasks so the loop never blocks.
 
 `OverlayNetwork::start` (`net/overlay.rs`) wires these together and accepts
-service-table updates from discovery via `update_services`.
+tunnel-table updates from discovery via `update_services`.
 
 ## Testing the data path
 
@@ -102,7 +102,7 @@ service-table updates from discovery via `update_services`.
   device pair against the real stack engine and a real tokio echo backend. These
   tests are platform-neutral and run on Linux, macOS, and Windows.
 - **Privileged adapter smoke** (`real_tun_overlay`, run via `just e2e`): stands
-  up the real `OverlayNetwork` (TUN/Wintun + stack + DNS), registers a service,
+  up the real `OverlayNetwork` (TUN/Wintun + stack + DNS), registers a tunnel,
   resolves it through the embedded DNS server, and shuts down cleanly.
 
 Plain `cargo test` is side-effect safe on every platform: `real_tun_overlay`
