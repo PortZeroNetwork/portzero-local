@@ -5,7 +5,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 
 use portzero_daemon::discovery_loop::{
-    read_cloud_connected, read_cloud_error, read_daemon_pid, DaemonConfig,
+    read_cloud_connected, read_cloud_error, read_cloud_message, read_cloud_plan, read_daemon_pid,
+    DaemonConfig,
 };
 use portzero_daemon::notify::read_issues;
 use portzero_daemon::route_table::{OverlayState, RouteTable};
@@ -196,6 +197,19 @@ pub async fn status() -> Result<()> {
                     }
                 }
                 None => println!("Tunnel: connecting to {edge_display}"),
+            }
+
+            if let Some(p) = read_cloud_plan(&config) {
+                println!("Plan:   {}", p);
+            }
+            if let Some(msg) = read_cloud_message(&config) {
+                println!();
+                println!("  {}", msg);
+                println!("  Upgrade: https://app.portzero.cloud");
+                println!();
+            } else if read_cloud_plan(&config).as_deref() == Some("free") {
+                // Gentle upsell if we know the plan is free (no explicit message from edge yet)
+                println!("        (Cloud tunnels require a paid plan. Run `portzero whoami` or visit https://app.portzero.cloud)");
             }
         }
         Err(_) => {

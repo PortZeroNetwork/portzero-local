@@ -5,7 +5,7 @@
 //! Incoming HTTP requests are forwarded to local services.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
@@ -36,6 +36,12 @@ pub struct CloudConnector {
     edge_url: String,
     /// Session ID from the server Welcome message.
     session_id: Option<String>,
+    /// Plan reported by the edge on Welcome (e.g. "free", "pro").
+    /// Used to drive upsell prompts for non-paying users attempting cloud tunnels.
+    plan: Arc<Mutex<Option<String>>>,
+    /// Latest user-facing status message from the edge (e.g. plan limit explanation).
+    /// This is surfaced in `portzero status` and the web dashboard when present.
+    status_message: Arc<Mutex<Option<String>>>,
     /// True while the inbound WebSocket reader task is alive.
     /// The outbound writer task only fails on write, so it can stay alive after
     /// the connection drops if nothing is being sent — causing is_connected() to
@@ -59,6 +65,8 @@ impl CloudConnector {
             machine_id,
             edge_url: resolve_edge_url(),
             session_id: None,
+            plan: Arc::new(Mutex::new(None)),
+            status_message: Arc::new(Mutex::new(None)),
             inbound_alive: Arc::new(AtomicBool::new(false)),
             auth_failed: Arc::new(AtomicBool::new(false)),
         }
@@ -74,6 +82,8 @@ impl CloudConnector {
             machine_id,
             edge_url,
             session_id: None,
+            plan: Arc::new(Mutex::new(None)),
+            status_message: Arc::new(Mutex::new(None)),
             inbound_alive: Arc::new(AtomicBool::new(false)),
             auth_failed: Arc::new(AtomicBool::new(false)),
         }
@@ -137,6 +147,8 @@ impl CloudConnector {
         let tx_for_reader = tx.clone();
         let inbound_alive = Arc::clone(&self.inbound_alive);
         let auth_failed = Arc::clone(&self.auth_failed);
+        let plan_for_reader = Arc::clone(&self.plan);
+        let status_msg_for_reader = Arc::clone(&self.status_message);
         tokio::spawn(async move {
             while let Some(msg_result) = ws_stream_rx.next().await {
                 let msg = match msg_result {
@@ -165,26 +177,71 @@ impl CloudConnector {
                     }
                 };
 
-                // Handle all server errors here so AuthFailed is reliably intercepted
-                // before reaching handle_incoming.
-                if let ServerMessage::Error {
-                    ref code,
-                    ref message,
-                } = server_msg
-                {
-                    if message
-                        .starts_with("Route accepted by edge, but dashboard persistence failed")
-                    {
-                        tracing::warn!("{}", message);
-                    } else {
-                        tracing::error!("Edge server error ({:?}): {}", code, message);
+                // Capture plan (from Welcome) and friendly upsell / plan messages for the client UI.
+                // These drive "you need a paid plan" prompts when users try *.portzero.cloud on free.
+                match &server_msg {
+                    ServerMessage::Welcome { plan, .. } => {
+                        if let Ok(mut g) = plan_for_reader.lock() {
+                            *g = Some(plan.clone());
+                        }
+                        tracing::info!("Edge session established (plan: {})", plan);
                     }
-                    if *code == portzero_proto::ErrorCode::AuthFailed {
-                        auth_failed.store(true, Ordering::Relaxed);
-                        inbound_alive.store(false, Ordering::Relaxed);
-                        break;
+                    ServerMessage::Error { code, message } => {
+                        if *code == portzero_proto::ErrorCode::PlanLimitExceeded {
+                            let friendly = "Your plan does not include cloud tunnels (portzero.cloud). \
+                                Upgrade at https://app.portzero.cloud to use *.portzero.cloud domains.".to_string();
+                            if let Ok(mut g) = status_msg_for_reader.lock() {
+                                *g = Some(friendly);
+                            }
+                            tracing::warn!("Edge reported plan limit: {}", message);
+                        } else if message.to_lowercase().contains("plan")
+                            || message.to_lowercase().contains("limit")
+                            || message.to_lowercase().contains("upgrade")
+                            || message.to_lowercase().contains("paid")
+                            || message.to_lowercase().contains("subscription")
+                        {
+                            if let Ok(mut g) = status_msg_for_reader.lock() {
+                                *g = Some(message.clone());
+                            }
+                        }
+                        if message
+                            .starts_with("Route accepted by edge, but dashboard persistence failed")
+                        {
+                            tracing::warn!("{}", message);
+                        } else if *code != portzero_proto::ErrorCode::PlanLimitExceeded {
+                            tracing::error!("Edge server error ({:?}): {}", code, message);
+                        }
+                        if *code == portzero_proto::ErrorCode::AuthFailed {
+                            auth_failed.store(true, Ordering::Relaxed);
+                            inbound_alive.store(false, Ordering::Relaxed);
+                            break;
+                        }
+                        continue;
                     }
-                    continue;
+                    ServerMessage::RouteAck {
+                        success: false,
+                        error: Some(err),
+                        domain,
+                        ..
+                    } => {
+                        let low = err.to_lowercase();
+                        if low.contains("plan")
+                            || low.contains("limit")
+                            || low.contains("upgrade")
+                            || low.contains("paid")
+                            || low.contains("subscription")
+                        {
+                            let friendly = format!(
+                                "Cloud route {} rejected: {}. Upgrade at https://app.portzero.cloud for portzero.cloud tunnels.",
+                                domain, err
+                            );
+                            if let Ok(mut g) = status_msg_for_reader.lock() {
+                                *g = Some(friendly);
+                            }
+                        }
+                        // General warn happens in handle_incoming
+                    }
+                    _ => {}
                 }
 
                 match handle_incoming(server_msg, &domain_router).await {
@@ -263,11 +320,29 @@ impl CloudConnector {
         self.auth_failed.load(Ordering::Relaxed)
     }
 
+    /// Plan reported on successful Welcome (e.g. "free", "pro").
+    /// None until the first Welcome is received.
+    pub fn plan(&self) -> Option<String> {
+        self.plan.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// Latest user-facing status message (plan limits, quota, etc.).
+    /// Set by the inbound reader on relevant ServerMessages.
+    pub fn status_message(&self) -> Option<String> {
+        self.status_message.lock().ok().and_then(|g| g.clone())
+    }
+
     /// Reconnect to the edge server.
     pub async fn reconnect(&mut self, domain_router: DomainRouter) -> Result<()> {
         tracing::info!("Reconnecting to edge server...");
         self.tx = None;
         self.session_id = None;
+        if let Ok(mut g) = self.plan.lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = self.status_message.lock() {
+            *g = None;
+        }
         self.inbound_alive.store(false, Ordering::Relaxed);
         self.auth_failed.store(false, Ordering::Relaxed);
         self.connect(domain_router).await
@@ -285,7 +360,12 @@ pub async fn handle_incoming(
         ServerMessage::Welcome {
             session_id, plan, ..
         } => {
-            tracing::info!("Edge session established: {} (plan: {})", session_id, plan);
+            // Plan is captured in the reader loop before calling handle_incoming for upsell logic.
+            tracing::debug!(
+                "Welcome received for session {} (plan {})",
+                session_id,
+                plan
+            );
             Ok(None)
         }
         ServerMessage::RouteAck {
@@ -372,6 +452,8 @@ mod tests {
         assert!(!conn.is_auth_failed());
         assert!(conn.session_id.is_none());
         assert_eq!(conn.auth_token, "tok_test");
+        assert!(conn.plan().is_none());
+        assert!(conn.status_message().is_none());
     }
 
     #[test]

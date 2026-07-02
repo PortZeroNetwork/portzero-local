@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 const RECONNECT_BASE_DELAY_SECS: u64 = 1;
@@ -373,7 +373,9 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         let mut connector = CloudConnector::new(token.clone());
         match connector.connect(domain_router.clone()).await {
             Ok(()) => {
-                write_cloud_state(&config, true, None);
+                let p = connector.plan();
+                let m = connector.status_message();
+                write_cloud_state(&config, true, None, p, m);
                 cloud = Some(connector);
             }
             Err(e) => {
@@ -382,12 +384,12 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                     "Failed to connect to cloud edge: {}. Running in local-only mode.",
                     e
                 );
-                write_cloud_state(&config, false, Some(err_msg));
+                write_cloud_state(&config, false, Some(err_msg), None, None);
             }
         }
     } else {
         tracing::info!("No auth token found, running in local-only mode");
-        write_cloud_state(&config, false, None);
+        write_cloud_state(&config, false, None, None, None);
     }
 
     let mut route_table = RouteTable::load(&config.routes_path()).unwrap_or_default();
@@ -720,7 +722,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                         Some(_) => tracing::info!("Auth token changed, will reconnect to cloud"),
                         None if had_cloud => {
                             tracing::info!("Logged out, disconnecting from cloud");
-                            write_cloud_state(&config, false, None);
+                            write_cloud_state(&config, false, None, None, None);
                         }
                         None => {}
                     }
@@ -808,6 +810,22 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 }
             }
 
+            // Snapshot current plan and any status message (e.g. plan limit) from a live connector
+            // into cloud_state.json so that `portzero status` and the web UI see fresh upsell info
+            // without waiting for a reconnect.
+            if let Some(ref connector) = cloud {
+                if connector.is_connected() {
+                    let p = connector.plan();
+                    let m = connector.status_message();
+                    // Only rewrite if we have something new to say (plan or message)
+                    if p.is_some() || m.is_some() {
+                        // Preserve previous error if any
+                        let prev_err = read_cloud_error(&config);
+                        write_cloud_state(&config, true, prev_err, p, m);
+                    }
+                }
+            }
+
             // Detect when the server rejected our token (expired or revoked).
             if let Some(ref connector) = cloud {
                 if connector.is_auth_failed() {
@@ -822,6 +840,8 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                             "Authentication failed. Run `portzero login` to re-authenticate."
                                 .to_string(),
                         ),
+                        None,
+                        None,
                     );
                     cloud = None;
                     auth_failed = true;
@@ -849,7 +869,9 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                         match connector.connect(domain_router.clone()).await {
                             Ok(()) => {
                                 reconnect_backoff.on_success();
-                                write_cloud_state(&config, true, None);
+                                let p = connector.plan();
+                                let m = connector.status_message();
+                                write_cloud_state(&config, true, None, p, m);
                                 for (domain, route) in &route_table.routes {
                                     if let Err(e) =
                                         connector.register_route(domain, route.port).await
@@ -867,7 +889,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                                 let err_msg = e.root_cause().to_string();
                                 tracing::warn!("Cloud connect failed: {}", e);
                                 reconnect_backoff.on_failure();
-                                write_cloud_state(&config, false, Some(err_msg));
+                                write_cloud_state(&config, false, Some(err_msg), None, None);
                             }
                         }
                     }
@@ -1233,26 +1255,66 @@ async fn sync_cloud_routes(connector: &CloudConnector, changes: &RouteChanges) {
     }
 }
 
-/// Write the current cloud connection state to a JSON file in the daemon state dir.
-fn write_cloud_state(config: &DaemonConfig, connected: bool, error: Option<String>) {
+/// Serializable cloud connection state persisted to cloud_state.json.
+/// Extended to carry plan (for upsell prompts) and a user-facing status_message
+/// (e.g. when the edge rejects a cloud route due to PlanLimitExceeded).
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct CloudStateFile {
+    connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plan: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+/// Write the current cloud connection state (and plan / user message) to disk.
+fn write_cloud_state(
+    config: &DaemonConfig,
+    connected: bool,
+    error: Option<String>,
+    plan: Option<String>,
+    message: Option<String>,
+) {
     let path = config.cloud_state_path();
-    let json = match error {
-        Some(ref err) => {
-            let escaped =
-                serde_json::to_string(err).unwrap_or_else(|_| "\"unknown error\"".to_string());
-            format!(r#"{{"connected":false,"error":{}}}"#, escaped)
-        }
-        None => format!(r#"{{"connected":{}}}"#, connected),
+    let state = CloudStateFile {
+        connected,
+        plan,
+        error,
+        message,
     };
-    if let Err(e) = std::fs::write(&path, json) {
-        tracing::warn!("Failed to write cloud state: {}", e);
+    match serde_json::to_string(&state) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                tracing::warn!("Failed to write cloud state: {}", e);
+            }
+        }
+        Err(e) => tracing::warn!("Failed to serialize cloud state: {}", e),
     }
+}
+
+/// Read the full persisted cloud state (internal helper).
+fn read_full_cloud_state(config: &DaemonConfig) -> CloudStateFile {
+    read_full_cloud_state_from_path(&config.cloud_state_path())
+}
+
+fn read_full_cloud_state_from_path(p: &std::path::Path) -> CloudStateFile {
+    let content = match std::fs::read_to_string(p) {
+        Ok(c) => c,
+        Err(_) => return CloudStateFile::default(),
+    };
+    serde_json::from_str(&content).unwrap_or_default()
 }
 
 /// Read the cloud connection state written by the running daemon.
 /// Returns None if the file doesn't exist or can't be parsed.
 pub fn read_cloud_connected(config: &DaemonConfig) -> Option<bool> {
-    let content = std::fs::read_to_string(config.cloud_state_path()).ok()?;
+    read_cloud_connected_from_path(&config.cloud_state_path())
+}
+
+fn read_cloud_connected_from_path(path: &std::path::Path) -> Option<bool> {
+    let content = std::fs::read_to_string(path).ok()?;
     if content.contains("\"connected\":true") {
         Some(true)
     } else if content.contains("\"connected\":false") {
@@ -1264,9 +1326,27 @@ pub fn read_cloud_connected(config: &DaemonConfig) -> Option<bool> {
 
 /// Read the last connection error stored by the running daemon, if any.
 pub fn read_cloud_error(config: &DaemonConfig) -> Option<String> {
-    let content = std::fs::read_to_string(config.cloud_state_path()).ok()?;
-    let val: serde_json::Value = serde_json::from_str(&content).ok()?;
-    val.get("error")?.as_str().map(|s| s.to_string())
+    read_full_cloud_state(config).error
+}
+
+/// Read the plan reported by the edge (e.g. "free", "pro").
+pub fn read_cloud_plan(config: &DaemonConfig) -> Option<String> {
+    read_full_cloud_state(config).plan
+}
+
+/// Convenience path-based reader (used by diagnostics which only has state_dir).
+pub fn read_cloud_plan_from_path(state_dir: &std::path::Path) -> Option<String> {
+    read_full_cloud_state_from_path(&state_dir.join("cloud_state.json")).plan
+}
+
+/// Read the latest user-facing status message (plan limits, upsell, etc.).
+pub fn read_cloud_message(config: &DaemonConfig) -> Option<String> {
+    read_full_cloud_state(config).message
+}
+
+/// Convenience path-based reader.
+pub fn read_cloud_message_from_path(state_dir: &std::path::Path) -> Option<String> {
+    read_full_cloud_state_from_path(&state_dir.join("cloud_state.json")).message
 }
 
 /// Check if a process is still alive by PID.
@@ -1727,7 +1807,7 @@ mod tests {
     #[test]
     fn test_cloud_state_connected() {
         let (config, _dir) = temp_config();
-        write_cloud_state(&config, true, None);
+        write_cloud_state(&config, true, None, None, None);
         assert_eq!(read_cloud_connected(&config), Some(true));
         assert_eq!(read_cloud_error(&config), None);
     }
@@ -1735,7 +1815,7 @@ mod tests {
     #[test]
     fn test_cloud_state_disconnected_no_error() {
         let (config, _dir) = temp_config();
-        write_cloud_state(&config, false, None);
+        write_cloud_state(&config, false, None, None, None);
         assert_eq!(read_cloud_connected(&config), Some(false));
         assert_eq!(read_cloud_error(&config), None);
     }
@@ -1747,6 +1827,8 @@ mod tests {
             &config,
             false,
             Some("Connection refused (os error 111)".to_string()),
+            None,
+            None,
         );
         assert_eq!(read_cloud_connected(&config), Some(false));
         assert_eq!(
@@ -1762,6 +1844,8 @@ mod tests {
             &config,
             false,
             Some(r#"error with "quotes" and \backslash"#.to_string()),
+            None,
+            None,
         );
         assert_eq!(
             read_cloud_error(&config),
@@ -1778,6 +1862,25 @@ mod tests {
             dns_first_hit_policy: DnsFirstHitPolicy::default(),
         };
         assert_eq!(read_cloud_connected(&config), None);
+        assert_eq!(read_cloud_error(&config), None);
+    }
+
+    #[test]
+    fn test_cloud_state_with_plan_and_message() {
+        let (config, _dir) = temp_config();
+        write_cloud_state(
+            &config,
+            true,
+            None,
+            Some("free".to_string()),
+            Some("Your plan does not include cloud tunnels.".to_string()),
+        );
+        assert_eq!(read_cloud_connected(&config), Some(true));
+        assert_eq!(read_cloud_plan(&config), Some("free".to_string()));
+        assert_eq!(
+            read_cloud_message(&config),
+            Some("Your plan does not include cloud tunnels.".to_string())
+        );
         assert_eq!(read_cloud_error(&config), None);
     }
 

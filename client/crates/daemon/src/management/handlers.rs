@@ -122,15 +122,18 @@ fn read_route_table(state_dir: &std::path::Path) -> RouteTable {
     RouteTable::load(&state_dir.join("routes.json")).unwrap_or_default()
 }
 
-/// Read `cloud_state.json` and extract `connected` + optional `error` fields.
-fn read_cloud_state(state_dir: &std::path::Path) -> (bool, Option<String>) {
-    let content = match std::fs::read_to_string(state_dir.join("cloud_state.json")) {
+/// Read `cloud_state.json` and extract connected + error + plan + message for upsells.
+fn read_cloud_state(
+    state_dir: &std::path::Path,
+) -> (bool, Option<String>, Option<String>, Option<String>) {
+    let cloud_json_path = state_dir.join("cloud_state.json");
+    let content = match std::fs::read_to_string(&cloud_json_path) {
         Ok(c) => c,
-        Err(_) => return (false, None),
+        Err(_) => return (false, None, None, None),
     };
     let v: serde_json::Value = match serde_json::from_str(&content) {
         Ok(v) => v,
-        Err(_) => return (false, None),
+        Err(_) => return (false, None, None, None),
     };
     let connected = v
         .get("connected")
@@ -140,7 +143,15 @@ fn read_cloud_state(state_dir: &std::path::Path) -> (bool, Option<String>) {
         .get("error")
         .and_then(|e| e.as_str())
         .map(|s| s.to_string());
-    (connected, error)
+    let plan = v
+        .get("plan")
+        .and_then(|p| p.as_str())
+        .map(|s| s.to_string());
+    let message = v
+        .get("message")
+        .and_then(|m| m.as_str())
+        .map(|s| s.to_string());
+    (connected, error, plan, message)
 }
 
 fn command_on_path(program: &str) -> bool {
@@ -910,8 +921,14 @@ function render(d){
 
   html+='<section class="status-card"><h3>Cloud tunnels</h3>';
   html+='<div class="status-row">'+dot(d.cloud_connected)+(d.cloud_connected?'connected':'disconnected');
+  if(d.cloud_plan) html+=' <span style="font-size:13px">['+esc(d.cloud_plan)+']</span>';
   if(d.cloud_error) html+=' <span style="color:var(--bad);font-size:13px">- '+esc(d.cloud_error)+'</span>';
   html+='</div>';
+  if(d.cloud_message){
+    html+='<div style="margin:6px 0;padding:6px 8px;border:1px solid #e6a23c;background:#fef3e6;font-size:13px;">'
+      + esc(d.cloud_message)
+      + ' <a href="https://app.portzero.cloud" target="_blank" rel="noopener">Upgrade</a></div>';
+  }
   if(d.cloud_routes&&d.cloud_routes.length>0){
     html+='<table><thead><tr><th>domain</th><th>substitutions</th><th>port</th><th>pid</th></tr></thead><tbody>';
     d.cloud_routes.forEach(function(r){
@@ -1021,7 +1038,8 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
     let daemon_pid = read_daemon_pid(&state.state_dir);
     let overlay = read_overlay_state(&state.state_dir);
     let routes = read_route_table(&state.state_dir);
-    let (cloud_connected, cloud_error) = read_cloud_state(&state.state_dir);
+    let (cloud_connected, cloud_error, cloud_plan, cloud_message) =
+        read_cloud_state(&state.state_dir);
     let auth_authenticated = crate::auth::AuthConfig::load().is_authenticated();
     let diagnostics = crate::diagnostics::load_report(&state.state_dir);
 
@@ -1092,6 +1110,8 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         "local_services": local_services,
         "cloud_connected": cloud_connected,
         "cloud_error": cloud_error,
+        "cloud_plan": cloud_plan,
+        "cloud_message": cloud_message,
         "cloud_routes": cloud_routes,
         "management_registrations": management_registrations,
         "diagnostics": diagnostics,

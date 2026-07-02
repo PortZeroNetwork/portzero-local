@@ -647,6 +647,71 @@ fn check_auth_token(state_dir: &Path) -> Option<Diagnostic> {
     }
 }
 
+/// Check whether the user is trying to use cloud tunnels while on a free (or unknown) plan.
+/// This produces a visible upsell prompt in `portzero status` and the web dashboard.
+fn check_cloud_plan(state_dir: &Path) -> Option<Diagnostic> {
+    // Only relevant if logged in
+    let config_dir = state_dir
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| state_dir.to_path_buf());
+    let auth = crate::auth::AuthConfig::load_from(&config_dir);
+    if auth.token.is_none() {
+        return None;
+    }
+
+    let plan = crate::discovery_loop::read_cloud_plan_from_path(state_dir);
+    let is_free_or_unknown = match plan.as_deref() {
+        Some(p) if p.eq_ignore_ascii_case("free") || p.is_empty() => true,
+        None => true, // haven't seen Welcome yet but trying cloud?
+        Some(_) => false,
+    };
+    if !is_free_or_unknown {
+        return None;
+    }
+
+    // Do we have (or are attempting) any cloud routes?
+    let routes_path = state_dir.join("routes.json");
+    let has_cloud_route = std::fs::read_to_string(&routes_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("routes").cloned())
+        .and_then(|r| {
+            if let Some(obj) = r.as_object() {
+                Some(obj.keys().any(|k| k.contains(".portzero.cloud")))
+            } else if let Some(arr) = r.as_array() {
+                Some(arr.iter().any(|row| {
+                    row.get("domain")
+                        .and_then(|d| d.as_str())
+                        .map_or(false, |d| d.contains(".portzero.cloud"))
+                }))
+            } else {
+                None
+            }
+        })
+        .unwrap_or(false);
+
+    if !has_cloud_route {
+        return None;
+    }
+
+    Some(Diagnostic {
+        id: "cloud_plan_required".into(),
+        severity: Severity::Warning,
+        category: "auth".into(),
+        title: "Cloud tunnels require a paid plan".to_string(),
+        detail:
+            "You are using *.portzero.cloud domains but your current plan does not include them. \
+                 Local .portzero.local tunnels continue to work for free."
+                .to_string(),
+        fix: Some(Fix {
+            kind: FixKind::Manual,
+            description: "Upgrade to use portzero.cloud tunnels.".to_string(),
+            command: Some("open https://app.portzero.cloud  # or visit in browser".to_string()),
+        }),
+    })
+}
+
 fn check_ca_cert_exists() -> Option<Diagnostic> {
     match crate::tls::ca::LocalCa::ca_cert_path() {
         Ok(path) if !path.exists() => {
@@ -964,6 +1029,7 @@ pub async fn run_diagnostics(state_dir: &std::path::Path) -> DiagnosticsReport {
         run!(check_wintun_present());
         run!(check_conflicting_vpn_software());
         run!(check_auth_token(&state_dir));
+        run!(check_cloud_plan(&state_dir));
         run!(check_ca_cert_exists());
         run!(check_local_ca_trust_installation());
         run!(check_snap_brave_tls_trust());
