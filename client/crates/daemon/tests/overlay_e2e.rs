@@ -571,7 +571,11 @@ async fn unprivileged_tls_vip_proxy() {
             stack_dev,
             table,
             Some(server_config),
-            OverlayHttpsPolicy::default(),
+            OverlayHttpsPolicy {
+                enable_for_port_80: true,
+                redirect_port_80: true,
+                passthrough_port_443: true,
+            },
         );
 
         // 6. Build a smoltcp client interface and open a TCP connection to VIP:443.

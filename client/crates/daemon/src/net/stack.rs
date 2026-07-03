@@ -75,7 +75,7 @@ pub struct OverlayHttpsPolicy {
 impl Default for OverlayHttpsPolicy {
     fn default() -> Self {
         Self {
-            enable_for_port_80: true,
+            enable_for_port_80: false,
             redirect_port_80: true,
             passthrough_port_443: true,
         }
@@ -1346,12 +1346,17 @@ mod tests {
         let mut table = ServiceTable::new();
         let svc = table.register("web".to_string(), "127.0.0.1:49152".parse().unwrap(), 80, 0);
 
+        let policy = OverlayHttpsPolicy {
+            enable_for_port_80: true,
+            redirect_port_80: true,
+            passthrough_port_443: true,
+        };
         assert_eq!(
-            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 80),
+            select_connection_action(&table, true, policy, svc.vip, 80),
             Some(ConnectionAction::RedirectToHttps)
         );
         assert_eq!(
-            select_connection_action(&table, true, OverlayHttpsPolicy::default(), svc.vip, 443),
+            select_connection_action(&table, true, policy, svc.vip, 443),
             Some(ConnectionAction::TlsTerminate(svc.real_addr))
         );
     }

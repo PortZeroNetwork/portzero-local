@@ -962,9 +962,10 @@ function render(d){
   html+='<div class="settings" id="https-settings">';
   const hp = (d.https_policy || {});
   html += '<label><input type="checkbox" id="https-enable-80" '+(hp.enable_for_port_80?'checked':'')+'> Enable HTTPS (port 443) for backends on port 80</label>';
+  html += '<div class="hint" style="margin:2px 0 8px 20px">We add the CA cert to system trust stores and browser NSS dbs on install for as many places as possible (best-effort). PRs welcome to improve coverage. If it does not fully work, consider Cloud Tunnels (paid) which always use https that works in all browsers.</div>';
   html += '<label><input type="checkbox" id="https-redirect-80" '+(hp.redirect_port_80?'checked':'')+'> Redirect HTTP port 80 → HTTPS</label>';
   html += '<label><input type="checkbox" id="https-passthrough-443" '+(hp.passthrough_port_443?'checked':'')+'> Passthrough TLS on port 443 when backend speaks TLS</label>';
-  html+='<p class="hint">Saved to ~/.portzero/config.toml. Restart the daemon to apply to the overlay stack.</p>';
+  html+='<p class="hint">Saved to ~/.portzero/config.toml and applied live (new connections; no restart).</p>';
   html+='</div></section>';
 
   html+='<section class="section" id="diagnostics"><div class="section-head"><h2>Diagnostics</h2></div>';
