@@ -7,6 +7,9 @@ on:
       - 'release/*'
     types: [completed]
   workflow_dispatch:
+  push:
+    branches:
+      - 'release/*'
 
 permissions:
   contents: write
@@ -19,7 +22,10 @@ jobs:
   version:
     name: Determine Version
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -55,6 +61,7 @@ jobs:
   build:
     name: Build ${{ matrix.archive_name }}
     needs: version
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -350,6 +357,7 @@ jobs:
   package-linux:
     name: Build Linux Packages
     needs: [version, build]
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -401,6 +409,7 @@ jobs:
   package-windows:
     name: Build Windows MSI
     needs: [version, build]
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     runs-on: windows-latest
     permissions:
       contents: read
@@ -567,17 +576,45 @@ jobs:
   release:
     name: Create Release
     needs: [version, build, package-linux, package-windows]
+    if: >-
+      always() &&
+      ( github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') )
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      build-run-id: ${{ steps.artifact-run.outputs.run-id }}
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      - name: Determine artifact source run
+        id: artifact-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Find the earlier Release run (triggered by push) for this SHA
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            RUN_ID=$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "Release" \
+              --event push \
+              --head-sha "$SHA" \
+              --json databaseId,createdAt \
+              --jq 'sort_by(.createdAt) | reverse | .[0].databaseId')
+            echo "run-id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "run-id=${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Download build artifacts
         uses: actions/download-artifact@v5
         with:
+          run-id: ${{ steps.artifact-run.outputs.run-id }}
+          github-token: ${{ github.token }}
           path: artifacts
           pattern: portzero-*
           merge-multiple: true
@@ -585,6 +622,8 @@ jobs:
       - name: Download OS packages
         uses: actions/download-artifact@v5
         with:
+          run-id: ${{ steps.artifact-run.outputs.run-id }}
+          github-token: ${{ github.token }}
           path: artifacts
           pattern: portzero-{deb,rpm,msi,winget}
           merge-multiple: true
@@ -706,6 +745,8 @@ jobs:
       - name: Download macOS SHA256 files
         uses: actions/download-artifact@v5
         with:
+          run-id: ${{ needs.release.outputs.build-run-id }}
+          github-token: ${{ github.token }}
           pattern: sha256-portzero-darwin-*
           merge-multiple: true
 
