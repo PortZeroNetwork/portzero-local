@@ -716,6 +716,87 @@ fn real_tun_overlay() {
         );
     }
 
+    #[cfg(target_os = "windows")]
+    if std::env::var("PORTZERO_REAL_TUN_E2E_CHILD").as_deref() != Ok("1") {
+        run_windows_real_tun_overlay_child();
+        return;
+    }
+
+    run_real_tun_overlay_worker();
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_real_tun_overlay_child() {
+    use std::process::Stdio;
+    use std::time::Instant;
+
+    let progress_path = std::env::temp_dir().join(format!(
+        "portzero-real-tun-e2e-{}.progress",
+        std::process::id()
+    ));
+    let _ = std::fs::write(&progress_path, RealTunStep::NotStarted.as_str());
+
+    let exe = std::env::current_exe().expect("failed to locate current test executable");
+    println!(
+        "real_tun_overlay: starting child process with {TEST_TIMEOUT:?} watchdog: {}",
+        exe.display()
+    );
+
+    let mut child = std::process::Command::new(exe)
+        .args(["--exact", "real_tun_overlay", "--nocapture"])
+        .env("PORTZERO_REQUIRE_REAL_TUN_E2E", "1")
+        .env("PORTZERO_REAL_TUN_E2E_CHILD", "1")
+        .env("PORTZERO_REAL_TUN_E2E_PROGRESS_FILE", &progress_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("failed to spawn real_tun_overlay child process");
+
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                let _ = std::fs::remove_file(&progress_path);
+                return;
+            }
+            Ok(Some(status)) => {
+                let last_step = read_real_tun_progress_file(&progress_path);
+                let _ = std::fs::remove_file(&progress_path);
+                panic!("real_tun_overlay child exited with {status}; last step: {last_step}");
+            }
+            Ok(None) if started.elapsed() >= TEST_TIMEOUT => {
+                let last_step = read_real_tun_progress_file(&progress_path);
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = std::fs::remove_file(&progress_path);
+                panic!(
+                    "real_tun_overlay child timed out after {TEST_TIMEOUT:?}; last step: {last_step}"
+                );
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) => {
+                let last_step = read_real_tun_progress_file(&progress_path);
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = std::fs::remove_file(&progress_path);
+                panic!("failed to poll real_tun_overlay child: {e}; last step: {last_step}");
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn read_real_tun_progress_file(path: &std::path::Path) -> String {
+    std::fs::read_to_string(path)
+        .map(|s| s.trim().to_string())
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(any(unix, target_os = "windows"))]
+fn run_real_tun_overlay_worker() {
     println!("real_tun_overlay: starting worker with {TEST_TIMEOUT:?} watchdog");
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -775,6 +856,10 @@ impl RealTunProgress {
     fn store(&self, step: RealTunStep) {
         self.0
             .store(step as u8, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(target_os = "windows")]
+        if let Ok(path) = std::env::var("PORTZERO_REAL_TUN_E2E_PROGRESS_FILE") {
+            let _ = std::fs::write(path, step.as_str());
+        }
     }
 
     fn load(&self, ordering: std::sync::atomic::Ordering) -> RealTunStep {

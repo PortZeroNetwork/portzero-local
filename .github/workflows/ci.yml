@@ -114,6 +114,18 @@ jobs:
       - name: E2E - real TUN overlay (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 5
+        shell: pwsh
         env:
           PORTZERO_REQUIRE_REAL_TUN_E2E: "1"
-        run: cargo test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+        run: |
+          cargo test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+          $testExitCode = $LASTEXITCODE
+          if ($testExitCode -ne 0) {
+            Write-Host "`n--- Windows network diagnostics ---"
+            Get-NetAdapter -Name "portzero-e2e" -ErrorAction SilentlyContinue | Format-List Name,InterfaceIndex,Status,MacAddress,LinkSpeed
+            Get-NetIPAddress -InterfaceAlias "portzero-e2e" -ErrorAction SilentlyContinue | Format-Table -AutoSize
+            Get-NetRoute -ErrorAction SilentlyContinue | Where-Object { $_.DestinationPrefix -like "10.254.*" } | Format-Table -AutoSize
+            Get-DnsClientNrptRule -ErrorAction SilentlyContinue | Where-Object { $_.Namespace -like "*portzero.local*" } | Format-List
+            netsh interface ipv4 show config name="portzero-e2e"
+            exit $testExitCode
+          }
