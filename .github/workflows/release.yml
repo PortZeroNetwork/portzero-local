@@ -698,6 +698,7 @@ jobs:
     name: Check WinGet Token
     needs: [release]
     runs-on: ubuntu-latest
+    if: false  # Disabled along with update-winget (not shipping Winget yet)
     outputs:
       has-token: ${{ steps.check.outputs.has-token }}
     steps:
@@ -709,7 +710,7 @@ jobs:
     name: Update WinGet Package
     needs: [version, release, check-winget-token]
     runs-on: ubuntu-latest
-    if: ${{ needs.check-winget-token.outputs.has-token == 'true' }}
+    if: false  # Disabled: not shipping Winget packages yet
     permissions:
       contents: read
       pull-requests: write
