@@ -28,3 +28,10 @@ Port Zero runs a background process on your local dev machine that scans for pro
 2. Create a virtual IP address in this virtual NIC for that process
 3. Create a virtual DNS record for that virtual IP address, based on the template specified in `PZ_TUNNEL`
 4. Forward the port specified in `PZ_TUNNEL` on the virtual IP address to the randomly-assigned port on the actual process or Docker container
+
+## Licensing
+
+- **Port Zero Local** (tunnels using `*.portzero.local`): governed by the [PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0). See the [LICENSE](LICENSE) file. Required notice: Copyright Loum Technologies (https://loumtechnologies.com).
+- **Port Zero Cloud** features (tunnels using `portzero.cloud`): governed by the [Terms of Service](https://portzero.net/terms).
+
+By installing or using the software you agree to the terms applicable to the features you use.

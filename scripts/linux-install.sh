@@ -277,4 +277,9 @@ case ":${PATH}:" in
 esac
 
 echo ""
+info "Local tunnels (*.portzero.local) governed by the PolyForm Shield License:"
+info "  https://github.com/PortZeroNetwork/portzero-local/blob/main/LICENSE"
+info "Cloud features governed by https://portzero.net/terms"
+
+echo ""
 echo "Next: ${BOLD}portzero login${RESET}  when you want cloud tunnels"
