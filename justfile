@@ -3,6 +3,16 @@ set windows-shell := ["powershell.exe", "-NoProfile", "-Command"]
 default:
     @just --list
 
+# Refresh installer/getting-started.json and docs/examples.md from ../portzero-examples.
+[unix]
+examples-docs:
+    CARGO_TARGET_DIR=/tmp/portzero-target cargo run -p portzero-daemon --bin generate-examples-docs
+
+[windows]
+examples-docs:
+    $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
+    cargo run -p portzero-daemon --bin generate-examples-docs
+
 # Install the daemon and CLI from source, grant privileges, and start.
 #
 # Linux:  grants CAP_NET_ADMIN (one sudo prompt), installs a systemd user

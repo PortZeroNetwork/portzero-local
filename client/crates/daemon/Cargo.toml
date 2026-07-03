@@ -54,6 +54,10 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 name = "generate-openapi"
 path = "src/bin/generate_openapi.rs"
 
+[[bin]]
+name = "generate-examples-docs"
+path = "src/bin/generate_examples_docs.rs"
+
 [dev-dependencies]
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
 rustls-pemfile = "2"

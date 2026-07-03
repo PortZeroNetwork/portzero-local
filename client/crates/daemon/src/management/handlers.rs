@@ -24,6 +24,10 @@ const PORTZERO_WORDMARK_JPEG: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/src/management/assets/portzero-wordmark.jpg"
 ));
+const GETTING_STARTED_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../installer/getting-started.json"
+));
 
 // ─── Request / response types ────────────────────────────────────────────────
 
@@ -236,6 +240,37 @@ fn detected_languages() -> serde_json::Value {
     serde_json::json!({
         "default": default_language,
         "items": detected,
+    })
+}
+
+fn detected_environment() -> serde_json::Value {
+    let (os_id, os_label) = if cfg!(target_os = "macos") {
+        ("macos", "macOS")
+    } else if cfg!(target_os = "windows") {
+        ("windows", "Windows")
+    } else if cfg!(target_os = "linux") {
+        ("linux", "Linux")
+    } else {
+        ("unix", std::env::consts::OS)
+    };
+
+    serde_json::json!({
+        "os": {
+            "id": os_id,
+            "label": os_label,
+        },
+        "docker": {
+            "installed": command_on_path("docker"),
+        },
+    })
+}
+
+fn getting_started_manifest() -> serde_json::Value {
+    serde_json::from_str(GETTING_STARTED_JSON).unwrap_or_else(|_| {
+        serde_json::json!({
+            "examples": [],
+            "languages": [],
+        })
     })
 }
 
@@ -734,31 +769,8 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
       <h2 id="quickstart-title">Quickstart</h2>
       <p class="section-note">Short steps first. Details can live below.</p>
     </div>
-    <div class="steps">
-      <article class="step">
-        <span class="num">1</span>
-        <div>
-          <h3>Run something locally</h3>
-          <p class="placeholder">TODO: one-liner for starting a tiny local service.</p>
-          <pre class="code-row"><code>[TODO: command]</code></pre>
-        </div>
-      </article>
-      <article class="step">
-        <span class="num">2</span>
-        <div>
-          <h3>Point a .local name at it</h3>
-          <p class="placeholder">TODO: one-liner for exposing that service through portzero.local DNS.</p>
-          <pre class="code-row"><code>[TODO: command]</code></pre>
-        </div>
-      </article>
-      <article class="step">
-        <span class="num">3</span>
-        <div>
-          <h3>Open the local URL</h3>
-          <p class="placeholder">TODO: final URL/check command.</p>
-          <pre class="code-row"><code>[TODO: command]</code></pre>
-        </div>
-      </article>
+    <div class="steps" id="quickstart-steps">
+      <p class="loading">Detecting local setup...</p>
     </div>
   </section>
 
@@ -814,46 +826,82 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
   </section>
 </main>
 <script>
-const LANGUAGE_EXAMPLES={
-  typescript:[['Run a server','TODO: TypeScript one-liner that starts a local service.'],['Expose it','TODO: TypeScript command with PZ_TUNNEL.'],['Download example','TODO: TypeScript downloadable example link.']],
-  javascript:[['Run a server','TODO: JavaScript one-liner that starts a local service.'],['Expose it','TODO: JavaScript command with PZ_TUNNEL.'],['Download example','TODO: JavaScript downloadable example link.']],
-  python:[['Run a server','TODO: Python one-liner that starts a local service.'],['Expose it','TODO: Python command with PZ_TUNNEL.'],['Download example','TODO: Python downloadable example link.']],
-  java:[['Run a server','TODO: Java one-liner that starts a local service.'],['Expose it','TODO: Java command with PZ_TUNNEL.'],['Download example','TODO: Java downloadable example link.']],
-  go:[['Run a server','TODO: Go one-liner that starts a local service.'],['Expose it','TODO: Go command with PZ_TUNNEL.'],['Download example','TODO: Go downloadable example link.']],
-  rust:[['Run a server','TODO: Rust one-liner that starts a local service.'],['Expose it','TODO: Rust command with PZ_TUNNEL.'],['Download example','TODO: Rust downloadable example link.']],
-  csharp:[['Run a server','TODO: C# one-liner that starts a local service.'],['Expose it','TODO: C# command with PZ_TUNNEL.'],['Download example','TODO: C# downloadable example link.']],
-  php:[['Run a server','TODO: PHP one-liner that starts a local service.'],['Expose it','TODO: PHP command with PZ_TUNNEL.'],['Download example','TODO: PHP downloadable example link.']],
-  ruby:[['Run a server','TODO: Ruby one-liner that starts a local service.'],['Expose it','TODO: Ruby command with PZ_TUNNEL.'],['Download example','TODO: Ruby downloadable example link.']],
-  cpp:[['Run a server','TODO: C/C++ one-liner that starts a local service.'],['Expose it','TODO: C/C++ command with PZ_TUNNEL.'],['Download example','TODO: C/C++ downloadable example link.']],
-  swift:[['Run a server','TODO: Swift one-liner that starts a local service.'],['Expose it','TODO: Swift command with PZ_TUNNEL.'],['Download example','TODO: Swift downloadable example link.']],
-  kotlin:[['Run a server','TODO: Kotlin one-liner that starts a local service.'],['Expose it','TODO: Kotlin command with PZ_TUNNEL.'],['Download example','TODO: Kotlin downloadable example link.']],
-  dart:[['Run a server','TODO: Dart one-liner that starts a local service.'],['Expose it','TODO: Dart command with PZ_TUNNEL.'],['Download example','TODO: Dart downloadable example link.']],
-  elixir:[['Run a server','TODO: Elixir one-liner that starts a local service.'],['Expose it','TODO: Elixir command with PZ_TUNNEL.'],['Download example','TODO: Elixir downloadable example link.']],
-  scala:[['Run a server','TODO: Scala one-liner that starts a local service.'],['Expose it','TODO: Scala command with PZ_TUNNEL.'],['Download example','TODO: Scala downloadable example link.']],
-  r:[['Run a server','TODO: R one-liner that starts a local service.'],['Expose it','TODO: R command with PZ_TUNNEL.'],['Download example','TODO: R downloadable example link.']],
-  julia:[['Run a server','TODO: Julia one-liner that starts a local service.'],['Expose it','TODO: Julia command with PZ_TUNNEL.'],['Download example','TODO: Julia downloadable example link.']],
-  lua:[['Run a server','TODO: Lua one-liner that starts a local service.'],['Expose it','TODO: Lua command with PZ_TUNNEL.'],['Download example','TODO: Lua downloadable example link.']],
-  perl:[['Run a server','TODO: Perl one-liner that starts a local service.'],['Expose it','TODO: Perl command with PZ_TUNNEL.'],['Download example','TODO: Perl downloadable example link.']],
-  zig:[['Run a server','TODO: Zig one-liner that starts a local service.'],['Expose it','TODO: Zig command with PZ_TUNNEL.'],['Download example','TODO: Zig downloadable example link.']],
-  haskell:[['Run a server','TODO: Haskell one-liner that starts a local service.'],['Expose it','TODO: Haskell command with PZ_TUNNEL.'],['Download example','TODO: Haskell downloadable example link.']],
-  shell:[['Run a server','TODO: shell one-liner that starts a local service.'],['Expose it','TODO: shell command with PZ_TUNNEL.'],['Download example','TODO: shell downloadable example link.']]
-};
 let selectedLanguage=null;
 let languagePickerReady=false;
+let latestDashboardData=null;
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function dot(ok){return '<span class="dot '+(ok?'ok':'')+'"></span>'}
+function exampleCommand(ex,os){
+  const commands=ex.commands||{};
+  return commands[os]||commands.linux||commands.macos||commands.windows||'';
+}
+function exampleUrl(ex){
+  return 'http://'+String(ex.domain||'').replace(/:80$/,'')+'/';
+}
+function sortedRelevantExamples(d,languageId){
+  const examples=((d.getting_started||{}).examples||[]).filter(function(ex){return ex.language===languageId;});
+  const dockerInstalled=!!(((d.environment||{}).docker||{}).installed);
+  return examples.filter(function(ex){return dockerInstalled||!ex.requires_docker;});
+}
+function manifestLanguageIds(d){
+  const ids={};
+  ((d.getting_started||{}).examples||[]).forEach(function(ex){ids[ex.language]=true;});
+  return ids;
+}
+function renderQuickstart(d){
+  const root=document.getElementById('quickstart-steps');
+  if(!root) return;
+  const env=d.environment||{};
+  const os=(env.os&&env.os.id)||'linux';
+  const osLabel=(env.os&&env.os.label)||os;
+  const languageId=selectedLanguage||(d.languages&&d.languages.default)||'rust';
+  const examples=sortedRelevantExamples(d,languageId);
+  const ex=examples[0]||(((d.getting_started||{}).examples||[]).filter(function(item){return item.language===languageId;})[0]);
+  if(!ex){
+    root.innerHTML='<p class="empty">No checked-in examples are available for the selected language yet.</p>';
+    return;
+  }
+  const command=exampleCommand(ex,os);
+  const url=exampleUrl(ex);
+  root.innerHTML=[
+    '<article class="step"><span class="num">1</span><div><h3>Clone the examples</h3><p class="placeholder">Use the separate examples repository.</p><pre class="code-row"><code>git clone https://github.com/PortZeroNetwork/portzero-examples.git\ncd portzero-examples</code></pre></div></article>',
+    '<article class="step"><span class="num">2</span><div><h3>Run '+esc(ex.title||ex.id)+'</h3><p class="placeholder">Detected '+esc(osLabel)+'. '+(ex.requires_docker?'Docker is required for this example.':'This example runs as a local process.')+'</p><pre class="code-row"><code>cd '+esc(ex.path)+'\n'+esc(command)+'</code></pre></div></article>',
+    '<article class="step"><span class="num">3</span><div><h3>Open the local URL</h3><p class="placeholder">The daemon detects <code>PZ_TUNNEL</code> and routes the local name.</p><pre class="code-row"><code>'+esc(url)+'</code></pre></div></article>'
+  ].join('');
+}
 function renderLanguageExamples(id){
   const picker=document.getElementById('language-picker');
   if(picker&&picker.value!==id) picker.value=id;
   selectedLanguage=id;
-  const examples=LANGUAGE_EXAMPLES[id]||LANGUAGE_EXAMPLES.typescript;
-  document.getElementById('language-examples').innerHTML=examples.map(function(ex){
-    return '<article class="example"><span class="tag">'+esc(id)+'</span><h3>'+esc(ex[0])+'</h3><p class="placeholder">'+esc(ex[1])+'</p></article>';
+  const d=latestDashboardData||{};
+  const env=d.environment||{};
+  const os=(env.os&&env.os.id)||'linux';
+  const all=((d.getting_started||{}).examples||[]).filter(function(ex){return ex.language===id;});
+  const examples=sortedRelevantExamples(d,id);
+  const dockerInstalled=!!((env.docker||{}).installed);
+  const root=document.getElementById('language-examples');
+  if(!all.length){
+    root.innerHTML='<p class="empty">No checked-in examples are available for this language yet.</p>';
+    renderQuickstart(d);
+    return;
+  }
+  let html=examples.map(function(ex){
+    return '<article class="example"><span class="tag">'+esc(ex.variant_label||ex.variant)+'</span><h3>'+esc(ex.title||ex.id)+'</h3><p class="placeholder">'+(ex.requires_docker?'Docker container':'Local process')+'</p><pre class="code-row"><code>cd '+esc(ex.path)+'\n'+esc(exampleCommand(ex,os))+'</code></pre><p class="placeholder">Open <code>'+esc(exampleUrl(ex))+'</code></p></article>';
   }).join('');
+  if(!dockerInstalled&&all.some(function(ex){return ex.requires_docker;})){
+    html+='<article class="example"><span class="tag">Docker</span><h3>Docker examples hidden</h3><p class="placeholder">Install and start Docker to show Docker container examples.</p></article>';
+  }
+  root.innerHTML=html;
+  renderQuickstart(d);
 }
 function renderLanguagePicker(languages){
   if(!languages||!languages.items) return;
-  if(!selectedLanguage) selectedLanguage=languages.default||'typescript';
+  const exampleLanguages=manifestLanguageIds(latestDashboardData||{});
+  if(!selectedLanguage){
+    const detectedWithExamples=languages.items.find(function(lang){return lang.installed&&exampleLanguages[lang.id];});
+    const firstWithExamples=languages.items.find(function(lang){return exampleLanguages[lang.id];});
+    selectedLanguage=(detectedWithExamples||firstWithExamples||{}).id||languages.default||'typescript';
+  }
   const picker=document.getElementById('language-picker');
   if(!languagePickerReady){
     picker.innerHTML=languages.items.map(function(lang){
@@ -899,9 +947,11 @@ function renderDiag(d){
 }
 
 function render(d){
+  latestDashboardData=d;
   document.getElementById('hdr-meta').textContent=d.daemon_pid?'pid '+d.daemon_pid:'local daemon';
   document.getElementById('hdr-ts').textContent='Updated '+new Date().toLocaleTimeString();
   renderLanguagePicker(d.languages);
+  renderQuickstart(d);
 
   let html='';
 
@@ -1117,6 +1167,8 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         "management_registrations": management_registrations,
         "diagnostics": diagnostics,
         "languages": detected_languages(),
+        "environment": detected_environment(),
+        "getting_started": getting_started_manifest(),
         "https_policy": {
             "enable_for_port_80": https_policy.enable_for_port_80,
             "redirect_port_80": https_policy.redirect_port_80,

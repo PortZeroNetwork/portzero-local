@@ -34,6 +34,7 @@ All documents in this directory are written for **developers using Port Zero Loc
 ### Core concepts
 
 - [PZ_TUNNEL semantics](portzero.md) — the full-domain rule, how the suffix selects cloud vs. local, `{branch}` / `{worktree}` templates, and when the variable must be set.
+- [Examples](examples.md) — checked-in instructions generated from the latest adjacent `portzero-examples` checkout.
 
 ### How it works
 
