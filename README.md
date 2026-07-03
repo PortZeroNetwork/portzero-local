@@ -35,3 +35,11 @@ Port Zero runs a background process on your local dev machine that scans for pro
 - **Port Zero Cloud** features (tunnels using `portzero.cloud`): governed by the [Terms of Service](https://portzero.net/terms).
 
 By installing or using the software you agree to the terms applicable to the features you use.
+
+## Contributing
+
+We welcome contributions!
+
+All contributors must sign our [Contributor License Agreement](CLA.md) before pull requests can be accepted. See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution process, development setup, and CLA signing instructions.
+
+Internal development documentation lives under [`docs/dev/`](docs/dev/).
