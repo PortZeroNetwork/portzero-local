@@ -789,6 +789,14 @@ enum RealTunStep {
     InstallingHostRoute = 5,
     CheckingTcpEcho = 6,
     ShuttingDown = 7,
+    LoadingLocalCa = 8,
+    InstallingTrust = 9,
+    CreatingTunDevice = 10,
+    BuildingTlsConfig = 11,
+    SpawningVirtualStack = 12,
+    StartingDnsServer = 13,
+    InstallingResolverConfig = 14,
+    OverlayStarted = 15,
 }
 
 #[cfg(any(unix, target_os = "windows"))]
@@ -802,6 +810,14 @@ impl RealTunStep {
             5 => Self::InstallingHostRoute,
             6 => Self::CheckingTcpEcho,
             7 => Self::ShuttingDown,
+            8 => Self::LoadingLocalCa,
+            9 => Self::InstallingTrust,
+            10 => Self::CreatingTunDevice,
+            11 => Self::BuildingTlsConfig,
+            12 => Self::SpawningVirtualStack,
+            13 => Self::StartingDnsServer,
+            14 => Self::InstallingResolverConfig,
+            15 => Self::OverlayStarted,
             _ => Self::NotStarted,
         }
     }
@@ -816,6 +832,42 @@ impl RealTunStep {
             Self::InstallingHostRoute => "installing host route",
             Self::CheckingTcpEcho => "checking TCP echo through tunnel",
             Self::ShuttingDown => "shutting down overlay",
+            Self::LoadingLocalCa => "loading local CA",
+            Self::InstallingTrust => "installing local CA trust",
+            Self::CreatingTunDevice => "creating TUN device",
+            Self::BuildingTlsConfig => "building TLS config",
+            Self::SpawningVirtualStack => "spawning virtual stack",
+            Self::StartingDnsServer => "starting DNS server",
+            Self::InstallingResolverConfig => "installing resolver config",
+            Self::OverlayStarted => "overlay started",
+        }
+    }
+}
+
+#[cfg(any(unix, target_os = "windows"))]
+impl From<portzero_daemon::net::overlay::OverlayStartStep> for RealTunStep {
+    fn from(step: portzero_daemon::net::overlay::OverlayStartStep) -> Self {
+        match step {
+            portzero_daemon::net::overlay::OverlayStartStep::LoadingLocalCa => Self::LoadingLocalCa,
+            portzero_daemon::net::overlay::OverlayStartStep::InstallingTrust => {
+                Self::InstallingTrust
+            }
+            portzero_daemon::net::overlay::OverlayStartStep::CreatingTunDevice => {
+                Self::CreatingTunDevice
+            }
+            portzero_daemon::net::overlay::OverlayStartStep::BuildingTlsConfig => {
+                Self::BuildingTlsConfig
+            }
+            portzero_daemon::net::overlay::OverlayStartStep::SpawningVirtualStack => {
+                Self::SpawningVirtualStack
+            }
+            portzero_daemon::net::overlay::OverlayStartStep::StartingDnsServer => {
+                Self::StartingDnsServer
+            }
+            portzero_daemon::net::overlay::OverlayStartStep::InstallingResolverConfig => {
+                Self::InstallingResolverConfig
+            }
+            portzero_daemon::net::overlay::OverlayStartStep::Complete => Self::OverlayStarted,
         }
     }
 }
@@ -866,10 +918,13 @@ async fn real_tun_overlay_inner() -> Result<(), String> {
             ..Default::default()
         };
 
-        let overlay =
-            OverlayNetwork::start(config, std::sync::Arc::new(tokio::sync::Notify::new()))
-                .await
-                .expect("overlay start failed under root");
+        let overlay = OverlayNetwork::start_with_progress(
+            config,
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+            |step| REAL_TUN_PROGRESS.store(step.into()),
+        )
+        .await
+        .expect("overlay start failed under root");
 
         // Register a service so the stack installs a listener and DNS answers.
         REAL_TUN_PROGRESS.store(RealTunStep::SpawningBackend);

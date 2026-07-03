@@ -133,6 +133,20 @@ pub struct OverlayNetwork {
     dns_first_hit_policy: Arc<AtomicU8>,
 }
 
+/// Startup phase reported by [`OverlayNetwork::start_with_progress`].
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OverlayStartStep {
+    LoadingLocalCa,
+    InstallingTrust,
+    CreatingTunDevice,
+    BuildingTlsConfig,
+    SpawningVirtualStack,
+    StartingDnsServer,
+    InstallingResolverConfig,
+    Complete,
+}
+
 impl OverlayNetwork {
     /// Start the overlay (TUN + TCP stack + DNS).
     ///
@@ -142,17 +156,31 @@ impl OverlayNetwork {
     ///
     /// This must be called with sufficient privileges.
     pub async fn start(config: OverlayConfig, dns_rescan: Arc<Notify>) -> Result<Self> {
+        Self::start_with_progress(config, dns_rescan, |_| {}).await
+    }
+
+    /// Start the overlay and report progress through the blocking/synchronous
+    /// setup phases. Intended for diagnostics in privileged E2E tests.
+    #[doc(hidden)]
+    pub async fn start_with_progress(
+        config: OverlayConfig,
+        dns_rescan: Arc<Notify>,
+        progress: impl Fn(OverlayStartStep),
+    ) -> Result<Self> {
         // Generate (or load) the local CA and wildcard cert for *.portzero.local.
         // Fatal: without this, HTTPS termination cannot start.
+        progress(OverlayStartStep::LoadingLocalCa);
         let ca = LocalCa::load_or_create()?;
 
         // Install the CA into OS trust stores so browsers accept the cert.
         // Non-fatal: the overlay still works for plain HTTP if this fails.
+        progress(OverlayStartStep::InstallingTrust);
         if let Err(e) = trust::install(&LocalCa::ca_cert_path()?) {
             tracing::warn!("trust store installation failed (HTTPS may show cert warnings): {e:#}");
         }
 
         // Create the TUN device first (this may require root).
+        progress(OverlayStartStep::CreatingTunDevice);
         let tun = TunDevice::create(&config.tun)?;
         // Capture the actual link name (the kernel may pick a different unit
         // number than requested) before the device is moved into the stack. The
@@ -161,6 +189,7 @@ impl OverlayNetwork {
 
         // Build the rustls ServerConfig from the wildcard cert. Non-fatal: if
         // this fails the stack still runs, just without HTTPS on port 443.
+        progress(OverlayStartStep::BuildingTlsConfig);
         let tls_config = match tls_stack::build_server_config(&ca) {
             Ok(c) => {
                 tracing::info!("TLS termination enabled for *.portzero.local on port 443");
@@ -177,11 +206,13 @@ impl OverlayNetwork {
 
         // Start the TCP stack
         let initial = ServiceTable::new();
+        progress(OverlayStartStep::SpawningVirtualStack);
         let stack = VirtualStack::spawn(tun, initial, tls_config, config.https_policy).await?;
 
         // Start DNS server. It pings `dns_rescan` on a miss and waits on
         // `dns_updated` for the table to refresh so the first query for a
         // just-started service can succeed instead of returning NXDOMAIN.
+        progress(OverlayStartStep::StartingDnsServer);
         let dns_updated = Arc::new(Notify::new());
         let dns_server = OverlayDnsServer::new(services.clone(), config.dns_listen)
             .with_first_hit_policy(config.dns_first_hit_policy)
@@ -212,12 +243,14 @@ impl OverlayNetwork {
         // when systemd-networkd is absent. Log errors but do not abort startup;
         // the overlay still works for services that manually configure DNS.
         let resolver_addr = resolver_dns_addr(config.dns_listen);
+        progress(OverlayStartStep::InstallingResolverConfig);
         if let Err(e) = resolver_config::install(resolver_addr, &link_name).await {
             tracing::warn!(
                 "scoped resolver setup failed (may need elevated privileges): {:#}",
                 e
             );
         }
+        progress(OverlayStartStep::Complete);
 
         Ok(Self {
             services,
