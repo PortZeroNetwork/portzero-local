@@ -227,11 +227,7 @@ fn detect_kind(path: &Path) -> Option<String> {
     // C# project: any *.csproj
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.flatten() {
-            if entry
-                .path()
-                .extension()
-                .map_or(false, |ext| ext == "csproj")
-            {
+            if entry.path().extension().is_some_and(|ext| ext == "csproj") {
                 return Some("csharp".to_string());
             }
         }
