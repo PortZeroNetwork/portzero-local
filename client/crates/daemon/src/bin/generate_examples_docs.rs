@@ -49,9 +49,11 @@ impl Language {
 
 #[derive(Clone)]
 struct Example {
+    source_language: String,
     language: String,
     variant: String,
     path: PathBuf,
+    uses_docker_compose: bool,
 }
 
 #[derive(Serialize)]
@@ -72,12 +74,14 @@ struct Source {
 struct ExampleRecord {
     id: String,
     title: String,
+    source_language: String,
     language: String,
     language_label: String,
     tools: Vec<&'static str>,
     variant: String,
     variant_label: String,
     requires_docker: bool,
+    uses_docker_compose: bool,
     path: String,
     domain: String,
     scripts: PlatformMap,
@@ -159,12 +163,20 @@ fn discover_examples(root: &Path) -> Result<Vec<Example>> {
         for variant_entry in variant_dirs {
             let variant_path = variant_entry.path();
             let variant = variant_entry.file_name().to_string_lossy().into_owned();
-            if !variant_path.is_dir() || variant.starts_with('.') || !has_runner(&variant_path) {
+            if !variant_path.is_dir()
+                || variant.starts_with('.')
+                || !VARIANTS.contains(&variant.as_str())
+                || detect_kind(&variant_path).is_none()
+            {
                 continue;
             }
             examples.push(Example {
-                language: language.clone(),
+                source_language: language.clone(),
+                language: language_id_for_dir(&language).to_string(),
                 variant,
+                uses_docker_compose: variant_path.join("docker-compose.yml").is_file()
+                    || variant_path.join("docker-compose.yaml").is_file()
+                    || variant_path.join("compose.yaml").is_file(),
                 path: variant_path
                     .strip_prefix(root)
                     .unwrap_or(&variant_path)
@@ -177,11 +189,19 @@ fn discover_examples(root: &Path) -> Result<Vec<Example>> {
 }
 
 fn language_rank(language: &str) -> (usize, String) {
+    let language = language_id_for_dir(language);
     let rank = LANGUAGES
         .iter()
         .position(|item| item.id == language)
         .unwrap_or(LANGUAGES.len());
     (rank, language.to_string())
+}
+
+fn language_id_for_dir(dir: &str) -> &str {
+    match dir {
+        "nodejs-typescript" => "typescript",
+        other => other,
+    }
 }
 
 fn variant_rank(variant: &str) -> (usize, String) {
@@ -193,21 +213,54 @@ fn variant_rank(variant: &str) -> (usize, String) {
     (rank, variant.to_string())
 }
 
-fn has_runner(path: &Path) -> bool {
-    let scripts = path.join("scripts");
-    scripts.join("run.sh").is_file() || scripts.join("run.ps1").is_file()
+fn detect_kind(path: &Path) -> Option<String> {
+    // Mirrors logic in ../portzero-examples/scripts/test_examples.py
+    if path.join("Cargo.toml").is_file() {
+        return Some("rust".to_string());
+    }
+    if path.join("app.py").is_file() {
+        return Some("python".to_string());
+    }
+    if path.join("app.ts").is_file() {
+        return Some("nodejs-typescript".to_string());
+    }
+    // C# project: any *.csproj
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            if entry
+                .path()
+                .extension()
+                .map_or(false, |ext| ext == "csproj")
+            {
+                return Some("csharp".to_string());
+            }
+        }
+    }
+    None
 }
+
+const VARIANTS: &[&str] = &["process", "docker"];
 
 fn example_record(example: &Example) -> ExampleRecord {
     let path = slash_path(&example.path);
     let domain = domain(example);
-    let unix_command = format!("PZ_TUNNEL=\"{domain}\" ./scripts/run.sh");
-    let windows_command = format!("$env:PZ_TUNNEL = \"{domain}\"; .\\scripts\\run.ps1");
+    let (cmd_part, win_cmd_part) = launch_parts(&example.source_language, &example.variant);
+    let unix_command = format!("PZ_TUNNEL=\"{domain}\" {cmd_part}");
+    let windows_command = format!("$env:PZ_TUNNEL = \"{domain}\"; {win_cmd_part}");
     let language = language(example.language.as_str());
 
+    let script_file = primary_script_file(&example.source_language, &example.variant);
+    let script_linux = if script_file.is_empty() {
+        String::new()
+    } else {
+        format!("{path}/{script_file}")
+    };
+    let script_windows = script_linux.replace('/', "\\");
+
     ExampleRecord {
-        id: format!("{}/{}", example.language, example.variant),
+        id: format!("{}/{}", example.source_language, example.variant),
         title: title(example),
+        source_language: example.source_language.clone(),
         language: example.language.clone(),
         language_label: language
             .map(|item| item.label)
@@ -217,12 +270,13 @@ fn example_record(example: &Example) -> ExampleRecord {
         variant: example.variant.clone(),
         variant_label: variant_label(&example.variant).to_string(),
         requires_docker: example.variant == "docker",
+        uses_docker_compose: example.uses_docker_compose,
         path: path.clone(),
         domain: domain.clone(),
         scripts: PlatformMap {
-            linux: format!("{path}/scripts/run.sh"),
-            macos: format!("{path}/scripts/run.sh"),
-            windows: format!("{path}/scripts/run.ps1"),
+            linux: script_linux.clone(),
+            macos: script_linux,
+            windows: script_windows,
         },
         commands: PlatformMap {
             linux: unix_command.clone(),
@@ -246,13 +300,57 @@ fn title(example: &Example) -> String {
 fn variant_label(variant: &str) -> &str {
     match variant {
         "process" => "process",
-        "docker" => "Docker container",
+        "docker" => "Docker Compose",
         _ => variant,
     }
 }
 
+fn launch_parts(source_language: &str, variant: &str) -> (String, String) {
+    // Returns (unix_invocation, windows_invocation) — the part after setting PZ_TUNNEL.
+    // Matches the documented commands in ../portzero-examples/*/README.md
+    if variant == "docker" {
+        let cmd = "docker compose up --build".to_string();
+        return (cmd.clone(), cmd);
+    }
+    match source_language {
+        "python" => {
+            let cmd = "uv run python app.py".to_string();
+            (cmd.clone(), cmd)
+        }
+        "nodejs-typescript" => {
+            let cmd = "node app.ts".to_string();
+            (cmd.clone(), cmd)
+        }
+        "rust" => {
+            let cmd = "cargo run --quiet".to_string();
+            (cmd.clone(), cmd)
+        }
+        "csharp" => {
+            let cmd = "dotnet run --no-launch-profile".to_string();
+            (cmd.clone(), cmd)
+        }
+        _ => (String::new(), String::new()),
+    }
+}
+
+fn primary_script_file(source_language: &str, variant: &str) -> &'static str {
+    if variant == "docker" {
+        return "docker-compose.yml";
+    }
+    match source_language {
+        "python" => "app.py",
+        "nodejs-typescript" => "app.ts",
+        "rust" => "src/main.rs",
+        "csharp" => "Program.cs",
+        _ => "",
+    }
+}
+
 fn domain(example: &Example) -> String {
-    format!("{}-{}.portzero.local:80", example.language, example.variant)
+    format!(
+        "{}-{}.portzero.local:80",
+        example.source_language, example.variant
+    )
 }
 
 fn slash_path(path: &Path) -> String {
@@ -289,7 +387,7 @@ fn render_docs(examples: &[Example]) -> String {
         "cd portzero-examples".to_string(),
         "```".to_string(),
         String::new(),
-        "Each example sets `PZ_TUNNEL` so the local daemon can make the process or Docker container available at a `*.portzero.local` name.".to_string(),
+        "Each example sets `PZ_TUNNEL` so the local daemon can make the process or Docker Compose project available at a `*.portzero.local` name.".to_string(),
         String::new(),
     ];
 
@@ -297,6 +395,8 @@ fn render_docs(examples: &[Example]) -> String {
         let path = slash_path(&example.path);
         let windows_path = path.replace('/', "\\");
         let domain = domain(example);
+        let (cmd_part, win_cmd_part) = launch_parts(&example.source_language, &example.variant);
+        let win_set = format!("$env:PZ_TUNNEL = \"{domain}\"; {win_cmd_part}");
         lines.extend([
             format!("## {}", title(example)),
             String::new(),
@@ -304,22 +404,22 @@ fn render_docs(examples: &[Example]) -> String {
             String::new(),
             "```sh".to_string(),
             format!("cd {path}"),
-            format!("PZ_TUNNEL=\"{domain}\" ./scripts/run.sh"),
+            format!("PZ_TUNNEL=\"{domain}\" {cmd_part}"),
             "```".to_string(),
             String::new(),
             "Windows PowerShell:".to_string(),
             String::new(),
             "```powershell".to_string(),
             format!("cd {windows_path}"),
-            format!("$env:PZ_TUNNEL = \"{domain}\""),
-            ".\\scripts\\run.ps1".to_string(),
+            win_set,
             "```".to_string(),
             String::new(),
         ]);
 
         if example.variant == "docker" {
             lines.extend([
-                "This example requires Docker to be installed and running.".to_string(),
+                "This example requires Docker with Docker Compose to be installed and running."
+                    .to_string(),
                 String::new(),
             ]);
         }

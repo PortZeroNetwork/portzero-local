@@ -865,7 +865,7 @@ function renderQuickstart(d){
   const url=exampleUrl(ex);
   root.innerHTML=[
     '<article class="step"><span class="num">1</span><div><h3>Clone the examples</h3><p class="placeholder">Use the separate examples repository.</p><pre class="code-row"><code>git clone https://github.com/PortZeroNetwork/portzero-examples.git\ncd portzero-examples</code></pre></div></article>',
-    '<article class="step"><span class="num">2</span><div><h3>Run '+esc(ex.title||ex.id)+'</h3><p class="placeholder">Detected '+esc(osLabel)+'. '+(ex.requires_docker?'Docker is required for this example.':'This example runs as a local process.')+'</p><pre class="code-row"><code>cd '+esc(ex.path)+'\n'+esc(command)+'</code></pre></div></article>',
+    '<article class="step"><span class="num">2</span><div><h3>Run '+esc(ex.title||ex.id)+'</h3><p class="placeholder">Detected '+esc(osLabel)+'. '+(ex.requires_docker?'Docker with Compose is required for this example.':'This example runs as a local process.')+'</p><pre class="code-row"><code>cd '+esc(ex.path)+'\n'+esc(command)+'</code></pre></div></article>',
     '<article class="step"><span class="num">3</span><div><h3>Open the local URL</h3><p class="placeholder">The daemon detects <code>PZ_TUNNEL</code> and routes the local name.</p><pre class="code-row"><code>'+esc(url)+'</code></pre></div></article>'
   ].join('');
 }
@@ -886,10 +886,10 @@ function renderLanguageExamples(id){
     return;
   }
   let html=examples.map(function(ex){
-    return '<article class="example"><span class="tag">'+esc(ex.variant_label||ex.variant)+'</span><h3>'+esc(ex.title||ex.id)+'</h3><p class="placeholder">'+(ex.requires_docker?'Docker container':'Local process')+'</p><pre class="code-row"><code>cd '+esc(ex.path)+'\n'+esc(exampleCommand(ex,os))+'</code></pre><p class="placeholder">Open <code>'+esc(exampleUrl(ex))+'</code></p></article>';
+    return '<article class="example"><span class="tag">'+esc(ex.variant_label||ex.variant)+'</span><h3>'+esc(ex.title||ex.id)+'</h3><p class="placeholder">'+(ex.requires_docker?'Docker Compose':'Local process')+'</p><pre class="code-row"><code>cd '+esc(ex.path)+'\n'+esc(exampleCommand(ex,os))+'</code></pre><p class="placeholder">Open <code>'+esc(exampleUrl(ex))+'</code></p></article>';
   }).join('');
   if(!dockerInstalled&&all.some(function(ex){return ex.requires_docker;})){
-    html+='<article class="example"><span class="tag">Docker</span><h3>Docker examples hidden</h3><p class="placeholder">Install and start Docker to show Docker container examples.</p></article>';
+    html+='<article class="example"><span class="tag">Docker</span><h3>Docker Compose examples hidden</h3><p class="placeholder">Install and start Docker with Compose to show Docker examples.</p></article>';
   }
   root.innerHTML=html;
   renderQuickstart(d);
