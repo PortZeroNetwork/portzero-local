@@ -1,35 +1,66 @@
-# port-zero documentation
+# Port Zero Local Documentation
 
-These documents describe how the local virtual overlay network works and how to
-operate it.
+Developers have all seen port conflict errors like this one:
 
-- [Architecture overview](architecture.md) — the overlay data path: discovery →
-  VIP allocation → scoped DNS → TUN → smoltcp user-space proxy.
-- [`PZ_TUNNEL` semantics](portzero.md) — the full-domain rule, how the
-  suffix selects cloud vs. local, and the `{branch}` / `{worktree}` templates.
-- [Platform privileges](privileges.md) — what needs root / `CAP_NET_ADMIN`, and
-  what degrades gracefully without it.
-- [Software delivery lifecycle](sdlc.md) - branch flow, release validation, and
-  manual GitHub release publishing.
-- [Troubleshooting](troubleshooting.md) — common failure modes and fixes.
+```
+Error: listen EADDRINUSE: address already in use :::3000
+```
 
-- [Windows signing runbook](windows-signing.md) - Azure Artifact Signing setup,
-  release signing order, and Defender false-positive follow-up.
+Port Zero Local solves this problem for traffic on a single computer. It is free & open source.
 
-See also:
+You use Port Zero Local with your programs the same, whether they are a process or a Docker container. Configure all ports to 0 for any program you want Port Zero to manage; this tells the operating system to pick an available port at random. Then you start your programs with the `PZ_TUNNEL` environment variable.
 
-- [`../examples/local-overlay/`](../examples/local-overlay/) — a runnable
-  `.portzero.local` end-to-end example.
-- [`../examples/docker-templated-tunnel/`](../examples/docker-templated-tunnel/) —
-  templated names + Docker discovery.
+- If you specify `PZ_TUNNEL={branch}.mytodoapp.portzero.local:80`, that is a Local tunnel.
+
+The `PZ_TUNNEL` setting tells PortZero the domain name and port that clients should use.
+
+With your program running, you can open http://master.mytodoapp.portzero.local:80 in your browser. You might also be running a different version of your program in a separate git worktree. Port Zero supports this; http://some-other-branch.mytodoapp.portzero.local:80 can be available at the same time without port conflicts. This doesn't just work for http; it works for *any* TCP protocol.
+
+## How does this work?
+
+Port Zero runs a background process on your local dev machine that scans for processes and Docker containers with the special `PZ_TUNNEL` environment variable. If the `PZ_TUNNEL` contains `portzero.local`, Port Zero opens a Local tunnel and does four things:
+
+1. Create a virtual network interface card (NIC) on your local machine if Port Zero has not already done so
+2. Create a virtual IP address in this virtual NIC for that process
+3. Create a virtual DNS record for that virtual IP address, based on the template specified in `PZ_TUNNEL`
+4. Forward the port specified in `PZ_TUNNEL` on the virtual IP address to the randomly-assigned port on the actual process or Docker container
+
+Cloud tunnels (using `*.portzero.cloud`) are also supported via the same `PZ_TUNNEL` mechanism (requires login and a subscription).
+
+## Documentation
+
+All documents in this directory are written for **developers using Port Zero Local**.
+
+### Core concepts
+
+- [PZ_TUNNEL semantics](portzero.md) — the full-domain rule, how the suffix selects cloud vs. local, `{branch}` / `{worktree}` templates, and when the variable must be set.
+
+### How it works
+
+- [Architecture overview](architecture.md) — the overlay data path: discovery → VIP allocation → scoped DNS → TUN → smoltcp user-space proxy.
+
+### Setup and behavior
+
+- [Platform privileges](privileges.md) — what needs root / `CAP_NET_ADMIN`, what degrades gracefully without it, and autostart behavior.
+
+### Using with the cloud
+
+- [Cloud tunnels: local UI vs dashboard](cloud-tunnels-local-vs-dashboard.md) — why counts and status differ between http://portzero.local and https://app.portzero.cloud.
+
+### Troubleshooting
+
+- [Troubleshooting](troubleshooting.md) — common failure modes and fixes for day-to-day usage.
 
 ## For contributors
 
-See [troubleshooting.md](troubleshooting.md) for:
+Documentation intended for people contributing to (hacking on, releasing, maintaining) portzero-local lives under [dev/](dev/):
 
-- How to run the test suite (`just test` vs `just e2e`)
-- Setting up automatic local checks with git hooks (`just install-hooks`)
-- Reproducing the CI checks locally to avoid burning GitHub Actions minutes
+- [dev/README.md](dev/README.md) — entry point for contributors
+- [Development](dev/development.md) — running tests (`just test` / `just e2e`), local CI checks, lefthook git hooks, Ticketry, and other just recipes
+- [Software delivery lifecycle](dev/sdlc.md) — branch flow, release validation, and manual GitHub release publishing
+- [Windows signing runbook](dev/windows-signing.md) — Azure Artifact Signing, release signing order, and Defender false positives
 
-The project uses `just` as the task runner everywhere. Run `just --list` to see
-available commands.
+See also:
+
+- [`../installer/README.md`](../installer/README.md) — the checked-in manifest that feeds the "Getting Started" section in the local UI.
+- The `justfile` at the repository root (run `just --list` from anywhere).
