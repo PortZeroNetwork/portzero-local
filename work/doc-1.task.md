@@ -1,7 +1,7 @@
 ---
 id: 1839d097-8bea-49d6-aac4-29c112a9cef4
 slug: doc-1
-status: todo
+status: done
 title: Document local vs cloud views for Cloud Tunnels (Active/Online Now, status)
 ticket_type: doc
 created_at: 2026-07-03T01:39:57.500632305Z
