@@ -96,6 +96,10 @@ pub struct OverlayConfig {
     pub https_policy: OverlayHttpsPolicy,
     /// DNS behavior for first queries to unknown local overlay names.
     pub dns_first_hit_policy: DnsFirstHitPolicy,
+    /// Whether startup should install the local CA into the host trust stores.
+    /// Production startup keeps this enabled; e2e tests that exercise only plain
+    /// TCP can disable it to avoid unrelated OS trust-store side effects.
+    pub install_trust: bool,
 }
 
 impl Default for OverlayConfig {
@@ -105,6 +109,7 @@ impl Default for OverlayConfig {
             tun: TunConfig::default(),
             https_policy: OverlayHttpsPolicy::default(),
             dns_first_hit_policy: DnsFirstHitPolicy::default(),
+            install_trust: true,
         }
     }
 }
@@ -174,9 +179,15 @@ impl OverlayNetwork {
 
         // Install the CA into OS trust stores so browsers accept the cert.
         // Non-fatal: the overlay still works for plain HTTP if this fails.
-        progress(OverlayStartStep::InstallingTrust);
-        if let Err(e) = trust::install(&LocalCa::ca_cert_path()?) {
-            tracing::warn!("trust store installation failed (HTTPS may show cert warnings): {e:#}");
+        if config.install_trust {
+            progress(OverlayStartStep::InstallingTrust);
+            if let Err(e) = trust::install(&LocalCa::ca_cert_path()?) {
+                tracing::warn!(
+                    "trust store installation failed (HTTPS may show cert warnings): {e:#}"
+                );
+            }
+        } else {
+            tracing::info!("skipping local CA trust installation by overlay configuration");
         }
 
         // Create the TUN device first (this may require root).

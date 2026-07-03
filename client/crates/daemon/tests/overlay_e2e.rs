@@ -1004,6 +1004,7 @@ async fn real_tun_overlay_inner() -> Result<(), String> {
         let config = OverlayConfig {
             dns_listen: "127.0.0.1:53000".parse().unwrap(),
             tun,
+            install_trust: false,
             ..Default::default()
         };
 
