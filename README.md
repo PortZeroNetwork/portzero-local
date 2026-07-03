@@ -18,7 +18,7 @@ Either way, you use Port Zero with your programs the same, whether they are a pr
 
 The `PZ_TUNNEL` setting tells PortZero the domain name and port that clients should use.
 
-With your program running, you can open http://master.mytodoapp.portzero.local:80 in your browser. You might also be running a different version of your program in a separate git worktree. Port Zero supports this; http://some-other-branch.mytodoapp.portzero.local:80 can be available at the same time without port conflicts. This doesn't just work for http; it works for *any* TCP protocol.
+With your program running, you can open `http://master.mytodoapp.portzero.local:80` in your browser. You might also be running a different version of your program in a separate git worktree. Port Zero supports this; `http://some-other-branch.mytodoapp.portzero.local:80` can be available at the same time without port conflicts. This doesn't just work for http; it works for *any* TCP protocol.
 
 ## How does this work?
 
