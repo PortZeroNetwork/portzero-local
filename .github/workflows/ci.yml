@@ -5,6 +5,24 @@ on:
     branches:
       - 'release/*'
   workflow_dispatch:
+    inputs:
+      job:
+        description: Job group to run
+        type: choice
+        options:
+          - all
+          - check
+          - e2e
+        default: all
+      os:
+        description: Runner OS to run
+        type: choice
+        options:
+          - all
+          - ubuntu-latest
+          - macos-15
+          - windows-latest
+        default: all
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,12 +30,13 @@ env:
 jobs:
   check:
     name: Check & Test (${{ matrix.os }})
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'check' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Run the unprivileged suite on every supported desktop OS.
-        os: [ubuntu-latest, macos-15, windows-latest]
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.os != 'all') && format('["{0}"]', inputs.os) || '["ubuntu-latest","macos-15","windows-latest"]') }}
     steps:
       - uses: actions/checkout@v5
 
@@ -45,12 +64,13 @@ jobs:
 
   e2e:
     name: E2E real TUN overlay (${{ matrix.os }})
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'e2e' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Run the privileged real-TUN E2E on every supported desktop OS.
-        os: [ubuntu-latest, macos-15, windows-latest]
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' && inputs.os != 'all') && format('["{0}"]', inputs.os) || '["ubuntu-latest","macos-15","windows-latest"]') }}
     steps:
       - uses: actions/checkout@v5
 

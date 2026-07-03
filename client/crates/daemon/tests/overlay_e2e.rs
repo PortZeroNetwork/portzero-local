@@ -681,8 +681,8 @@ async fn unprivileged_tls_vip_proxy() {
 /// DNS server, then opens a normal OS TCP socket to the VIP and verifies that
 /// bytes pass through the tunnel to the backend and back.
 #[cfg(any(unix, target_os = "windows"))]
-#[tokio::test]
-async fn real_tun_overlay() {
+#[test]
+fn real_tun_overlay() {
     if std::env::var("PORTZERO_REQUIRE_REAL_TUN_E2E").as_deref() != Ok("1") {
         println!(
             "real_tun_overlay: skipped: set PORTZERO_REQUIRE_REAL_TUN_E2E=1 to run privileged real-TUN e2e"
@@ -712,11 +712,121 @@ async fn real_tun_overlay() {
         );
     }
 
+    println!("real_tun_overlay: starting worker with {TEST_TIMEOUT:?} watchdog");
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build real_tun_overlay runtime");
+            rt.block_on(real_tun_overlay_inner())
+        })
+        .map_err(|panic| {
+            if let Some(s) = panic.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = panic.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "real_tun_overlay worker panicked with non-string payload".to_string()
+            }
+        })
+        .and_then(|inner| inner);
+
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(TEST_TIMEOUT) {
+        Ok(Ok(())) => {
+            println!("real_tun_overlay: passed");
+        }
+        Ok(Err(e)) => {
+            panic!("{e}");
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!(
+                "real_tun_overlay timed out after {TEST_TIMEOUT:?}; last step: {}",
+                REAL_TUN_PROGRESS
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .as_str()
+            );
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("real_tun_overlay worker exited without reporting a result");
+        }
+    }
+}
+
+#[cfg(any(unix, target_os = "windows"))]
+static REAL_TUN_PROGRESS: RealTunProgress = RealTunProgress(std::sync::atomic::AtomicU8::new(
+    RealTunStep::NotStarted as u8,
+));
+
+#[cfg(any(unix, target_os = "windows"))]
+struct RealTunProgress(std::sync::atomic::AtomicU8);
+
+#[cfg(any(unix, target_os = "windows"))]
+impl RealTunProgress {
+    fn store(&self, step: RealTunStep) {
+        self.0
+            .store(step as u8, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn load(&self, ordering: std::sync::atomic::Ordering) -> RealTunStep {
+        RealTunStep::from_u8(self.0.load(ordering))
+    }
+}
+
+#[cfg(any(unix, target_os = "windows"))]
+#[derive(Clone, Copy)]
+enum RealTunStep {
+    NotStarted = 0,
+    StartingOverlay = 1,
+    SpawningBackend = 2,
+    UpdatingServices = 3,
+    QueryingDns = 4,
+    InstallingHostRoute = 5,
+    CheckingTcpEcho = 6,
+    ShuttingDown = 7,
+}
+
+#[cfg(any(unix, target_os = "windows"))]
+impl RealTunStep {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::StartingOverlay,
+            2 => Self::SpawningBackend,
+            3 => Self::UpdatingServices,
+            4 => Self::QueryingDns,
+            5 => Self::InstallingHostRoute,
+            6 => Self::CheckingTcpEcho,
+            7 => Self::ShuttingDown,
+            _ => Self::NotStarted,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotStarted => "not started",
+            Self::StartingOverlay => "starting overlay",
+            Self::SpawningBackend => "spawning echo backend",
+            Self::UpdatingServices => "updating overlay services",
+            Self::QueryingDns => "querying embedded DNS",
+            Self::InstallingHostRoute => "installing host route",
+            Self::CheckingTcpEcho => "checking TCP echo through tunnel",
+            Self::ShuttingDown => "shutting down overlay",
+        }
+    }
+}
+
+#[cfg(any(unix, target_os = "windows"))]
+async fn real_tun_overlay_inner() -> Result<(), String> {
     use portzero_daemon::net::overlay::{OverlayConfig, OverlayNetwork};
     use portzero_daemon::net::tun_device::TunConfig;
 
     println!("real_tun_overlay: bringing up real overlay");
-
+    REAL_TUN_PROGRESS.store(RealTunStep::StartingOverlay);
     let result = tokio::time::timeout(TEST_TIMEOUT, async {
         // Use the embedded DNS on a high local port to avoid clashing with the
         // system resolver during the test.
@@ -762,9 +872,11 @@ async fn real_tun_overlay() {
                 .expect("overlay start failed under root");
 
         // Register a service so the stack installs a listener and DNS answers.
+        REAL_TUN_PROGRESS.store(RealTunStep::SpawningBackend);
         let backend_addr = spawn_echo_backend().await;
         let mut table = ServiceTable::new();
         table.register("rooted".to_string(), backend_addr, 5432, 0);
+        REAL_TUN_PROGRESS.store(RealTunStep::UpdatingServices);
         overlay
             .update_services(table)
             .await
@@ -773,8 +885,10 @@ async fn real_tun_overlay() {
         // Give the stack a moment to apply listeners, then resolve via the real
         // embedded DNS.
         tokio::time::sleep(Duration::from_millis(200)).await;
+        REAL_TUN_PROGRESS.store(RealTunStep::QueryingDns);
         let ip = dns_query_a("127.0.0.1:53000".parse().unwrap(), "rooted.portzero.local").await;
         let ip = ip.expect("real overlay DNS did not resolve service");
+        REAL_TUN_PROGRESS.store(RealTunStep::InstallingHostRoute);
         #[cfg(target_os = "linux")]
         let _route = LinuxHostRoute::install(ip, "portzero-e2e");
         #[cfg(target_os = "macos")]
@@ -787,14 +901,17 @@ async fn real_tun_overlay() {
         // interface, the stack proxies it to the localhost backend, and the echo
         // comes back through the same path.
         let tunnel_addr = SocketAddr::from((ip, 5432));
+        REAL_TUN_PROGRESS.store(RealTunStep::CheckingTcpEcho);
         assert_tcp_echo(tunnel_addr, b"hello real tun overlay").await;
 
+        REAL_TUN_PROGRESS.store(RealTunStep::ShuttingDown);
         overlay.shutdown().await;
     })
     .await;
 
-    result.expect("real_tun_overlay timed out");
-    println!("real_tun_overlay: passed");
+    result
+        .map_err(|_| "real_tun_overlay async phase timed out".to_string())
+        .map(|_| ())
 }
 
 /// Non-Unix builds still compile and report this privileged Unix TUN scenario
