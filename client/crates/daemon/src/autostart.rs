@@ -106,7 +106,7 @@ fn find_daemon_binary() -> Result<PathBuf> {
     anyhow::bail!(
         "Could not find portzero binary.\n\n\
          Ensure portzero is installed and on your PATH, then retry.\n\
-         Install with: curl -fsSL https://portzero.cloud/install.sh | sh"
+         Install with: curl -fsSL https://portzero.net/install.sh | sh"
     )
 }
 

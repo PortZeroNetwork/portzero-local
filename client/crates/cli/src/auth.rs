@@ -399,7 +399,7 @@ async fn login_interactive(email: Option<String>) -> Result<()> {
     let login_resp: LoginResponse = resp.json().await.with_context(|| {
         "Received an unexpected response from the server.\n\n\
          This may indicate an API version mismatch. Try updating portzero:\n\
-         curl -fsSL https://portzero.cloud/install.sh | sh"
+         curl -fsSL https://portzero.net/install.sh | sh"
     })?;
 
     println!("{}", login_resp.message);

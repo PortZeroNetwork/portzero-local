@@ -45,7 +45,7 @@ needs no AWS credentials in this repo.
 
 ## Out of scope (must be done separately — not in this repo)
 
-`install.sh` (served from `https://portzero.cloud/install.sh`) is what actually
+`install.sh` (served from `https://portzero.net/install.sh`) is what actually
 downloads + installs the binaries; `devenv update` just re-runs it. It still
 targets `releases.portzero.cloud`. It must be updated to fetch the client tarballs
 from GitHub Releases (e.g. `…/releases/latest/download/port-zero-<target>.tar.gz`,

@@ -3,8 +3,8 @@ set -e
 
 # portzero installer — the single source of truth.
 #
-# Usage: curl -fsSL https://portzero.cloud/install.sh | sh
-#   (portzero.cloud/install.sh redirects to this file, published as a GitHub
+# Usage: curl -fsSL https://portzero.net/install.sh | sh
+#   (portzero.net/install.sh serves this file, published as a GitHub
 #    Release asset at:
 #      https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh)
 #
