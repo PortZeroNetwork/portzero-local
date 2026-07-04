@@ -6,6 +6,7 @@
 //! the checked-in file has drifted from the handlers.
 
 use utoipa::openapi::extensions::Extensions;
+use utoipa::openapi::path::Operation;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityRequirement, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
@@ -42,9 +43,17 @@ use crate::management::server::PortRegistration;
     servers(
         (url = "http://portzero.local", description = "portzero overlay network — reachable via the virtual NIC")
     ),
-    paths(handlers::register, handlers::deregister, handlers::status),
+    paths(
+        handlers::register,
+        handlers::deregister,
+        handlers::status,
+        handlers::daemon_status
+    ),
     components(schemas(
         PortRegistration,
+        handlers::ApiRegistrationsStatus,
+        handlers::DaemonStatusResponse,
+        handlers::HttpsStatus,
         handlers::RegisterRequest,
         handlers::RegisterResponse,
         handlers::DeregisterResponse,
@@ -95,5 +104,26 @@ impl Modify for ManagementApiModifier {
             "TcpSourcePortIdentity",
             Vec::<String>::new(),
         )]);
+
+        if let Some(path) = openapi.paths.paths.get_mut("/v1/register") {
+            if let Some(operation) = path.post.as_mut() {
+                mark_unstable_registration(operation);
+            }
+            if let Some(operation) = path.delete.as_mut() {
+                mark_unstable_registration(operation);
+            }
+        }
+        if let Some(path) = openapi.paths.paths.get_mut("/v1/status") {
+            if let Some(operation) = path.get.as_mut() {
+                mark_unstable_registration(operation);
+            }
+        }
     }
+}
+
+fn mark_unstable_registration(operation: &mut Operation) {
+    operation.extensions = Some(Extensions::from_iter([(
+        "x-portzero-feature-stability",
+        serde_json::json!("unstable"),
+    )]));
 }
