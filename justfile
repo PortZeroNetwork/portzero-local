@@ -434,7 +434,7 @@ install-hooks:
     Write-Host "→ lefthook not found on PATH."
     Write-Host ""
     Write-Host "Install lefthook (one-time per machine):"
-    Write-Host "  winget install evilmartians.lefthook"
+    Write-Host "  winget: coming soon"
     Write-Host "  scoop install lefthook"
     Write-Host "  choco install lefthook"
     Write-Host "  or download the binary from:"

@@ -149,6 +149,6 @@ Write-Utf8NoBomFile -Path (Join-Path $manifestDir "PortZeroNetwork.PortZero.vers
 Write-Utf8NoBomFile -Path (Join-Path $manifestDir "PortZeroNetwork.PortZero.locale.en-US.yaml") -Content $localeYaml
 Write-Utf8NoBomFile -Path (Join-Path $manifestDir "PortZeroNetwork.PortZero.installer.yaml") -Content $installerYaml
 
-Write-Host "Wrote winget manifests to $manifestDir"
+Write-Host "Wrote winget manifests (coming soon) to $manifestDir"
 Write-Host "InstallerSha256: $sha256"
 Write-Host "ProductCode: $productCode"
