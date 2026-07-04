@@ -275,6 +275,31 @@ if ! install -m 0755 "$src/portzero" "$install_dir/portzero" 2>/dev/null; then
 fi
 info "Installed portzero to $install_dir/portzero"
 
+portzero_bin_dir="${HOME}/.portzero/bin"
+uninstall_helper="${portzero_bin_dir}/portzero-uninstall"
+uninstall_url="${RELEASES_URL}/latest/download/linux-uninstall.sh"
+info "Downloading ${uninstall_url}"
+if has_cmd curl; then
+    if curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/linux-uninstall.sh" "$uninstall_url"; then
+        mkdir -p "$portzero_bin_dir"
+        install -m 0755 "$tmp/linux-uninstall.sh" "$uninstall_helper" 2>/dev/null ||
+            warn "Could not install uninstall helper to $uninstall_helper"
+    else
+        warn "Could not download uninstall helper from ${uninstall_url}"
+    fi
+elif has_cmd wget; then
+    if wget -q --tries=3 -O "$tmp/linux-uninstall.sh" "$uninstall_url"; then
+        mkdir -p "$portzero_bin_dir"
+        install -m 0755 "$tmp/linux-uninstall.sh" "$uninstall_helper" 2>/dev/null ||
+            warn "Could not install uninstall helper to $uninstall_helper"
+    else
+        warn "Could not download uninstall helper from ${uninstall_url}"
+    fi
+fi
+if [ -x "$uninstall_helper" ]; then
+    info "Installed uninstall helper to $uninstall_helper"
+fi
+
 # --- Linux post-install: CAP_NET_ADMIN + systemd user unit ---
 if [ "$(uname -s)" = "Linux" ]; then
     bin_path="$install_dir/portzero"
@@ -385,4 +410,5 @@ info "  https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE"
 info "Cloud features governed by https://portzero.net/terms"
 
 echo ""
+echo "Uninstall: ${BOLD}${uninstall_helper}${RESET}"
 echo "Next: ${BOLD}portzero login${RESET}  when you want cloud tunnels"
