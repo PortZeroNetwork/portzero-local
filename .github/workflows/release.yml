@@ -619,6 +619,15 @@ jobs:
             curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | sh
             ```
 
+            Uninstall:
+            ```sh
+            ~/.portzero/bin/portzero-uninstall
+            ```
+            Or run the release asset directly:
+            ```sh
+            curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-uninstall.sh | sh
+            ```
+
             **Windows (winget)**
             ```powershell
             winget install PortZeroNetwork.PortZero
@@ -639,6 +648,7 @@ jobs:
             artifacts/version.json
             artifacts/management-v1.yaml
             scripts/linux-install.sh
+            scripts/linux-uninstall.sh
             artifacts/packaging/winget/manifests/**
 
   check-winget-token:

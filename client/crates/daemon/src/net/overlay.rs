@@ -124,6 +124,10 @@ pub struct OverlayNetwork {
     /// Name of the overlay's TUN link (e.g. `deven0`). The scoped resolver is
     /// attached to this real link, so teardown must revert the same one.
     link_name: String,
+    /// Address the scoped OS resolver points at (our embedded DNS server). Kept
+    /// so [`OverlayNetwork::ensure_resolver_installed`] can recreate the resolver
+    /// with the same target if it is removed out-of-band after startup.
+    resolver_addr: SocketAddr,
     /// Local CA and wildcard cert for `*.portzero.local`.  Held here so the
     /// TLS stack integration (see `tls::stack`) can consume it without
     /// re-generating.
@@ -270,6 +274,7 @@ impl OverlayNetwork {
             #[cfg(target_os = "windows")]
             dns_stop,
             link_name,
+            resolver_addr,
             ca,
             dns_updated,
             dns_first_hit_policy,
@@ -314,6 +319,36 @@ impl OverlayNetwork {
             .store(DnsFirstHitPolicy::to_u8(policy), Ordering::Relaxed);
     }
 
+    /// Re-check that the scoped OS resolver for `*.portzero.local` is still in
+    /// place and recreate it if it was removed out-of-band (e.g. a user or
+    /// another tool deleted `/etc/resolver/portzero.local`). Best-effort and
+    /// cheap enough to call periodically; see [`ResolverCheck`] for outcomes.
+    pub async fn ensure_resolver_installed(&self) -> ResolverCheck {
+        match resolver_config::status(self.resolver_addr) {
+            resolver_config::ResolverStatus::Present | resolver_config::ResolverStatus::Unknown => {
+                ResolverCheck::Ok
+            }
+            resolver_config::ResolverStatus::Missing => {
+                tracing::warn!(
+                    "scoped resolver for *.portzero.local was removed after startup; \
+                     recreating it (until then, *.portzero.local names will not resolve)"
+                );
+                match resolver_config::install(self.resolver_addr, &self.link_name).await {
+                    Ok(()) => {
+                        tracing::info!("scoped resolver for *.portzero.local recreated");
+                        ResolverCheck::Repaired
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to recreate scoped resolver (may need elevated privileges): {e:#}"
+                        );
+                        ResolverCheck::RepairFailed
+                    }
+                }
+            }
+        }
+    }
+
     /// Shutdown the overlay components.
     pub async fn shutdown(&self) {
         // Remove the scoped OS resolver before tearing down DNS.
@@ -334,6 +369,40 @@ impl OverlayNetwork {
     #[doc(hidden)]
     pub fn link_name(&self) -> &str {
         &self.link_name
+    }
+}
+
+/// Outcome of [`OverlayNetwork::ensure_resolver_installed`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolverCheck {
+    /// The scoped resolver is present, or its presence can't be determined on
+    /// this platform — nothing to do.
+    Ok,
+    /// The scoped resolver had been removed and was successfully recreated.
+    Repaired,
+    /// The scoped resolver had been removed but recreation failed (e.g. the
+    /// daemon no longer has the privileges it held at startup).
+    RepairFailed,
+}
+
+/// Ensure the scoped OS resolver for `*.portzero.local` is present, for use by
+/// `portzero setup` so name resolution works from install time rather than only
+/// after the daemon's first privileged start.
+///
+/// On macOS this writes `/etc/resolver/portzero.local` pointing at the daemon's
+/// loopback DNS listener. On Linux/Windows the scoped resolver is bound to the
+/// running overlay's TUN link / NRPT rule and is installed by the daemon at
+/// startup, so there is nothing a one-shot setup command can pre-create and this
+/// is a no-op.
+pub async fn ensure_scoped_resolver_for_setup() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let addr = resolver_dns_addr(default_dns_listen());
+        resolver_config::install(addr, "").await
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
     }
 }
 

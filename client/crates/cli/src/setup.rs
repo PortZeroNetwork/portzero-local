@@ -14,11 +14,12 @@ const DASHBOARD_IP: &str = "10.254.0.2";
 /// Run the privileged setup steps that package managers should not execute
 /// automatically: trust install, autostart install/start, and the dashboard
 /// hosts pin needed for macOS `.local` behavior.
-pub fn run() -> Result<()> {
+pub async fn run() -> Result<()> {
     println!("PortZero setup will make these system changes:");
     println!("  - generate the local CA if it does not already exist");
     println!("  - install the local CA into available OS/browser trust stores");
     println!("  - install and start the PortZero autostart daemon");
+    println!("  - ensure the scoped .portzero.local DNS resolver is installed");
     println!("  - ensure /etc/hosts contains: {DASHBOARD_HOSTS_LINE}");
     println!();
 
@@ -31,11 +32,29 @@ pub fn run() -> Result<()> {
     println!("Installing and starting autostart daemon...");
     autostart::enable()?;
 
+    println!("Ensuring scoped .portzero.local DNS resolver...");
+    ensure_scoped_resolver().await?;
+
     println!("Ensuring dashboard hosts entry...");
     ensure_dashboard_hosts_entry(HOSTS_PATH)?;
 
     println!();
     println!("Setup complete. Open http://portzero.local in your browser.");
+    Ok(())
+}
+
+/// Install the scoped `*.portzero.local` OS resolver as part of setup so name
+/// resolution works from install time. On macOS this writes
+/// `/etc/resolver/portzero.local`; on Linux/Windows the daemon installs the
+/// scoped resolver against its TUN link at startup, so this is a no-op.
+async fn ensure_scoped_resolver() -> Result<()> {
+    portzero_daemon::net::overlay::ensure_scoped_resolver_for_setup()
+        .await
+        .context(
+            "Failed to install the scoped .portzero.local resolver. \
+             Re-run setup with administrator privileges.",
+        )?;
+    println!("Scoped resolver ensured.");
     Ok(())
 }
 

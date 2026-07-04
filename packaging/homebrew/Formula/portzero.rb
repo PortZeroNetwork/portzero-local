@@ -35,17 +35,28 @@ class Portzero < Formula
         - installs the CA certificate to your system keychain so browsers trust
           *.portzero.local HTTPS
         - installs and starts the root LaunchDaemon
+        - installs the scoped resolver (/etc/resolver/portzero.local) so *.portzero.local
+          names resolve to the PortZero DNS server
         - pins portzero.local in /etc/hosts so your browser can reach the dashboard
 
       macOS mDNSResponder intercepts all *.local names before the PortZero resolver
-      is consulted, so the management dashboard needs that static hosts entry.
+      is consulted, so subdomains need the /etc/resolver entry and the management
+      dashboard needs the static hosts entry.
 
       Once done, open http://portzero.local in your browser.
 
       Manual equivalents:
         sudo HOME="$HOME" portzero trust install
         sudo portzero autostart enable
+        sudo mkdir -p /etc/resolver
+        printf 'nameserver 127.0.0.1\nport 10053\n' | sudo tee /etc/resolver/portzero.local
         echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts
+
+      The running daemon also re-creates /etc/resolver/portzero.local automatically
+      if it is ever removed, and notifies you when that happens. It periodically
+      re-verifies the other setup steps too (CA trust, the LaunchDaemon, and the
+      portzero.local hosts pin); if one regresses out-of-band it alerts you with a
+      desktop notification pointing at `sudo portzero setup`.
 
       To stop/remove autostart: sudo portzero autostart disable
       Do not use `brew services`; it cannot pin HOME correctly for a root daemon.

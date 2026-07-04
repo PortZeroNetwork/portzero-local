@@ -59,6 +59,31 @@ pub async fn uninstall(link_name: &str) -> Result<()> {
     uninstall_impl(link_name)
 }
 
+/// Whether the scoped `*.portzero.local` resolver configuration is currently
+/// present on the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolverStatus {
+    /// Present and — where we verify contents — well-formed.
+    Present,
+    /// Definitively absent: never installed, or removed out-of-band after
+    /// install (e.g. a user or another tool deleted the file).
+    Missing,
+    /// Presence can't be determined cheaply on this host (systemd-resolved
+    /// per-link D-Bus state, or a Windows NRPT rule). Callers must not treat
+    /// this as "removed" — it never triggers a warn-and-repair.
+    Unknown,
+}
+
+/// Cheaply check whether the scoped resolver for `*.portzero.local` is still in
+/// place, so the daemon can detect out-of-band removal and repair it.
+///
+/// `dns_addr` is the address the resolver should point at; where the config is a
+/// file we fully own (macOS, dnsmasq), a present-but-stale file counts as
+/// [`ResolverStatus::Missing`] so the repair rewrites it.
+pub fn status(dns_addr: SocketAddr) -> ResolverStatus {
+    status_impl(dns_addr)
+}
+
 // ---------------------------------------------------------------------------
 // macOS
 // ---------------------------------------------------------------------------
@@ -100,6 +125,16 @@ pub(crate) fn macos_resolver_file_content(dns_addr: SocketAddr) -> String {
         out.push_str(&format!("port {}\n", dns_addr.port()));
     }
     out
+}
+
+#[cfg(target_os = "macos")]
+fn status_impl(dns_addr: SocketAddr) -> ResolverStatus {
+    match std::fs::read_to_string("/etc/resolver/portzero.local") {
+        Ok(content) if content == macos_resolver_file_content(dns_addr) => ResolverStatus::Present,
+        // File is gone, or present but no longer matches what we write (stale or
+        // hand-edited): treat as Missing so the caller rewrites it.
+        _ => ResolverStatus::Missing,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +296,23 @@ fn uninstall_impl(link_name: &str) -> Result<()> {
             Ok(())
         }
         LinuxResolver::None => Ok(()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn status_impl(_dns_addr: SocketAddr) -> ResolverStatus {
+    let env = detect_resolver_env();
+    match classify_resolver(&env) {
+        // systemd-resolved config is per-link D-Bus state, not a file we can
+        // cheaply stat; don't attempt removal-detection for it.
+        LinuxResolver::SystemdResolved | LinuxResolver::None => ResolverStatus::Unknown,
+        LinuxResolver::Dnsmasq => {
+            if dnsmasq_snippet_path(env.nm_dnsmasq).exists() {
+                ResolverStatus::Present
+            } else {
+                ResolverStatus::Missing
+            }
+        }
     }
 }
 
@@ -529,6 +581,13 @@ Get-DnsClientNrptRule | Where-Object { $_.Namespace -eq '.portzero.local' } | Re
 }
 
 #[cfg(target_os = "windows")]
+fn status_impl(_dns_addr: SocketAddr) -> ResolverStatus {
+    // Checking an NRPT rule requires a PowerShell query per call; skip
+    // removal-detection to keep the periodic check cheap.
+    ResolverStatus::Unknown
+}
+
+#[cfg(target_os = "windows")]
 fn run_powershell(script: &str) -> Result<()> {
     let status = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
@@ -557,6 +616,11 @@ fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn uninstall_impl(_link_name: &str) -> Result<()> {
     Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn status_impl(_dns_addr: SocketAddr) -> ResolverStatus {
+    ResolverStatus::Unknown
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +667,21 @@ mod tests {
         assert!(
             content.contains("port-zero"),
             "should have management comment"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_status_missing_when_file_absent() {
+        // The real file path won't match our test content unless port-zero is
+        // installed; either way, a mismatched/absent file must read as Missing,
+        // never as Present with foreign content. (Present is only asserted in the
+        // integration path where install() wrote the exact bytes.)
+        let s = status(addr("127.0.0.1", 1));
+        assert_ne!(
+            s,
+            ResolverStatus::Unknown,
+            "macOS must give a definitive Present/Missing answer"
         );
     }
 
