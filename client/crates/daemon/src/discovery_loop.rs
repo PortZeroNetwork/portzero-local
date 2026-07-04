@@ -550,6 +550,10 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     // "resolver removed" episode. Reset once the resolver is healthy again so a
     // future removal notifies afresh (rather than once per 30s check).
     let mut resolver_repair_notified = false;
+    // The set of post-setup regressions (sorted diagnostic IDs) we last notified
+    // about, so a still-present, unchanged problem doesn't re-notify every 30s.
+    // Reset to empty once everything setup-related is healthy again.
+    let mut post_setup_notified: Vec<String> = Vec::new();
     let overlay_fast_refresh = overlay.as_ref().map(|ov| {
         tokio::spawn(run_dns_fast_overlay_refresh(
             config.clone(),
@@ -600,6 +604,18 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                         }
                         ResolverCheck::Ok => resolver_repair_notified = false,
                     }
+                }
+
+                // Alarm on any OTHER post-setup step that has regressed
+                // out-of-band (CA trust removed, capabilities dropped, the
+                // dashboard hosts pin deleted, the autostart service removed,
+                // …). The diagnostics pass above already detected these; here we
+                // turn the setup-related ones into a single desktop notification
+                // pointing at the fix. Gated on the overlay having started (a
+                // real privileged install) so a dev running the daemon in the
+                // foreground is never nagged.
+                if overlay.is_some() {
+                    notify_post_setup_regressions(&diag, &mut post_setup_notified);
                 }
             }
 
@@ -1219,6 +1235,63 @@ fn publish_issues(
     }
 
     *notified_issues = current;
+}
+
+/// Fire a single desktop notification when the set of post-setup regressions
+/// changes to a non-empty set, pointing the user at the fix.
+///
+/// A "post-setup regression" is a step `portzero setup` / the installer
+/// configured that has since been removed or broken out-of-band (CA trust
+/// removed, Linux capabilities dropped, the dashboard hosts pin deleted, the
+/// autostart service removed, …). These are already detected by the diagnostics
+/// pass and surfaced in `portzero status`; this turns the setup-related ones
+/// into a loud, actionable alert.
+///
+/// De-duplicated exactly like the resolver self-heal: we re-notify only when the
+/// set of problems *changes* (mirroring `publish_issues`), and reset silently
+/// once everything setup-related is healthy again — so a still-present, unchanged
+/// problem does not nag every 30s. Best-effort and non-fatal.
+fn notify_post_setup_regressions(
+    diag: &crate::diagnostics::DiagnosticsReport,
+    last_notified: &mut Vec<String>,
+) {
+    let mut regressions: Vec<&crate::diagnostics::Diagnostic> = diag
+        .issues
+        .iter()
+        .filter(|d| crate::diagnostics::is_post_setup_regression(&d.id))
+        .collect();
+    // Stable, severity-then-id ordering so the "first" issue we headline and the
+    // change-detection key are both deterministic across scans.
+    regressions.sort_by(|a, b| a.severity.cmp(&b.severity).then(a.id.cmp(&b.id)));
+    let current_ids: Vec<String> = regressions.iter().map(|d| d.id.clone()).collect();
+
+    if current_ids == *last_notified {
+        return;
+    }
+
+    if let Some(first) = regressions.first() {
+        for d in &regressions {
+            tracing::warn!("post-setup regression: {} ({})", d.title, d.id);
+        }
+        let title = if regressions.len() == 1 {
+            "portzero: setup problem detected".to_string()
+        } else {
+            format!("portzero: {} setup problems", regressions.len())
+        };
+        // Prefer the diagnostic's concrete fix command, falling back to its
+        // description, and finally to the generic setup command.
+        let fix = first
+            .fix
+            .as_ref()
+            .map(|f| f.command.clone().unwrap_or_else(|| f.description.clone()))
+            .unwrap_or_else(|| "Run `sudo portzero setup` to fix it.".to_string());
+        let body = format!("{}\n{}", first.title, fix);
+        notify::send_notification(&title, &body);
+    } else {
+        tracing::info!("All previously reported post-setup regressions are now resolved");
+    }
+
+    *last_notified = current_ids;
 }
 
 /// Wait for a termination signal (SIGTERM or Ctrl-C) so the loop can shut down

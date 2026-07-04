@@ -53,7 +53,10 @@ class Portzero < Formula
         echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts
 
       The running daemon also re-creates /etc/resolver/portzero.local automatically
-      if it is ever removed, and notifies you when that happens.
+      if it is ever removed, and notifies you when that happens. It periodically
+      re-verifies the other setup steps too (CA trust, the LaunchDaemon, and the
+      portzero.local hosts pin); if one regresses out-of-band it alerts you with a
+      desktop notification pointing at `sudo portzero setup`.
 
       To stop/remove autostart: sudo portzero autostart disable
       Do not use `brew services`; it cannot pin HOME correctly for a root daemon.

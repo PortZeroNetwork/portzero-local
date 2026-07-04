@@ -513,6 +513,90 @@ fn check_wintun_present() -> Option<Diagnostic> {
     None
 }
 
+/// Detect out-of-band removal of the `10.254.0.2 portzero.local` dashboard pin
+/// that `portzero setup` (macOS) / the Linux installer add to `/etc/hosts`.
+///
+/// Only macOS and Linux use the hosts pin: macOS needs it because
+/// mDNSResponder answers bare `.local` names before the scoped resolver, and the
+/// Linux installer adds it because nss-mdns claims two-label `.local` names. On
+/// Windows the NRPT rule covers `portzero.local` itself, so there is no pin to
+/// regress. A *wrong* override is already reported by
+/// [`check_etc_hosts_override`]; this only fires when the pin is genuinely
+/// absent, so the two checks never double-report.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn check_dashboard_hosts_pin() -> Option<Diagnostic> {
+    let content = match std::fs::read_to_string("/etc/hosts") {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+
+    let analysis = analyze_portzero_hosts_entries(&content);
+    if analysis.has_expected_dashboard_pin || !analysis.conflicting_lines.is_empty() {
+        return None;
+    }
+
+    tracing::debug!("check_dashboard_hosts_pin: expected dashboard pin is missing");
+    Some(Diagnostic {
+        id: "dashboard_hosts_pin_missing".into(),
+        severity: Severity::Warning,
+        category: "dns".into(),
+        title: "The portzero.local dashboard hosts pin is missing".to_string(),
+        detail: format!(
+            "/etc/hosts no longer contains the expected `{PORTZERO_LOCAL_DASHBOARD_IP} portzero.local` \
+             entry, so the dashboard name may not resolve."
+        ),
+        fix: Some(Fix {
+            kind: FixKind::Confirm,
+            description: "Re-run setup to restore the dashboard hosts pin.".to_string(),
+            command: Some("sudo portzero setup".to_string()),
+        }),
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn check_dashboard_hosts_pin() -> Option<Diagnostic> {
+    None
+}
+
+/// Detect out-of-band removal of the autostart service that `portzero setup` /
+/// the installers register (macOS root LaunchDaemon, Linux systemd user unit,
+/// Windows scheduled task).
+///
+/// The daemon that runs this check is, by definition, currently running — so
+/// this is not about "is the daemon up" but about whether it will come back
+/// after a reboot. If the service definition was removed out-of-band the daemon
+/// keeps running now but silently stops surviving restarts.
+fn check_autostart_installed() -> Option<Diagnostic> {
+    if crate::autostart::is_autostart_installed() {
+        return None;
+    }
+
+    // macOS installs the service as a root LaunchDaemon via `portzero setup`
+    // (sudo); Linux/Windows can (re)install it unprivileged with `autostart
+    // enable`.
+    #[cfg(target_os = "macos")]
+    let command = "sudo portzero setup";
+    #[cfg(not(target_os = "macos"))]
+    let command = "portzero autostart enable";
+
+    tracing::debug!("check_autostart_installed: autostart service not installed");
+    Some(Diagnostic {
+        id: "autostart_missing".into(),
+        severity: Severity::Warning,
+        category: "system".into(),
+        title: "Autostart service is not installed".to_string(),
+        detail: "The portzero daemon is running now but is not registered to start automatically, \
+                 so it will not come back after a reboot."
+            .to_string(),
+        fix: Some(Fix {
+            kind: FixKind::Confirm,
+            description: "Reinstall the autostart service so the daemon starts at boot."
+                .to_string(),
+            command: Some(command.to_string()),
+        }),
+    })
+}
+
 fn check_conflicting_vpn_software() -> Option<Diagnostic> {
     const VPN_NAMES: &[&str] = &[
         "tailscaled",
@@ -1029,6 +1113,8 @@ pub async fn run_diagnostics(state_dir: &std::path::Path) -> DiagnosticsReport {
         run!(check_systemd_resolved());
         run!(check_macos_resolver_file());
         run!(check_wintun_present());
+        run!(check_dashboard_hosts_pin());
+        run!(check_autostart_installed());
         run!(check_conflicting_vpn_software());
         run!(check_auth_token(&state_dir));
         run!(check_cloud_plan(&state_dir));
@@ -1085,6 +1171,33 @@ pub fn save_report(report: &DiagnosticsReport, state_dir: &std::path::Path) {
 pub fn load_report(state_dir: &std::path::Path) -> Option<DiagnosticsReport> {
     let content = std::fs::read_to_string(state_dir.join("diagnostics.json")).ok()?;
     serde_json::from_str(&content).ok()
+}
+
+/// Diagnostic IDs that represent a regression of a post-setup step: something
+/// `portzero setup` or the installers configured that has since been removed or
+/// broken out-of-band. These are the checks the daemon turns into a one-shot
+/// desktop notification (see `discovery_loop::notify_post_setup_regressions`),
+/// in addition to surfacing them in `portzero status`.
+///
+/// `macos_resolver_missing` is deliberately excluded: the overlay self-heals the
+/// scoped resolver and fires its own notification, so including it here would
+/// double-notify.
+const POST_SETUP_REGRESSION_IDS: &[&str] = &[
+    "ca_cert_missing",
+    "ca_trust_missing",
+    "cap_net_admin_missing",
+    "systemd_resolved_not_running",
+    "wintun_missing",
+    "dev_net_tun_missing",
+    "dashboard_hosts_pin_missing",
+    "autostart_missing",
+];
+
+/// Whether a diagnostic `id` is a post-setup regression worth a desktop
+/// notification (as opposed to an informational or environmental finding that
+/// only belongs in `portzero status`).
+pub fn is_post_setup_regression(id: &str) -> bool {
+    POST_SETUP_REGRESSION_IDS.contains(&id)
 }
 
 #[derive(Debug, Default)]
@@ -1261,5 +1374,46 @@ mod tests {
         let found = super::existing_paths([present.clone(), missing]);
 
         assert_eq!(found, vec![present]);
+    }
+
+    #[test]
+    fn post_setup_regressions_are_classified() {
+        // Post-setup steps that can regress out-of-band notify the user.
+        for id in [
+            "ca_cert_missing",
+            "ca_trust_missing",
+            "cap_net_admin_missing",
+            "systemd_resolved_not_running",
+            "wintun_missing",
+            "dev_net_tun_missing",
+            "dashboard_hosts_pin_missing",
+            "autostart_missing",
+        ] {
+            assert!(
+                super::is_post_setup_regression(id),
+                "{id} should be a post-setup regression"
+            );
+        }
+    }
+
+    #[test]
+    fn non_regressions_are_not_classified() {
+        // Informational / environmental / transient findings must NOT notify.
+        for id in [
+            "vpn_software_detected",
+            "auth_not_logged_in",
+            "auth_token_expires_soon",
+            "multiple_instances",
+            "dns_probe_ok",
+            "http_probe_skipped",
+            // The macOS resolver has its own self-heal + notification path, so it
+            // must be excluded here to avoid double-notifying.
+            "macos_resolver_missing",
+        ] {
+            assert!(
+                !super::is_post_setup_regression(id),
+                "{id} must not be treated as a post-setup regression"
+            );
+        }
     }
 }
