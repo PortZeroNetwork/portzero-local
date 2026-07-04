@@ -1,5 +1,7 @@
 //! port-zero CLI: manage the local tunnel daemon and cloud integration.
 
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use clap::{Parser, Subcommand};
 
 mod api_client;
