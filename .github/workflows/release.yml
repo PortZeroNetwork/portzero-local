@@ -611,7 +611,9 @@ jobs:
 
             **macOS (Homebrew)**
             ```sh
-            brew tap PortZeroNetwork/portzero && brew install portzero
+            brew tap PortZeroNetwork/portzero
+            brew trust portzeronetwork/portzero
+            brew install portzero
             ```
 
             **Linux**
