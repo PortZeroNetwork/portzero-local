@@ -10,7 +10,7 @@ on:
 # specified are set to 'none'.
 permissions:
   actions: write
-  contents: read
+  contents: write
   pull-requests: write
   statuses: write
 
@@ -30,7 +30,7 @@ jobs:
           path-to-signatures: 'signatures/version1/cla.json'
           path-to-document: 'https://github.com/PortZeroNetwork/portzero-local/blob/develop/CLA.md'
           # branch should not be protected
-          branch: 'cla-signatures'
+          branch: 'develop'
           allowlist: bot*, dependabot*, github-actions*, nloum, *loumtech*
 
           # the followings are the optional inputs - If the optional inputs are not given, then default values will be taken
