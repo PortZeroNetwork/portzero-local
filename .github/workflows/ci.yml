@@ -1,11 +1,8 @@
 name: CI
 
 on:
-  # CI runs on direct pushes to release branches and on PRs targeting them.
-  # Use branch protection rules on `release/*` to require these checks before merge.
-  push:
-    branches:
-      - 'release/*'
+  # CI runs before release branch updates, not after them. Use branch
+  # protection rules on `release/*` to require these checks before merge.
   pull_request:
     branches:
       - 'release/*'
