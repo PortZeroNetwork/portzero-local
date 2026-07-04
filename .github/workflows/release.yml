@@ -629,11 +629,8 @@ jobs:
             ```
 
             **Windows (winget)**
-            ```powershell
-            winget install PortZeroNetwork.PortZero
-            ```
-
-            Or download the `.msi` from the assets below and run it manually.
+            
+            Download the `.msi` from the assets below and run it manually.
 
             The installer and daemon perform local setup automatically where supported.
             After installing, open http://portzero.local in your browser.
