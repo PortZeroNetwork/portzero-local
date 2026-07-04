@@ -17,13 +17,7 @@ Description: |
   random available ports, then forwarding those ports to virtual domains on a virtual NIC.
   Run multiple branches simultaneously without clashing.
 
-  After installing, run these commands from an Administrator terminal:
-    portzero trust generate
-    portzero trust install
-    portzero autostart enable
-    portzero start
-
-  Then open http://portzero.local in your browser.
+  After installing, open http://portzero.local in your browser.
 Moniker: portzero
 Tags:
 - development
