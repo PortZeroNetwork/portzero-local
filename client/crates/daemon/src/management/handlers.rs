@@ -69,6 +69,52 @@ pub struct StatusResponse {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub struct ApiRegistrationsStatus {
+    /// Stability marker for the local API registration feature.
+    #[schema(example = "unstable")]
+    feature_stability: &'static str,
+    /// Number of active port registrations created through the local API.
+    #[schema(example = 2)]
+    count: usize,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HttpsStatus {
+    /// Whether daemon-managed HTTPS is enabled for plaintext backends exposed on port 80.
+    #[schema(example = true)]
+    enabled: bool,
+    /// Whether HTTP port 80 requests are redirected to HTTPS.
+    #[schema(example = false)]
+    redirect_port_80: bool,
+    /// Whether TLS passthrough is enabled for HTTPS backends exposed on port 443.
+    #[schema(example = true)]
+    passthrough_port_443: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DaemonStatusResponse {
+    /// Version of the running portzero daemon.
+    #[schema(example = "0.1.0")]
+    version: &'static str,
+    /// Coarse daemon state for local app health checks.
+    #[schema(example = "running")]
+    status: &'static str,
+    /// PID read from the daemon state directory, when available.
+    #[schema(example = 12345)]
+    daemon_pid: Option<u32>,
+    /// Whether the local overlay is active.
+    #[schema(example = true)]
+    overlay_active: bool,
+    /// Whether the daemon is connected for cloud tunnels.
+    #[schema(example = false)]
+    cloud_connected: bool,
+    /// HTTPS behavior for *.portzero.local overlay routes.
+    https: HttpsStatus,
+    /// Summary of local API registrations. This feature is unstable.
+    registrations: ApiRegistrationsStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorResponse {
     /// Machine-readable error code.
     #[schema(examples("caller_unidentifiable", "port_not_listening", "not_registered"))]
@@ -433,6 +479,24 @@ fn add_duplicate_route_alerts(
     }
 }
 
+fn management_registrations_json(
+    registrations: &std::collections::HashMap<u32, Vec<PortRegistration>>,
+) -> Vec<serde_json::Value> {
+    registrations
+        .iter()
+        .flat_map(|(pid, regs)| {
+            regs.iter().map(move |r| {
+                serde_json::json!({
+                    "pid": pid,
+                    "local_port": r.local_port,
+                    "domain": r.domain,
+                    "feature_stability": "unstable",
+                })
+            })
+        })
+        .collect()
+}
+
 // ─── Management API handlers ──────────────────────────────────────────────────
 
 /// POST /v1/register — register a list of ports for the calling process.
@@ -595,6 +659,67 @@ pub async fn status(
             }),
         )),
     }
+}
+
+/// GET /v1/daemon/status — daemon version and coarse health for local apps.
+#[utoipa::path(
+    get,
+    path = "/v1/daemon/status",
+    operation_id = "getDaemonStatus",
+    tag = "management",
+    summary = "Return daemon version and status",
+    description = "Returns the running portzero daemon version and coarse status for local \
+        applications calling `http://portzero.local`. The `registrations` summary covers \
+        local API registrations, which are an **unstable** feature.",
+    responses(
+        (status = 200, description = "Daemon version and status", body = DaemonStatusResponse,
+            example = json!({
+                "version": "0.1.0",
+                "status": "running",
+                "daemon_pid": 12345,
+                "overlay_active": true,
+                "cloud_connected": false,
+                "https": {
+                    "enabled": true,
+                    "redirect_port_80": false,
+                    "passthrough_port_443": true
+                },
+                "registrations": {
+                    "feature_stability": "unstable",
+                    "count": 2
+                }
+            }))
+    )
+)]
+pub async fn daemon_status(State(state): State<AppState>) -> Json<DaemonStatusResponse> {
+    let daemon_pid = read_daemon_pid(&state.state_dir);
+    let overlay = read_overlay_state(&state.state_dir);
+    let (cloud_connected, _, _, _) = read_cloud_state(&state.state_dir);
+    let https_policy = crate::discovery_loop::DaemonConfig::load().overlay_https;
+    let registration_count = state
+        .store
+        .read()
+        .await
+        .values()
+        .map(Vec::len)
+        .sum::<usize>();
+
+    Json(DaemonStatusResponse {
+        version: env!("CARGO_PKG_VERSION"),
+        status: "running",
+        daemon_pid,
+        overlay_active: overlay.overlay_active,
+        cloud_connected,
+        https: HttpsStatus {
+            enabled: https_policy.enable_for_port_80,
+            redirect_port_80: https_policy.redirect_port_80,
+            passthrough_port_443: https_policy.passthrough_port_443,
+        },
+        registrations: ApiRegistrationsStatus {
+            feature_stability: "unstable",
+            count: registration_count,
+        },
+    })
 }
 
 // ─── Status UI handlers ───────────────────────────────────────────────────────
@@ -995,11 +1120,11 @@ function render(d){
   html+='</section>';
   html+='</div>';
 
-  html+='<section class="section"><div class="section-head"><h2>API registrations</h2></div>';
+  html+='<section class="section"><div class="section-head"><h2>API registrations</h2><span class="section-note">unstable feature</span></div>';
   if(d.management_registrations&&d.management_registrations.length>0){
-    html+='<table><thead><tr><th>pid</th><th>local port</th><th>domain</th></tr></thead><tbody>';
+    html+='<table><thead><tr><th>pid</th><th>local port</th><th>domain</th><th>stability</th></tr></thead><tbody>';
     d.management_registrations.forEach(function(r){
-      html+='<tr><td>'+esc(r.pid)+'</td><td>'+esc(r.local_port)+'</td><td>'+esc(r.domain)+'</td></tr>';
+      html+='<tr><td>'+esc(r.pid)+'</td><td>'+esc(r.local_port)+'</td><td>'+esc(r.domain)+'</td><td>'+esc(r.feature_stability||'unstable')+'</td></tr>';
     });
     html+='</tbody></table>';
   } else {
@@ -1095,18 +1220,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
     let diagnostics = crate::diagnostics::load_report(&state.state_dir);
 
     let registrations_guard = state.store.read().await;
-    let management_registrations: Vec<serde_json::Value> = registrations_guard
-        .iter()
-        .flat_map(|(pid, regs)| {
-            regs.iter().map(move |r| {
-                serde_json::json!({
-                    "pid": pid,
-                    "local_port": r.local_port,
-                    "domain": r.domain,
-                })
-            })
-        })
-        .collect();
+    let management_registrations = management_registrations_json(&registrations_guard);
 
     let mut local_services: Vec<serde_json::Value> = overlay
         .routes
@@ -1165,6 +1279,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         "cloud_message": cloud_message,
         "cloud_routes": cloud_routes,
         "management_registrations": management_registrations,
+        "management_registrations_feature_stability": "unstable",
         "diagnostics": diagnostics,
         "languages": detected_languages(),
         "environment": detected_environment(),

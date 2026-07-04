@@ -80,7 +80,7 @@ PublisherSupportUrl: https://github.com/$Repo/issues
 PackageName: PortZero
 PackageUrl: https://portzero.cloud/
 License: PolyForm-Shield-1.0.0
-LicenseUrl: https://github.com/$Repo/blob/main/LICENSE
+LicenseUrl: https://github.com/$Repo/blob/develop/LICENSE
 Copyright: Copyright (c) Loum Technologies
 ShortDescription: Eliminate port conflicts in local dev environments
 Description: |
@@ -88,13 +88,7 @@ Description: |
   random available ports, then forwarding those ports to virtual domains on a virtual NIC.
   Run multiple branches simultaneously without clashing.
 
-  After installing, run these commands from an Administrator terminal:
-    portzero trust generate
-    portzero trust install
-    portzero autostart enable
-    portzero start
-
-  Then open http://portzero.local in your browser.
+  After installing, open http://portzero.local in your browser.
 Moniker: portzero
 Tags:
 - development
@@ -149,6 +143,6 @@ Write-Utf8NoBomFile -Path (Join-Path $manifestDir "PortZeroNetwork.PortZero.vers
 Write-Utf8NoBomFile -Path (Join-Path $manifestDir "PortZeroNetwork.PortZero.locale.en-US.yaml") -Content $localeYaml
 Write-Utf8NoBomFile -Path (Join-Path $manifestDir "PortZeroNetwork.PortZero.installer.yaml") -Content $installerYaml
 
-Write-Host "Wrote winget manifests to $manifestDir"
+Write-Host "Wrote winget manifests (coming soon) to $manifestDir"
 Write-Host "InstallerSha256: $sha256"
 Write-Host "ProductCode: $productCode"

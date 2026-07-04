@@ -605,13 +605,13 @@ jobs:
           body: |
             ## Install
 
-            > **Local** (`*.portzero.local`) is governed by the [PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0) ([LICENSE](https://github.com/PortZeroNetwork/portzero-local/blob/main/LICENSE)).  
+            > **Local** (`*.portzero.local`) is governed by the [PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0) ([LICENSE](https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE)).  
             > **Cloud** features are governed by the [Port Zero Terms of Service](https://portzero.net/terms).  
             > Required notice: Copyright Loum Technologies (https://loumtechnologies.com)
 
             **macOS (Homebrew)**
             ```sh
-            brew tap PortZeroNetwork/homebrew-portzero && brew install portzero
+            brew tap PortZeroNetwork/portzero && brew install portzero
             ```
 
             **Linux**
@@ -626,13 +626,8 @@ jobs:
 
             Or download the `.msi` from the assets below and run it manually.
 
-            After installing, run these commands from an Administrator terminal:
-            ```powershell
-            portzero trust generate
-            portzero trust install
-            portzero autostart enable
-            portzero start
-            ```
+            The installer and daemon perform local setup automatically where supported.
+            After installing, open http://portzero.local in your browser.
 
             ---
           files: |

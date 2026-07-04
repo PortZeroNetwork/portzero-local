@@ -46,7 +46,7 @@ just install-hooks
 
 This will:
 
-1. Tell you how to install `lefthook` if it is missing (brew / winget / scoop / etc.).
+1. Tell you how to install `lefthook` if it is missing (brew / winget: coming soon / scoop / etc.).
 2. Run `lefthook install`.
 
 You only need to do this once per clone / per machine. After that the hooks stay active.

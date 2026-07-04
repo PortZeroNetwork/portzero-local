@@ -22,8 +22,8 @@ This document tracks the Windows signing setup for public Port Zero releases.
 - Azure Artifact Signing is the chosen signing path.
 - Loum Technologies has completed Microsoft identity validation.
 - The release workflow signs `portzero.exe` before creating the Windows ZIP,
-  then signs the MSI before generating the winget manifest and uploading
-  artifacts.
+  then signs the MSI before preparing the winget manifest. Winget is coming
+  soon; release artifacts are uploaded separately for now.
 
 ## Desired release flow
 

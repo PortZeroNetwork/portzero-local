@@ -106,7 +106,7 @@ fn find_daemon_binary() -> Result<PathBuf> {
     anyhow::bail!(
         "Could not find portzero binary.\n\n\
          Ensure portzero is installed and on your PATH, then retry.\n\
-         Install with: curl -fsSL https://portzero.cloud/install.sh | sh"
+         Install with: curl -fsSL https://portzero.net/install.sh | sh"
     )
 }
 
@@ -285,6 +285,12 @@ fn install_launchd(binary: &std::path::Path) -> Result<()> {
         )
     })?;
 
+    // Reload the job if it already exists so launchd picks up the latest plist.
+    let _ = std::process::Command::new("launchctl")
+        .arg("bootout")
+        .arg(format!("system/{}", SERVICE_NAME))
+        .status();
+
     // Modern launchctl: `bootstrap system <plist>` loads a system daemon
     // (`load -w` is deprecated for the system domain).
     let status = std::process::Command::new("launchctl")
@@ -300,13 +306,61 @@ fn install_launchd(binary: &std::path::Path) -> Result<()> {
             "launchctl bootstrap returned non-zero; the daemon may already be loaded. \
              Falling back to legacy `load -w`."
         );
-        let _ = std::process::Command::new("launchctl")
+        let fallback_status = std::process::Command::new("launchctl")
             .args(["load", "-w"])
             .arg(&plist_path)
-            .status();
+            .status()
+            .context("Failed to run launchctl load fallback")?;
+        if !fallback_status.success() {
+            anyhow::bail!(
+                "launchctl could not load the PortZero LaunchDaemon at {}",
+                plist_path.display()
+            );
+        }
     }
 
+    kickstart_launchd()?;
+    verify_launchd_loaded()?;
+
     tracing::info!("Installed LaunchDaemon: {}", plist_path.display());
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn kickstart_launchd() -> Result<()> {
+    let service_target = format!("system/{}", SERVICE_NAME);
+    let output = std::process::Command::new("launchctl")
+        .args(["kickstart", "-k", &service_target])
+        .output()
+        .context("Failed to run launchctl kickstart")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "launchctl kickstart failed for {service_target}.\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim(),
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn verify_launchd_loaded() -> Result<()> {
+    let service_target = format!("system/{}", SERVICE_NAME);
+    let output = std::process::Command::new("launchctl")
+        .args(["print", &service_target])
+        .output()
+        .context("Failed to run launchctl print")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "LaunchDaemon was written, but launchd does not report {service_target} as loaded.\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim(),
+        );
+    }
+
     Ok(())
 }
 

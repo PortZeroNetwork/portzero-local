@@ -27,32 +27,28 @@ class Portzero < Formula
 
   def caveats
     <<~EOS
-      To complete setup, run these commands:
+      To complete setup, run:
 
-      1. Install the CA certificate to your system keychain so browsers trust
-         *.portzero.local HTTPS (requires administrator privileges):
+        sudo portzero setup
 
-           sudo HOME="$HOME" portzero trust install
+      This command documents each action before it runs, then:
+        - installs the CA certificate to your system keychain so browsers trust
+          *.portzero.local HTTPS
+        - installs and starts the root LaunchDaemon
+        - pins portzero.local in /etc/hosts so your browser can reach the dashboard
 
-      2. Install and start the root LaunchDaemon (requires administrator privileges):
-
-           sudo portzero autostart enable
-
-         The daemon starts immediately and restarts automatically at boot.
-         Plist installed at: /Library/LaunchDaemons/cloud.portzero.daemon.plist
-
-         Note: use `sudo portzero autostart enable/disable` to manage the daemon,
-         not `brew services` — the latter cannot pin HOME correctly for a root daemon.
-
-      3. Pin portzero.local in /etc/hosts so your browser can reach the dashboard.
-         macOS mDNSResponder intercepts all *.local names before the PortZero resolver
-         is consulted, so the management dashboard needs a static hosts entry:
-
-           echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts
+      macOS mDNSResponder intercepts all *.local names before the PortZero resolver
+      is consulted, so the management dashboard needs that static hosts entry.
 
       Once done, open http://portzero.local in your browser.
 
-      To stop/remove: sudo portzero autostart disable
+      Manual equivalents:
+        sudo HOME="$HOME" portzero trust install
+        sudo portzero autostart enable
+        echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts
+
+      To stop/remove autostart: sudo portzero autostart disable
+      Do not use `brew services`; it cannot pin HOME correctly for a root daemon.
     EOS
   end
 

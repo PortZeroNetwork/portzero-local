@@ -20,6 +20,18 @@ The `PZ_TUNNEL` setting tells PortZero the domain name and port that clients sho
 
 With your program running, you can open `http://master.mytodoapp.portzero.local:80` in your browser. You might also be running a different version of your program in a separate git worktree. Port Zero supports this; `http://some-other-branch.mytodoapp.portzero.local:80` can be available at the same time without port conflicts. This doesn't just work for http; it works for *any* TCP protocol.
 
+## Install
+
+### macOS
+
+```bash
+brew tap PortZeroNetwork/portzero
+brew install portzero
+```
+
+Homebrew maps `PortZeroNetwork/portzero` to the GitHub tap repository
+`PortZeroNetwork/homebrew-portzero`.
+
 ## How does this work?
 
 Port Zero runs a background process on your local dev machine that scans for processes and Docker containers with the special `PZ_TUNNEL` environment variable. If `PZ_TUNNEL` ends in `<username>.portzero.cloud`, Port Zero opens a Cloud tunnel to `portzero.cloud` under that username-scoped subtree. If on the other hand the `PZ_TUNNEL` contains `portzero.local`, Port Zero opens a Local tunnel and does four things:

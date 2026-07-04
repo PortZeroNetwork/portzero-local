@@ -3,8 +3,8 @@ set -e
 
 # portzero installer — the single source of truth.
 #
-# Usage: curl -fsSL https://portzero.cloud/install.sh | sh
-#   (portzero.cloud/install.sh redirects to this file, published as a GitHub
+# Usage: curl -fsSL https://portzero.net/install.sh | sh
+#   (portzero.net/install.sh serves this file, published as a GitHub
 #    Release asset at:
 #      https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh)
 #
@@ -26,7 +26,24 @@ warn()    { printf "${YELLOW}warn:${RESET} %s\n" "$1" >&2; }
 error()   { printf "${RED}error:${RESET} %s\n" "$1" >&2; }
 success() { printf "${GREEN}${BOLD}%s${RESET}\n" "$1"; }
 
-has_cmd() { command -v "$1" >/dev/null 2>&1; }
+find_cmd() {
+    if command -v "$1" >/dev/null 2>&1; then
+        command -v "$1"
+        return 0
+    fi
+
+    # Normal users often do not have sbin directories on PATH, but Linux
+    # capability tools commonly live there.
+    for dir in /usr/sbin /sbin /usr/bin /bin; do
+        if [ -x "$dir/$1" ]; then
+            printf '%s\n' "$dir/$1"
+            return 0
+        fi
+    done
+
+    return 1
+}
+has_cmd() { find_cmd "$1" >/dev/null 2>&1; }
 
 install_linux_certutil() {
     if has_cmd certutil; then
@@ -104,19 +121,95 @@ RULE
 open_dashboard() {
     url="http://portzero.local"
 
-    if has_cmd xdg-open; then
-        xdg-open "$url" >/dev/null 2>&1 && return 0
+    if opener="$(find_cmd xdg-open 2>/dev/null)"; then
+        "$opener" "$url" >/dev/null 2>&1 && return 0
     fi
-    if has_cmd gio; then
-        gio open "$url" >/dev/null 2>&1 && return 0
+    if opener="$(find_cmd gio 2>/dev/null)"; then
+        "$opener" open "$url" >/dev/null 2>&1 && return 0
     fi
     for opener in gnome-open kde-open5 kde-open sensible-browser; do
-        if has_cmd "$opener"; then
-            "$opener" "$url" >/dev/null 2>&1 && return 0
+        if opener_path="$(find_cmd "$opener" 2>/dev/null)"; then
+            "$opener_path" "$url" >/dev/null 2>&1 && return 0
         fi
     done
 
     warn "Could not open $url automatically."
+    return 1
+}
+
+start_portzero() {
+    bin_path="$1"
+
+    if has_cmd systemctl && [ -f "${HOME}/.config/systemd/user/portzero-daemon.service" ]; then
+        if systemctl --user enable --now portzero-daemon.service >/dev/null 2>&1; then
+            info "Started systemd user service: portzero-daemon.service"
+            return 0
+        fi
+        if systemctl --user restart portzero-daemon.service >/dev/null 2>&1; then
+            info "Restarted systemd user service: portzero-daemon.service"
+            return 0
+        fi
+        warn "Could not start portzero via systemd user service; falling back to direct start."
+    fi
+
+    "$bin_path" start --no-browser
+}
+
+dashboard_probe() {
+    url="http://portzero.local/status.json"
+
+    if curl_path="$(find_cmd curl 2>/dev/null)"; then
+        "$curl_path" --noproxy '*' -fsS --max-time 2 "$url" >/dev/null 2>&1
+        return $?
+    fi
+    if wget_path="$(find_cmd wget 2>/dev/null)"; then
+        "$wget_path" -q -T 2 -O /dev/null "$url" >/dev/null 2>&1
+        return $?
+    fi
+
+    return 1
+}
+
+wait_for_dashboard() {
+    info "Waiting for http://portzero.local..."
+    i=0
+    while [ "$i" -lt 30 ]; do
+        if dashboard_probe; then
+            info "Dashboard is reachable at http://portzero.local"
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+
+    warn "portzero started, but http://portzero.local is not reachable yet."
+    warn "Run 'portzero status' for diagnostics, or inspect ~/.portzero/daemon/daemon.log."
+    return 1
+}
+
+install_dashboard_hosts_pin() {
+    expected='10.254.0.2 portzero.local # portzero-local'
+
+    if grep -Fxq "$expected" /etc/hosts 2>/dev/null; then
+        return 0
+    fi
+
+    info "Pinning portzero.local in /etc/hosts (works around nss-mdns)..."
+    tmp_hosts="$tmp/hosts"
+    if [ -r /etc/hosts ]; then
+        # Replace stale managed entries while preserving user-managed hosts lines.
+        grep -v '# portzero-local' /etc/hosts > "$tmp_hosts" || true
+    else
+        : > "$tmp_hosts"
+    fi
+    printf '%s\n' "$expected" >> "$tmp_hosts"
+
+    if sudo install -m 0644 "$tmp_hosts" /etc/hosts 2>/dev/null; then
+        return 0
+    fi
+
+    warn "Could not pin portzero.local in /etc/hosts; the dashboard name may not resolve."
+    warn "Run later: echo '$expected' | sudo tee -a /etc/hosts"
     return 1
 }
 
@@ -193,13 +286,24 @@ if [ "$(uname -s)" = "Linux" ]; then
     # CAP_NET_BIND_SERVICE (let the embedded DNS server bind 10.254.0.1:53 so
     # *.portzero.local resolves) without running as root. Without the bind cap
     # the DNS server exits with "Permission denied" and no name resolves.
-    if has_cmd setcap; then
-        if sudo setcap 'cap_net_admin,cap_net_bind_service+eip' "$bin_path" 2>/dev/null; then
+    if setcap_path="$(find_cmd setcap 2>/dev/null)"; then
+        if sudo "$setcap_path" 'cap_net_admin,cap_net_bind_service+eip' "$bin_path" 2>/dev/null; then
             info "CAP_NET_ADMIN + CAP_NET_BIND_SERVICE granted to $bin_path"
+            if getcap_path="$(find_cmd getcap 2>/dev/null)"; then
+                caps="$("$getcap_path" "$bin_path" 2>/dev/null || true)"
+                case "$caps" in
+                    *cap_net_admin*cap_net_bind_service*|*cap_net_bind_service*cap_net_admin*) ;;
+                    *)
+                        warn "Could not verify Linux capabilities on $bin_path."
+                        warn "If http://portzero.local does not load, run:"
+                        warn "  sudo $setcap_path 'cap_net_admin,cap_net_bind_service+eip' $bin_path"
+                        ;;
+                esac
+            fi
         else
             warn "Could not set capabilities (sudo failed or was denied)."
             warn "The local overlay (TUN + routing + DNS) requires root or:"
-            warn "  sudo setcap 'cap_net_admin,cap_net_bind_service+eip' $bin_path"
+            warn "  sudo $setcap_path 'cap_net_admin,cap_net_bind_service+eip' $bin_path"
         fi
     else
         warn "setcap not found — install libcap2-bin (Debian/Ubuntu) or libcap (Fedora/RHEL),"
@@ -232,7 +336,6 @@ WantedBy=default.target
 UNIT
         systemctl --user daemon-reload 2>/dev/null || true
         info "Systemd user unit installed: $unit_path"
-        info "Enable at login: systemctl --user enable --now portzero-daemon"
     fi
 
     # Generate a local CA and install it into the system trust store so browsers
@@ -254,15 +357,15 @@ UNIT
     # even though the overlay DNS server answers it. The dashboard lives at a
     # fixed VIP (10.254.0.2), so a static hosts entry — resolved by `files`,
     # ahead of mdns — is the robust fix. Multi-label service names are unaffected.
-    if ! grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
-        info "Pinning portzero.local in /etc/hosts (works around nss-mdns)..."
-        echo '10.254.0.2 portzero.local # portzero-local' | sudo tee -a /etc/hosts >/dev/null 2>&1 \
-            || warn "Could not pin portzero.local in /etc/hosts; the dashboard name may not resolve."
-    fi
+    install_dashboard_hosts_pin || true
 
     info "Starting portzero..."
-    "$bin_path" start --no-browser || warn "Could not start portzero automatically. Run later: portzero start"
-    open_dashboard || true
+    if start_portzero "$bin_path"; then
+        wait_for_dashboard || true
+        open_dashboard || true
+    else
+        warn "Could not start portzero automatically. Run later: portzero start"
+    fi
 fi
 
 echo ""
@@ -278,7 +381,7 @@ esac
 
 echo ""
 info "Local tunnels (*.portzero.local) governed by the PolyForm Shield License:"
-info "  https://github.com/PortZeroNetwork/portzero-local/blob/main/LICENSE"
+info "  https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE"
 info "Cloud features governed by https://portzero.net/terms"
 
 echo ""

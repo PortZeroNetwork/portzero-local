@@ -29,6 +29,33 @@ servers:
 - url: http://portzero.local
   description: portzero overlay network — reachable via the virtual NIC
 paths:
+  /v1/daemon/status:
+    get:
+      tags:
+      - management
+      summary: Return daemon version and status
+      description: Returns the running portzero daemon version and coarse status for local applications calling `http://portzero.local`. The `registrations` summary covers local API registrations, which are an **unstable** feature.
+      operationId: getDaemonStatus
+      responses:
+        '200':
+          description: Daemon version and status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonStatusResponse'
+              example:
+                cloud_connected: false
+                daemon_pid: 12345
+                https:
+                  enabled: true
+                  passthrough_port_443: true
+                  redirect_port_80: false
+                overlay_active: true
+                registrations:
+                  count: 2
+                  feature_stability: unstable
+                status: running
+                version: 0.1.0
   /v1/register:
     post:
       tags:
@@ -79,6 +106,7 @@ paths:
               example:
                 detail: could not resolve source port 54321 to a PID
                 error: caller_unidentifiable
+      x-portzero-feature-stability: unstable
     delete:
       tags:
       - management
@@ -113,6 +141,7 @@ paths:
               example:
                 detail: could not resolve source port 54321 to a PID
                 error: caller_unidentifiable
+      x-portzero-feature-stability: unstable
   /v1/status:
     get:
       tags:
@@ -152,8 +181,64 @@ paths:
               example:
                 detail: could not resolve source port 54321 to a PID
                 error: caller_unidentifiable
+      x-portzero-feature-stability: unstable
 components:
   schemas:
+    ApiRegistrationsStatus:
+      type: object
+      required:
+      - feature_stability
+      - count
+      properties:
+        count:
+          type: integer
+          description: Number of active port registrations created through the local API.
+          example: 2
+          minimum: 0
+        feature_stability:
+          type: string
+          description: Stability marker for the local API registration feature.
+          example: unstable
+    DaemonStatusResponse:
+      type: object
+      required:
+      - version
+      - status
+      - overlay_active
+      - cloud_connected
+      - https
+      - registrations
+      properties:
+        cloud_connected:
+          type: boolean
+          description: Whether the daemon is connected for cloud tunnels.
+          example: false
+        daemon_pid:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: PID read from the daemon state directory, when available.
+          example: 12345
+          minimum: 0
+        https:
+          $ref: '#/components/schemas/HttpsStatus'
+          description: HTTPS behavior for *.portzero.local overlay routes.
+        overlay_active:
+          type: boolean
+          description: Whether the local overlay is active.
+          example: true
+        registrations:
+          $ref: '#/components/schemas/ApiRegistrationsStatus'
+          description: Summary of local API registrations. This feature is unstable.
+        status:
+          type: string
+          description: Coarse daemon state for local app health checks.
+          example: running
+        version:
+          type: string
+          description: Version of the running portzero daemon.
+          example: 0.1.0
     DeregisterResponse:
       type: object
       required:
@@ -186,6 +271,25 @@ components:
           - caller_unidentifiable
           - port_not_listening
           - not_registered
+    HttpsStatus:
+      type: object
+      required:
+      - enabled
+      - redirect_port_80
+      - passthrough_port_443
+      properties:
+        enabled:
+          type: boolean
+          description: Whether daemon-managed HTTPS is enabled for plaintext backends exposed on port 80.
+          example: true
+        passthrough_port_443:
+          type: boolean
+          description: Whether TLS passthrough is enabled for HTTPS backends exposed on port 443.
+          example: true
+        redirect_port_80:
+          type: boolean
+          description: Whether HTTP port 80 requests are redirected to HTTPS.
+          example: false
     PortRegistration:
       type: object
       description: A single port registration entry.

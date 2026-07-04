@@ -7,6 +7,7 @@ mod auth;
 mod autostart;
 mod browser;
 mod daemon;
+mod setup;
 mod team;
 mod trust;
 mod update;
@@ -40,6 +41,10 @@ enum Command {
     Restart,
     /// Show daemon and tunnel status.
     Status,
+
+    /// Run privileged first-run setup after package installation.
+    #[command(alias = "post-install")]
+    Setup,
 
     /// Log in to portzero.cloud (opens browser by default).
     Login {
@@ -138,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Stop => daemon::stop()?,
         Command::Restart => daemon::restart()?,
         Command::Status => daemon::status().await?,
+        Command::Setup => setup::run()?,
 
         Command::Login {
             interactive,
