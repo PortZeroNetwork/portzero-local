@@ -269,5 +269,5 @@ Write-Host "If this terminal was already open, PATH has been updated for this pr
 
 Write-Host ""
 Write-Host "Local tunnels (*.portzero.local) governed by the PolyForm Shield License:"
-Write-Host "  https://github.com/PortZeroNetwork/portzero-local/blob/main/LICENSE"
+Write-Host "  https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE"
 Write-Host "Cloud features governed by https://portzero.net/terms"

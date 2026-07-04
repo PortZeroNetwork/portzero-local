@@ -278,7 +278,7 @@ esac
 
 echo ""
 info "Local tunnels (*.portzero.local) governed by the PolyForm Shield License:"
-info "  https://github.com/PortZeroNetwork/portzero-local/blob/main/LICENSE"
+info "  https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE"
 info "Cloud features governed by https://portzero.net/terms"
 
 echo ""
