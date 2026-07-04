@@ -69,4 +69,4 @@ For corporate contributions, your company may also need to submit a Corporate CL
 
 ---
 
-*This is a standard-form Contributor License Agreement adapted for the Project. For production use, have legal counsel review and customize this document for your jurisdiction and business needs.*
+*This is a standard-form Contributor License Agreement adapted for the Project.*
