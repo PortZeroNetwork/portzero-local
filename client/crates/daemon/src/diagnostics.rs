@@ -331,8 +331,12 @@ fn check_cap_net_admin() -> Option<Diagnostic> {
             detail: "The daemon cannot create TUN devices without CAP_NET_ADMIN.".to_string(),
             fix: Some(Fix {
                 kind: FixKind::Manual,
-                description: "Grant CAP_NET_ADMIN to the binary.".to_string(),
-                command: Some(format!("sudo setcap CAP_NET_ADMIN+ep {}", exe_path)),
+                description: "Grant the Linux capabilities required for the overlay network."
+                    .to_string(),
+                command: Some(format!(
+                    "sudo setcap 'cap_net_admin,cap_net_bind_service+eip' {}",
+                    exe_path
+                )),
             }),
         })
     } else {
