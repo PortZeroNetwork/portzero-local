@@ -12,7 +12,7 @@
 
 ## Checklist
 
-- [ ] I have read the [CONTRIBUTING.md](CONTRIBUTING.md)
+- [ ] I have read the [CONTRIBUTING.md](https://github.com/PortZeroNetwork/portzero-local/blob/develop/CONTRIBUTING.md)
 - [ ] My code follows the style and conventions of this project
 - [ ] I have added or updated tests as appropriate
 - [ ] All existing tests pass (`just test` or equivalent)
@@ -23,7 +23,7 @@
 
 **All contributors must sign the CLA before a PR can be merged.**
 
-By submitting this pull request, I confirm that I agree to the terms of the [Contributor License Agreement](CLA.md).
+By submitting this pull request, I confirm that I agree to the terms of the [Contributor License Agreement](https://github.com/PortZeroNetwork/portzero-local/blob/develop/CLA.md).
 
 To sign, post the following comment **exactly** on this pull request:
 
