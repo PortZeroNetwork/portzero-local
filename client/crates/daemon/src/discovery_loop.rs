@@ -71,7 +71,7 @@ use crate::cloud::CloudConnector;
 use crate::discovery::{self, DiscoveredNetworkService};
 use crate::docker_events::{self, ConflictRegistry};
 use crate::net::dns::DnsFirstHitPolicy;
-use crate::net::overlay::{OverlayConfig, OverlayNetwork};
+use crate::net::overlay::{OverlayConfig, OverlayNetwork, ResolverCheck};
 use crate::net::service_table::ServiceTable;
 use crate::net::stack::OverlayHttpsPolicy;
 use crate::notify::{self, IssuesState};
@@ -546,6 +546,10 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     let mut shutdown = Box::pin(wait_for_shutdown_signal());
 
     let mut diag_scan_counter: u32 = 0;
+    // Whether we have already fired a desktop notification for the current
+    // "resolver removed" episode. Reset once the resolver is healthy again so a
+    // future removal notifies afresh (rather than once per 30s check).
+    let mut resolver_repair_notified = false;
     let overlay_fast_refresh = overlay.as_ref().map(|ov| {
         tokio::spawn(run_dns_fast_overlay_refresh(
             config.clone(),
@@ -567,6 +571,36 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             if diag_scan_counter.is_multiple_of(15) {
                 let diag = crate::diagnostics::run_diagnostics(&config.state_dir).await;
                 crate::diagnostics::save_report(&diag, &config.state_dir);
+
+                // Detect out-of-band removal of the scoped `.portzero.local`
+                // resolver (e.g. a user or another tool deleted
+                // `/etc/resolver/portzero.local`) and repair it, surfacing a
+                // one-shot notification so the user knows it happened.
+                if let Some(ref ov) = overlay {
+                    match ov.ensure_resolver_installed().await {
+                        ResolverCheck::Repaired => {
+                            if !resolver_repair_notified {
+                                notify::send_notification(
+                                    "portzero: DNS resolver restored",
+                                    "The .portzero.local resolver was removed and has \
+                                     been recreated automatically.",
+                                );
+                                resolver_repair_notified = true;
+                            }
+                        }
+                        ResolverCheck::RepairFailed => {
+                            if !resolver_repair_notified {
+                                notify::send_notification(
+                                    "portzero: DNS resolver missing",
+                                    "The .portzero.local resolver was removed and could \
+                                     not be recreated. Run `sudo portzero setup` to fix it.",
+                                );
+                                resolver_repair_notified = true;
+                            }
+                        }
+                        ResolverCheck::Ok => resolver_repair_notified = false,
+                    }
+                }
             }
 
             // Check process liveness for existing routes

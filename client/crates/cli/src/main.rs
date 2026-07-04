@@ -143,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Stop => daemon::stop()?,
         Command::Restart => daemon::restart()?,
         Command::Status => daemon::status().await?,
-        Command::Setup => setup::run()?,
+        Command::Setup => setup::run().await?,
 
         Command::Login {
             interactive,
