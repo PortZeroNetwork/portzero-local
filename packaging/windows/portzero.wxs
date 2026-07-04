@@ -21,6 +21,42 @@
       <ComponentGroupRef Id="PortZeroComponents" />
     </Feature>
 
+    <CustomAction
+      Id="EnablePortzeroAutostart"
+      FileKey="PortzeroExe"
+      ExeCommand="autostart enable"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+    <CustomAction
+      Id="StartPortzeroDaemon"
+      FileKey="PortzeroExe"
+      ExeCommand="start --no-browser"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+    <CustomAction
+      Id="DisablePortzeroAutostart"
+      FileKey="PortzeroExe"
+      ExeCommand="autostart disable"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+    <CustomAction
+      Id="StopPortzeroDaemon"
+      FileKey="PortzeroExe"
+      ExeCommand="stop"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="EnablePortzeroAutostart" After="InstallFiles">NOT Installed AND NOT REMOVE</Custom>
+      <Custom Action="StartPortzeroDaemon" After="EnablePortzeroAutostart">NOT Installed AND NOT REMOVE</Custom>
+      <Custom Action="DisablePortzeroAutostart" Before="RemoveFiles">REMOVE="ALL"</Custom>
+      <Custom Action="StopPortzeroDaemon" After="DisablePortzeroAutostart">REMOVE="ALL"</Custom>
+    </InstallExecuteSequence>
+
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="Port Zero" />
