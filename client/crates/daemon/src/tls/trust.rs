@@ -1174,7 +1174,8 @@ pub(crate) struct WindowsTrustEnv {
 
 #[cfg(target_os = "windows")]
 fn install_impl(ca_cert_path: &Path) -> Result<()> {
-    install_windows_root_store(ca_cert_path)?;
+    let use_machine_store = crate::is_windows_system_account();
+    install_windows_root_store(ca_cert_path, use_machine_store)?;
     let env = detect_windows_trust_env();
     install_nss_dbs_windows(ca_cert_path, &env);
     Ok(())
@@ -1182,7 +1183,8 @@ fn install_impl(ca_cert_path: &Path) -> Result<()> {
 
 #[cfg(target_os = "windows")]
 fn uninstall_impl() -> Result<()> {
-    uninstall_windows_root_store()?;
+    let use_machine_store = crate::is_windows_system_account();
+    uninstall_windows_root_store(use_machine_store)?;
     let env = detect_windows_trust_env();
     uninstall_nss_dbs_windows(&env);
     Ok(())
@@ -1193,9 +1195,13 @@ fn verify_installation_impl(ca_cert_path: &Path) -> Result<TrustVerificationRepo
     let env = detect_windows_trust_env();
     let mut missing = Vec::new();
 
-    let store = WindowsCertStore::open_current_user_root()?;
+    let store = WindowsCertStore::open_root(crate::is_windows_system_account())?;
     if !store.contains_subject(CERT_NICKNAME)? {
-        missing.push("Windows CurrentUser\\Root store".to_string());
+        missing.push(if crate::is_windows_system_account() {
+            "Windows LocalMachine\\Root store".to_string()
+        } else {
+            "Windows CurrentUser\\Root store".to_string()
+        });
     }
 
     if env.nss_db_dirs.is_empty() {
@@ -1221,23 +1227,51 @@ fn verify_installation_impl(ca_cert_path: &Path) -> Result<TrustVerificationRepo
 }
 
 #[cfg(target_os = "windows")]
-fn install_windows_root_store(ca_cert_path: &Path) -> Result<()> {
+fn install_windows_root_store(ca_cert_path: &Path, use_machine_store: bool) -> Result<()> {
     let der = read_first_pem_cert_der(ca_cert_path)?;
-    let store = WindowsCertStore::open_current_user_root()?;
+    let store = WindowsCertStore::open_root(use_machine_store)?;
     store.add_encoded_cert(&der)?;
-    tracing::info!("Windows: installed CA cert to CurrentUser\\Root");
+    tracing::info!(
+        "Windows: installed CA cert to {}",
+        if use_machine_store {
+            "LocalMachine\\Root"
+        } else {
+            "CurrentUser\\Root"
+        }
+    );
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn uninstall_windows_root_store() -> Result<()> {
-    let store = WindowsCertStore::open_current_user_root()?;
+fn uninstall_windows_root_store(use_machine_store: bool) -> Result<()> {
+    let store = WindowsCertStore::open_root(use_machine_store)?;
     match store.delete_by_subject(CERT_NICKNAME) {
         Ok(count) if count > 0 => {
-            tracing::info!("Windows: removed {count} CA cert(s) from CurrentUser\\Root")
+            tracing::info!(
+                "Windows: removed {count} CA cert(s) from {}",
+                if use_machine_store {
+                    "LocalMachine\\Root"
+                } else {
+                    "CurrentUser\\Root"
+                }
+            )
         }
-        Ok(_) => tracing::info!("Windows: CA cert was not present in CurrentUser\\Root"),
-        Err(e) => tracing::warn!("Windows: failed to remove CA from CurrentUser\\Root: {e:#}"),
+        Ok(_) => tracing::info!(
+            "Windows: CA cert was not present in {}",
+            if use_machine_store {
+                "LocalMachine\\Root"
+            } else {
+                "CurrentUser\\Root"
+            }
+        ),
+        Err(e) => tracing::warn!(
+            "Windows: failed to remove CA from {}: {e:#}",
+            if use_machine_store {
+                "LocalMachine\\Root"
+            } else {
+                "CurrentUser\\Root"
+            }
+        ),
     }
     Ok(())
 }
@@ -1402,23 +1436,33 @@ struct WindowsCertStore(windows_sys::Win32::Security::Cryptography::HCERTSTORE);
 
 #[cfg(target_os = "windows")]
 impl WindowsCertStore {
-    fn open_current_user_root() -> Result<Self> {
+    fn open_root(use_machine_store: bool) -> Result<Self> {
         use windows_sys::Win32::Security::Cryptography::{
             CertOpenStore, CERT_STORE_OPEN_EXISTING_FLAG, CERT_STORE_PROV_SYSTEM_A,
-            CERT_SYSTEM_STORE_CURRENT_USER, X509_ASN_ENCODING,
+            CERT_SYSTEM_STORE_CURRENT_USER, CERT_SYSTEM_STORE_LOCAL_MACHINE, X509_ASN_ENCODING,
         };
+
+        let flags = if use_machine_store {
+            CERT_SYSTEM_STORE_LOCAL_MACHINE
+        } else {
+            CERT_SYSTEM_STORE_CURRENT_USER
+        } | CERT_STORE_OPEN_EXISTING_FLAG;
 
         let store = unsafe {
             CertOpenStore(
                 CERT_STORE_PROV_SYSTEM_A,
                 X509_ASN_ENCODING,
                 0,
-                CERT_SYSTEM_STORE_CURRENT_USER | CERT_STORE_OPEN_EXISTING_FLAG,
+                flags,
                 c"ROOT".as_ptr().cast(),
             )
         };
         if store.is_null() {
-            return Err(std::io::Error::last_os_error()).context("open CurrentUser\\Root store");
+            return Err(std::io::Error::last_os_error()).context(if use_machine_store {
+                "open LocalMachine\\Root store"
+            } else {
+                "open CurrentUser\\Root store"
+            });
         }
         Ok(Self(store))
     }

@@ -27,14 +27,14 @@
       ExeCommand="autostart enable"
       Execute="deferred"
       Impersonate="no"
-      Return="check" />
+      Return="ignore" />
     <CustomAction
       Id="StartPortzeroDaemon"
       FileKey="PortzeroExe"
       ExeCommand="start --no-browser"
       Execute="deferred"
       Impersonate="no"
-      Return="check" />
+      Return="ignore" />
     <CustomAction
       Id="DisablePortzeroAutostart"
       FileKey="PortzeroExe"
