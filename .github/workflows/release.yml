@@ -1,12 +1,8 @@
 name: Release
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    branches:
-      - 'release/*'
-    types: [completed]
-  workflow_dispatch:
+  # Release is triggered only by pushes to release/* (typically the merge commit
+  # after a PR is merged). No workflow_run or manual dispatch.
   push:
     branches:
       - 'release/*'
@@ -22,10 +18,6 @@ jobs:
   version:
     name: Determine Version
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -33,7 +25,6 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Generate version
         id: version
@@ -61,7 +52,6 @@ jobs:
   build:
     name: Build ${{ matrix.archive_name }}
     needs: version
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -102,8 +92,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set CLI package version
         run: scripts/set-cli-version.sh "${{ needs.version.outputs.version }}"
@@ -357,12 +345,9 @@ jobs:
   package-linux:
     name: Build Linux Packages
     needs: [version, build]
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set CLI package version
         run: scripts/set-cli-version.sh "${{ needs.version.outputs.version }}"
@@ -409,15 +394,12 @@ jobs:
   package-windows:
     name: Build Windows MSI
     needs: [version, build]
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     runs-on: windows-latest
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Download amd64 Windows artifact
         uses: actions/download-artifact@v5
@@ -576,45 +558,17 @@ jobs:
   release:
     name: Create Release
     needs: [version, build, package-linux, package-windows]
-    if: >-
-      always() &&
-      ( github.event_name == 'workflow_dispatch' ||
-        (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') )
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
-      build-run-id: ${{ steps.artifact-run.outputs.run-id }}
+      build-run-id: ${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Determine artifact source run
-        id: artifact-run
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            # Find the earlier Release run (triggered by push) for this SHA
-            SHA="${{ github.event.workflow_run.head_sha }}"
-            RUN_ID=$(gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow "Release" \
-              --event push \
-              --head-sha "$SHA" \
-              --json databaseId,createdAt \
-              --jq 'sort_by(.createdAt) | reverse | .[0].databaseId')
-            echo "run-id=$RUN_ID" >> "$GITHUB_OUTPUT"
-          else
-            echo "run-id=${{ github.run_id }}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Download build artifacts
         uses: actions/download-artifact@v5
         with:
-          run-id: ${{ steps.artifact-run.outputs.run-id }}
-          github-token: ${{ github.token }}
           path: artifacts
           pattern: portzero-*
           merge-multiple: true
@@ -622,8 +576,6 @@ jobs:
       - name: Download OS packages
         uses: actions/download-artifact@v5
         with:
-          run-id: ${{ steps.artifact-run.outputs.run-id }}
-          github-token: ${{ github.token }}
           path: artifacts
           pattern: portzero-{deb,rpm,msi,winget}
           merge-multiple: true
@@ -642,7 +594,7 @@ jobs:
 
       - name: Generate version manifest
         run: |
-          echo "{\"version\":\"${{ needs.version.outputs.version }}\",\"commit\":\"${{ github.event.workflow_run.head_sha || github.sha }}\"}" \
+          echo "{\"version\":\"${{ needs.version.outputs.version }}\",\"commit\":\"${{ github.sha }}\"}" \
             > artifacts/version.json
 
       - name: Create GitHub Release
@@ -746,8 +698,6 @@ jobs:
       - name: Download macOS SHA256 files
         uses: actions/download-artifact@v5
         with:
-          run-id: ${{ needs.release.outputs.build-run-id }}
-          github-token: ${{ github.token }}
           pattern: sha256-portzero-darwin-*
           merge-multiple: true
 
