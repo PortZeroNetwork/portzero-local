@@ -92,6 +92,7 @@ mod tests {
             domain: "test.portzero.cloud".into(),
             local_port: 8080,
             protocol: RouteProtocol::Tcp,
+            metadata: None,
         };
         let text = encode(&msg).unwrap();
         let decoded = decode_client(&text).unwrap();

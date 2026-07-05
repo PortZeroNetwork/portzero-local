@@ -154,6 +154,12 @@ impl DaemonConfig {
         self.state_dir.join("cloud_state.json")
     }
 
+    /// Path to the per-cloud-route review status file (domain → status),
+    /// written by the cloud connector and read by the local dashboard.
+    pub fn cloud_route_status_path(&self) -> PathBuf {
+        self.state_dir.join("cloud_route_status.json")
+    }
+
     /// Path to the visibility "issues" state file (duplicate names, etc.).
     pub fn issues_path(&self) -> PathBuf {
         self.state_dir.join("issues.json")
@@ -371,6 +377,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     if let Some(ref token) = current_token {
         tracing::info!("Auth token found, connecting to cloud edge");
         let mut connector = CloudConnector::new(token.clone());
+        connector.set_status_path(config.cloud_route_status_path());
         match connector.connect(domain_router.clone()).await {
             Ok(()) => {
                 let p = connector.plan();
@@ -415,7 +422,14 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     // without waiting for a scan cycle to detect a "change".
     if let Some(ref connector) = cloud {
         for (domain, route) in &route_table.routes {
-            if let Err(e) = connector.register_route(domain, route.port).await {
+            if let Err(e) = connector
+                .register_route(
+                    domain,
+                    route.port,
+                    Some(crate::cloud::build_route_metadata(route)),
+                )
+                .await
+            {
                 tracing::warn!(
                     "Failed to register pre-existing route {} on startup: {}",
                     domain,
@@ -921,6 +935,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                             if is_reconnect { "Re" } else { "C" }
                         );
                         let mut connector = CloudConnector::new(token);
+                        connector.set_status_path(config.cloud_route_status_path());
                         match connector.connect(domain_router.clone()).await {
                             Ok(()) => {
                                 reconnect_backoff.on_success();
@@ -929,8 +944,13 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                                 let m = connector.status_message();
                                 write_cloud_state(&config, true, None, p, c, m);
                                 for (domain, route) in &route_table.routes {
-                                    if let Err(e) =
-                                        connector.register_route(domain, route.port).await
+                                    if let Err(e) = connector
+                                        .register_route(
+                                            domain,
+                                            route.port,
+                                            Some(crate::cloud::build_route_metadata(route)),
+                                        )
+                                        .await
                                     {
                                         tracing::warn!(
                                             "Failed to re-register route {}: {}",
@@ -1347,7 +1367,14 @@ fn update_domain_router(router: &DomainRouter, changes: &RouteChanges) {
 /// Sync route changes with the cloud connector.
 async fn sync_cloud_routes(connector: &CloudConnector, changes: &RouteChanges) {
     for route in &changes.added {
-        if let Err(e) = connector.register_route(&route.domain, route.port).await {
+        if let Err(e) = connector
+            .register_route(
+                &route.domain,
+                route.port,
+                Some(crate::cloud::build_route_metadata(route)),
+            )
+            .await
+        {
             tracing::warn!(
                 "Failed to register route {} with cloud: {}",
                 route.domain,
@@ -1366,7 +1393,14 @@ async fn sync_cloud_routes(connector: &CloudConnector, changes: &RouteChanges) {
     }
     for route in &changes.changed {
         // Re-register with updated port
-        if let Err(e) = connector.register_route(&route.domain, route.port).await {
+        if let Err(e) = connector
+            .register_route(
+                &route.domain,
+                route.port,
+                Some(crate::cloud::build_route_metadata(route)),
+            )
+            .await
+        {
             tracing::warn!("Failed to update route {} with cloud: {}", route.domain, e);
         }
     }

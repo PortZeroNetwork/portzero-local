@@ -151,7 +151,8 @@ impl ConnectionStateMachine {
             }
             ServerMessage::RouteAck { .. }
             | ServerMessage::HttpRequest { .. }
-            | ServerMessage::RouteExpired { .. } => {
+            | ServerMessage::RouteExpired { .. }
+            | ServerMessage::RouteStatusChanged { .. } => {
                 if self.state != ConnectionState::Ready {
                     return Err(StateError::UnexpectedState {
                         state: self.state.clone(),
@@ -241,6 +242,7 @@ mod tests {
             domain: "test.portzero.cloud".into(),
             local_port: 3000,
             protocol: RouteProtocol::Http,
+            metadata: None,
         };
 
         let sm = ConnectionStateMachine::new();

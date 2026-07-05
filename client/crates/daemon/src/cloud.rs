@@ -4,6 +4,8 @@
 //! and registers discovered routes so they become reachable from the internet.
 //! Incoming HTTP requests are forwarded to local services.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -53,6 +55,13 @@ pub struct CloudConnector {
     /// Set by the inbound reader when the server rejects our token (AuthFailed).
     /// Signals the discovery loop to stop retrying and wait for a new token.
     auth_failed: Arc<AtomicBool>,
+    /// Review status per cloud domain ("pending_review" | "published" | "denied"),
+    /// updated from RouteAck and RouteStatusChanged. Surfaced in the local
+    /// dashboard so the user sees whether a cloud tunnel is In Review or live.
+    route_statuses: Arc<Mutex<HashMap<String, String>>>,
+    /// Where to persist `route_statuses` for the dashboard to read. Set by the
+    /// discovery loop once the state dir is known.
+    status_path: Arc<Mutex<Option<PathBuf>>>,
 }
 
 impl CloudConnector {
@@ -73,6 +82,8 @@ impl CloudConnector {
             status_message: Arc::new(Mutex::new(None)),
             inbound_alive: Arc::new(AtomicBool::new(false)),
             auth_failed: Arc::new(AtomicBool::new(false)),
+            route_statuses: Arc::new(Mutex::new(HashMap::new())),
+            status_path: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -91,7 +102,25 @@ impl CloudConnector {
             status_message: Arc::new(Mutex::new(None)),
             inbound_alive: Arc::new(AtomicBool::new(false)),
             auth_failed: Arc::new(AtomicBool::new(false)),
+            route_statuses: Arc::new(Mutex::new(HashMap::new())),
+            status_path: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Tell the connector where to persist per-route review status so the local
+    /// dashboard can display it. Called once by the discovery loop.
+    pub fn set_status_path(&self, path: PathBuf) {
+        if let Ok(mut g) = self.status_path.lock() {
+            *g = Some(path);
+        }
+    }
+
+    /// Snapshot of review status per cloud domain.
+    pub fn route_statuses(&self) -> HashMap<String, String> {
+        self.route_statuses
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 
     /// Connect to the edge server via WebSocket.
@@ -155,6 +184,8 @@ impl CloudConnector {
         let plan_for_reader = Arc::clone(&self.plan);
         let can_use_cloud_tunnels_for_reader = Arc::clone(&self.can_use_cloud_tunnels);
         let status_msg_for_reader = Arc::clone(&self.status_message);
+        let route_statuses_for_reader = Arc::clone(&self.route_statuses);
+        let status_path_for_reader = Arc::clone(&self.status_path);
         tokio::spawn(async move {
             while let Some(msg_result) = ws_stream_rx.next().await {
                 let msg = match msg_result {
@@ -254,6 +285,29 @@ impl CloudConnector {
                         }
                         // General warn happens in handle_incoming
                     }
+                    // Record review status so the local dashboard can show
+                    // whether a cloud tunnel is In Review or Published.
+                    ServerMessage::RouteAck {
+                        success: true,
+                        domain,
+                        status: Some(status),
+                        ..
+                    } => {
+                        update_route_status(
+                            &route_statuses_for_reader,
+                            &status_path_for_reader,
+                            domain,
+                            *status,
+                        );
+                    }
+                    ServerMessage::RouteStatusChanged { domain, status, .. } => {
+                        update_route_status(
+                            &route_statuses_for_reader,
+                            &status_path_for_reader,
+                            domain,
+                            *status,
+                        );
+                    }
                     _ => {}
                 }
 
@@ -279,7 +333,15 @@ impl CloudConnector {
     }
 
     /// Register a discovered route with the cloud edge.
-    pub async fn register_route(&self, domain: &str, local_port: u16) -> Result<()> {
+    ///
+    /// `metadata` (process cwd/exe/argv) is shown in the cloud review UI so the
+    /// account owner can see what is being exposed before approving the tunnel.
+    pub async fn register_route(
+        &self,
+        domain: &str,
+        local_port: u16,
+        metadata: Option<portzero_proto::RouteMetadata>,
+    ) -> Result<()> {
         let tx = self
             .tx
             .as_ref()
@@ -289,6 +351,7 @@ impl CloudConnector {
             domain: domain.to_string(),
             local_port,
             protocol: portzero_proto::RouteProtocol::Http,
+            metadata,
         };
 
         tx.send(msg)
@@ -395,16 +458,48 @@ pub async fn handle_incoming(
             success,
             error,
             url,
+            status,
         } => {
             if success {
-                let public_url = url.as_deref().unwrap_or(&domain);
-                tracing::info!("Route accepted by edge: {} → {}", domain, public_url);
+                match status {
+                    Some(portzero_proto::RouteStatus::PendingReview) => {
+                        tracing::info!(
+                            "Cloud tunnel {} is In Review — approve it at https://app.portzero.cloud to make it public",
+                            domain
+                        );
+                    }
+                    _ => {
+                        let public_url = url.as_deref().unwrap_or(&domain);
+                        tracing::info!("Route accepted by edge: {} → {}", domain, public_url);
+                    }
+                }
             } else {
                 tracing::warn!(
                     "Route rejected by edge: {} - {}",
                     domain,
                     error.as_deref().unwrap_or("unknown error")
                 );
+            }
+            Ok(None)
+        }
+        ServerMessage::RouteStatusChanged {
+            domain,
+            status,
+            url,
+        } => {
+            // Status persistence happens in the reader loop; here we just log.
+            match status {
+                portzero_proto::RouteStatus::Published => tracing::info!(
+                    "Cloud tunnel {} approved → {}",
+                    domain,
+                    url.as_deref().unwrap_or(&domain)
+                ),
+                portzero_proto::RouteStatus::Denied => {
+                    tracing::warn!("Cloud tunnel {} was denied by the owner", domain)
+                }
+                portzero_proto::RouteStatus::PendingReview => {
+                    tracing::info!("Cloud tunnel {} is In Review", domain)
+                }
             }
             Ok(None)
         }
@@ -439,6 +534,87 @@ pub async fn handle_incoming(
             tracing::error!("Edge server error ({:?}): {}", code, message);
             Ok(None)
         }
+    }
+}
+
+/// Wire status → the string persisted for the dashboard.
+fn route_status_to_str(status: portzero_proto::RouteStatus) -> &'static str {
+    match status {
+        portzero_proto::RouteStatus::PendingReview => "pending_review",
+        portzero_proto::RouteStatus::Published => "published",
+        portzero_proto::RouteStatus::Denied => "denied",
+    }
+}
+
+/// Update the in-memory status map and persist it to `cloud_route_status.json`
+/// so the local dashboard (which reads files, not the connector) can show it.
+fn update_route_status(
+    statuses: &Arc<Mutex<HashMap<String, String>>>,
+    status_path: &Arc<Mutex<Option<PathBuf>>>,
+    domain: &str,
+    status: portzero_proto::RouteStatus,
+) {
+    let snapshot = {
+        let Ok(mut map) = statuses.lock() else {
+            return;
+        };
+        map.insert(domain.to_string(), route_status_to_str(status).to_string());
+        map.clone()
+    };
+    let path = status_path.lock().ok().and_then(|g| g.clone());
+    if let Some(path) = path {
+        match serde_json::to_string(&snapshot) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    tracing::warn!("Failed to write cloud route status: {}", e);
+                }
+            }
+            Err(e) => tracing::warn!("Failed to serialize cloud route status: {}", e),
+        }
+    }
+}
+
+/// Build best-effort process metadata for a route, shown in the cloud review
+/// UI. `cwd` comes from discovery; `exe_path`/`process_name`/`argv` are looked
+/// up from the owning PID via sysinfo. Any field may be absent.
+pub fn build_route_metadata(route: &crate::route_table::Route) -> portzero_proto::RouteMetadata {
+    use crate::discovery::ServiceSource;
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    let cwd = match &route.source {
+        ServiceSource::Process { cwd: Some(cwd) } => Some(cwd.display().to_string()),
+        _ => None,
+    };
+
+    let (mut exe_path, mut process_name, mut argv) = (None, None, Vec::new());
+    let mut sys = System::new();
+    let pid = Pid::from_u32(route.pid);
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always)
+            .with_cmd(sysinfo::UpdateKind::Always),
+    );
+    if let Some(proc) = sys.process(pid) {
+        exe_path = proc.exe().map(|p| p.display().to_string());
+        process_name = Some(proc.name().to_string_lossy().into_owned());
+        argv = proc
+            .cmd()
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+    }
+
+    let hostname = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok());
+
+    portzero_proto::RouteMetadata {
+        cwd,
+        exe_path,
+        process_name,
+        argv,
+        hostname,
     }
 }
 
@@ -519,6 +695,7 @@ mod tests {
             success: true,
             error: None,
             url: Some("https://api-test.alice.portzero.cloud".to_string()),
+            status: Some(portzero_proto::RouteStatus::Published),
         };
         let result = handle_incoming(msg, &router).await.unwrap();
         assert!(result.is_none());
@@ -532,6 +709,7 @@ mod tests {
             success: false,
             error: Some("domain not authorized".to_string()),
             url: None,
+            status: None,
         };
         let result = handle_incoming(msg, &router).await.unwrap();
         assert!(result.is_none());
@@ -567,7 +745,7 @@ mod tests {
     async fn test_register_route_not_connected() {
         let conn = CloudConnector::new("tok_test".to_string());
         let result = conn
-            .register_route("api-test.alice.portzero.cloud", 8080)
+            .register_route("api-test.alice.portzero.cloud", 8080, None)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Not connected"));

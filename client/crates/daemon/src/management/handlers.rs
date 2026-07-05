@@ -172,6 +172,16 @@ fn read_route_table(state_dir: &std::path::Path) -> RouteTable {
     RouteTable::load(&state_dir.join("routes.json")).unwrap_or_default()
 }
 
+/// Read `cloud_route_status.json` (domain → review status). Empty on any error.
+fn read_cloud_route_statuses(
+    state_dir: &std::path::Path,
+) -> std::collections::HashMap<String, String> {
+    std::fs::read_to_string(state_dir.join("cloud_route_status.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 /// Read and parse `issues.json` (visibility-layer problems: duplicate overlay
 /// names, legacy listeners, Docker port conflicts, invalidly-scoped cloud
 /// tunnel domains). Returns an empty state on any error, matching `portzero
@@ -1076,6 +1086,16 @@ function domainCell(row){
   return '<div class="domain-stack">'+domain+'<code>template: '+esc(row.domain_template||row.domain)+'</code><code>materialized: '+esc(row.domain)+'</code>'+alerts+'</div>';
 }
 
+function cloudStatusBadge(status){
+  if(status==='pending_review'){
+    return '<span title="Awaiting your approval in app.portzero.cloud" style="display:inline-block;padding:1px 8px;border-radius:10px;background:#fdf3e0;color:#a9640a;font-size:12px">🔒 In Review — <a href="https://app.portzero.cloud/reviews" target="_blank" rel="noopener">approve</a></span>';
+  }
+  if(status==='denied'){
+    return '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#fde0e0;color:#b02121;font-size:12px">denied</span>';
+  }
+  return '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#e0f5e6;color:#1a7f37;font-size:12px">published</span>';
+}
+
 function renderIssue(i){
   let fixBtn='';
   if(i.needs_login) fixBtn='<a class="button" href="/login">Log in (still free)</a>';
@@ -1138,9 +1158,9 @@ function render(d){
       + ' <a href="https://app.portzero.cloud" target="_blank" rel="noopener">Upgrade</a></div>';
   }
   if(d.cloud_routes&&d.cloud_routes.length>0){
-    html+='<table><thead><tr><th>domain</th><th>substitutions</th><th>port</th><th>pid</th></tr></thead><tbody>';
+    html+='<table><thead><tr><th>domain</th><th>status</th><th>substitutions</th><th>port</th><th>pid</th></tr></thead><tbody>';
     d.cloud_routes.forEach(function(r){
-      html+='<tr><td>'+domainCell(r)+'</td><td>'+renderSubstitutions(r.substitutions)+'</td><td>'+esc(r.port)+'</td><td>'+esc(r.pid)+'</td></tr>';
+      html+='<tr><td>'+domainCell(r)+'</td><td>'+cloudStatusBadge(r.status)+'</td><td>'+renderSubstitutions(r.substitutions)+'</td><td>'+esc(r.port)+'</td><td>'+esc(r.pid)+'</td></tr>';
     });
     html+='</tbody></table>';
   } else {
@@ -1286,6 +1306,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         })
         .collect();
 
+    let cloud_route_statuses = read_cloud_route_statuses(&state.state_dir);
     let mut cloud_routes: Vec<serde_json::Value> = routes
         .routes
         .values()
@@ -1295,6 +1316,12 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
             } else {
                 &r.domain_template
             };
+            // Review status ("pending_review"/"published"/"denied"); default to
+            // "published" for local overlay routes that never carry a status.
+            let status = cloud_route_statuses
+                .get(&r.domain)
+                .map(String::as_str)
+                .unwrap_or("published");
             serde_json::json!({
                 "domain": r.domain,
                 "domain_template": domain_template,
@@ -1302,6 +1329,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
                 "alerts": substitution_alerts(domain_template, &r.substitutions),
                 "port": r.port,
                 "pid": r.pid,
+                "status": status,
             })
         })
         .collect();
