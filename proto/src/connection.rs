@@ -281,6 +281,7 @@ mod tests {
             session_id: "s".into(),
             account_id: "a".into(),
             plan: "free".into(),
+            can_use_cloud_tunnels: true,
         };
 
         let sm = ConnectionStateMachine::new();
@@ -355,6 +356,7 @@ mod tests {
             session_id: "s".into(),
             account_id: "a".into(),
             plan: "f".into(),
+            can_use_cloud_tunnels: true,
         };
         assert!(sm.validate_receive(&welcome).is_err());
     }

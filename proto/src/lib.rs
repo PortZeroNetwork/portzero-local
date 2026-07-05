@@ -86,6 +86,9 @@ pub enum ServerMessage {
         session_id: String,
         account_id: String,
         plan: String,
+        /// Whether the account can create cloud tunnels right now, considering
+        /// both its own plan and any paid team it belongs to.
+        can_use_cloud_tunnels: bool,
     },
     /// Acknowledgement of a route registration.
     RouteAck {
@@ -231,6 +234,7 @@ mod tests {
             session_id: "sess_1".into(),
             account_id: "acct_1".into(),
             plan: "pro".into(),
+            can_use_cloud_tunnels: true,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
@@ -239,10 +243,12 @@ mod tests {
                 session_id,
                 account_id,
                 plan,
+                can_use_cloud_tunnels,
             } => {
                 assert_eq!(session_id, "sess_1");
                 assert_eq!(account_id, "acct_1");
                 assert_eq!(plan, "pro");
+                assert!(can_use_cloud_tunnels);
             }
             _ => panic!("wrong variant"),
         }

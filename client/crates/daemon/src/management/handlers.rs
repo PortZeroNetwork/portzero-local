@@ -172,18 +172,25 @@ fn read_route_table(state_dir: &std::path::Path) -> RouteTable {
     RouteTable::load(&state_dir.join("routes.json")).unwrap_or_default()
 }
 
-/// Read `cloud_state.json` and extract connected + error + plan + message for upsells.
+/// Read `cloud_state.json` and extract connected + error + plan + can_use_cloud_tunnels +
+/// message for upsells.
 fn read_cloud_state(
     state_dir: &std::path::Path,
-) -> (bool, Option<String>, Option<String>, Option<String>) {
+) -> (
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<bool>,
+    Option<String>,
+) {
     let cloud_json_path = state_dir.join("cloud_state.json");
     let content = match std::fs::read_to_string(&cloud_json_path) {
         Ok(c) => c,
-        Err(_) => return (false, None, None, None),
+        Err(_) => return (false, None, None, None, None),
     };
     let v: serde_json::Value = match serde_json::from_str(&content) {
         Ok(v) => v,
-        Err(_) => return (false, None, None, None),
+        Err(_) => return (false, None, None, None, None),
     };
     let connected = v
         .get("connected")
@@ -197,11 +204,12 @@ fn read_cloud_state(
         .get("plan")
         .and_then(|p| p.as_str())
         .map(|s| s.to_string());
+    let can_use_cloud_tunnels = v.get("can_use_cloud_tunnels").and_then(|c| c.as_bool());
     let message = v
         .get("message")
         .and_then(|m| m.as_str())
         .map(|s| s.to_string());
-    (connected, error, plan, message)
+    (connected, error, plan, can_use_cloud_tunnels, message)
 }
 
 fn command_on_path(program: &str) -> bool {
@@ -694,7 +702,7 @@ pub async fn status(
 pub async fn daemon_status(State(state): State<AppState>) -> Json<DaemonStatusResponse> {
     let daemon_pid = read_daemon_pid(&state.state_dir);
     let overlay = read_overlay_state(&state.state_dir);
-    let (cloud_connected, _, _, _) = read_cloud_state(&state.state_dir);
+    let (cloud_connected, _, _, _, _) = read_cloud_state(&state.state_dir);
     let https_policy = crate::discovery_loop::DaemonConfig::load().overlay_https;
     let registration_count = state
         .store
@@ -1099,6 +1107,15 @@ function render(d){
   if(d.cloud_plan) html+=' <span style="font-size:13px">['+esc(d.cloud_plan)+']</span>';
   if(d.cloud_error) html+=' <span style="color:var(--bad);font-size:13px">- '+esc(d.cloud_error)+'</span>';
   html+='</div>';
+  if(d.auth_authenticated&&d.cloud_can_use_tunnels===false){
+    html+='<div style="margin:6px 0;padding:10px 12px;border:1px solid #e6a23c;background:#fef3e6;font-size:13px;">'
+      + '<p style="margin:0 0 8px;font-weight:700;">Upgrade to use Cloud tunnels</p>'
+      + '<p style="margin:0 0 8px;">Your account is on the free plan and isn\'t a member of any paid group, so Cloud tunnels aren\'t available yet. '
+      + '<a href="https://portzero.net/#pricing" target="_blank" rel="noopener">See pricing</a> to upgrade.</p>'
+      + '<p style="margin:0 0 8px;">Cloud tunnels are configured just like local tunnels, except <code>PZ_TUNNEL</code> has a <code>.cloud</code> domain name — then they\'re available to any internet-connected device:</p>'
+      + '<pre class="code-row" style="margin:0;"><code>PZ_TUNNEL={branch}.mytodoapp.portzero.local:80            # Local tunnel\nPZ_TUNNEL={branch}.mytodoapp.&lt;username&gt;.portzero.cloud:80 # Cloud tunnel</code></pre>'
+      + '</div>';
+  }
   if(d.cloud_message){
     html+='<div style="margin:6px 0;padding:6px 8px;border:1px solid #e6a23c;background:#fef3e6;font-size:13px;">'
       + esc(d.cloud_message)
@@ -1214,7 +1231,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
     let daemon_pid = read_daemon_pid(&state.state_dir);
     let overlay = read_overlay_state(&state.state_dir);
     let routes = read_route_table(&state.state_dir);
-    let (cloud_connected, cloud_error, cloud_plan, cloud_message) =
+    let (cloud_connected, cloud_error, cloud_plan, cloud_can_use_tunnels, cloud_message) =
         read_cloud_state(&state.state_dir);
     let auth_authenticated = crate::auth::AuthConfig::load().is_authenticated();
     let diagnostics = crate::diagnostics::load_report(&state.state_dir);
@@ -1276,6 +1293,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         "cloud_connected": cloud_connected,
         "cloud_error": cloud_error,
         "cloud_plan": cloud_plan,
+        "cloud_can_use_tunnels": cloud_can_use_tunnels,
         "cloud_message": cloud_message,
         "cloud_routes": cloud_routes,
         "management_registrations": management_registrations,

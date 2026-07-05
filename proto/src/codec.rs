@@ -76,6 +76,7 @@ mod tests {
             session_id: "sess_1".into(),
             account_id: "acct_1".into(),
             plan: "free".into(),
+            can_use_cloud_tunnels: true,
         };
         let text = encode_server(&msg).unwrap();
         let decoded = decode_server(&text).unwrap();

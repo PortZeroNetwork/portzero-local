@@ -374,8 +374,9 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         match connector.connect(domain_router.clone()).await {
             Ok(()) => {
                 let p = connector.plan();
+                let c = connector.can_use_cloud_tunnels();
                 let m = connector.status_message();
-                write_cloud_state(&config, true, None, p, m);
+                write_cloud_state(&config, true, None, p, c, m);
                 cloud = Some(connector);
             }
             Err(e) => {
@@ -384,12 +385,12 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                     "Failed to connect to cloud edge: {}. Running in local-only mode.",
                     e
                 );
-                write_cloud_state(&config, false, Some(err_msg), None, None);
+                write_cloud_state(&config, false, Some(err_msg), None, None, None);
             }
         }
     } else {
         tracing::info!("No auth token found, running in local-only mode");
-        write_cloud_state(&config, false, None, None, None);
+        write_cloud_state(&config, false, None, None, None, None);
     }
 
     let mut route_table = RouteTable::load(&config.routes_path()).unwrap_or_default();
@@ -772,7 +773,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                         Some(_) => tracing::info!("Auth token changed, will reconnect to cloud"),
                         None if had_cloud => {
                             tracing::info!("Logged out, disconnecting from cloud");
-                            write_cloud_state(&config, false, None, None, None);
+                            write_cloud_state(&config, false, None, None, None, None);
                         }
                         None => {}
                     }
@@ -866,12 +867,13 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             if let Some(ref connector) = cloud {
                 if connector.is_connected() {
                     let p = connector.plan();
+                    let c = connector.can_use_cloud_tunnels();
                     let m = connector.status_message();
                     // Only rewrite if we have something new to say (plan or message)
                     if p.is_some() || m.is_some() {
                         // Preserve previous error if any
                         let prev_err = read_cloud_error(&config);
-                        write_cloud_state(&config, true, prev_err, p, m);
+                        write_cloud_state(&config, true, prev_err, p, c, m);
                     }
                 }
             }
@@ -890,6 +892,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                             "Authentication failed. Run `portzero login` to re-authenticate."
                                 .to_string(),
                         ),
+                        None,
                         None,
                         None,
                     );
@@ -920,8 +923,9 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                             Ok(()) => {
                                 reconnect_backoff.on_success();
                                 let p = connector.plan();
+                                let c = connector.can_use_cloud_tunnels();
                                 let m = connector.status_message();
-                                write_cloud_state(&config, true, None, p, m);
+                                write_cloud_state(&config, true, None, p, c, m);
                                 for (domain, route) in &route_table.routes {
                                     if let Err(e) =
                                         connector.register_route(domain, route.port).await
@@ -939,7 +943,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                                 let err_msg = e.root_cause().to_string();
                                 tracing::warn!("Cloud connect failed: {}", e);
                                 reconnect_backoff.on_failure();
-                                write_cloud_state(&config, false, Some(err_msg), None, None);
+                                write_cloud_state(&config, false, Some(err_msg), None, None, None);
                             }
                         }
                     }
@@ -1371,6 +1375,8 @@ struct CloudStateFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     plan: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    can_use_cloud_tunnels: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
@@ -1382,12 +1388,14 @@ fn write_cloud_state(
     connected: bool,
     error: Option<String>,
     plan: Option<String>,
+    can_use_cloud_tunnels: Option<bool>,
     message: Option<String>,
 ) {
     let path = config.cloud_state_path();
     let state = CloudStateFile {
         connected,
         plan,
+        can_use_cloud_tunnels,
         error,
         message,
     };
@@ -1444,6 +1452,17 @@ pub fn read_cloud_plan(config: &DaemonConfig) -> Option<String> {
 /// Convenience path-based reader (used by diagnostics which only has state_dir).
 pub fn read_cloud_plan_from_path(state_dir: &std::path::Path) -> Option<String> {
     read_full_cloud_state_from_path(&state_dir.join("cloud_state.json")).plan
+}
+
+/// Read whether the account can create cloud tunnels right now (own plan or
+/// a paid team it belongs to), as last reported by the edge on Welcome.
+pub fn read_cloud_can_use_tunnels(config: &DaemonConfig) -> Option<bool> {
+    read_full_cloud_state(config).can_use_cloud_tunnels
+}
+
+/// Convenience path-based reader (used by diagnostics which only has state_dir).
+pub fn read_cloud_can_use_tunnels_from_path(state_dir: &std::path::Path) -> Option<bool> {
+    read_full_cloud_state_from_path(&state_dir.join("cloud_state.json")).can_use_cloud_tunnels
 }
 
 /// Read the latest user-facing status message (plan limits, upsell, etc.).
@@ -1914,7 +1933,7 @@ mod tests {
     #[test]
     fn test_cloud_state_connected() {
         let (config, _dir) = temp_config();
-        write_cloud_state(&config, true, None, None, None);
+        write_cloud_state(&config, true, None, None, None, None);
         assert_eq!(read_cloud_connected(&config), Some(true));
         assert_eq!(read_cloud_error(&config), None);
     }
@@ -1922,7 +1941,7 @@ mod tests {
     #[test]
     fn test_cloud_state_disconnected_no_error() {
         let (config, _dir) = temp_config();
-        write_cloud_state(&config, false, None, None, None);
+        write_cloud_state(&config, false, None, None, None, None);
         assert_eq!(read_cloud_connected(&config), Some(false));
         assert_eq!(read_cloud_error(&config), None);
     }
@@ -1934,6 +1953,7 @@ mod tests {
             &config,
             false,
             Some("Connection refused (os error 111)".to_string()),
+            None,
             None,
             None,
         );
@@ -1951,6 +1971,7 @@ mod tests {
             &config,
             false,
             Some(r#"error with "quotes" and \backslash"#.to_string()),
+            None,
             None,
             None,
         );
@@ -1980,10 +2001,12 @@ mod tests {
             true,
             None,
             Some("free".to_string()),
+            Some(false),
             Some("Your plan does not include cloud tunnels.".to_string()),
         );
         assert_eq!(read_cloud_connected(&config), Some(true));
         assert_eq!(read_cloud_plan(&config), Some("free".to_string()));
+        assert_eq!(read_cloud_can_use_tunnels(&config), Some(false));
         assert_eq!(
             read_cloud_message(&config),
             Some("Your plan does not include cloud tunnels.".to_string())

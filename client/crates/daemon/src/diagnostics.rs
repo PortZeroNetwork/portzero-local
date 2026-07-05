@@ -735,7 +735,8 @@ fn check_auth_token(state_dir: &Path) -> Option<Diagnostic> {
     }
 }
 
-/// Check whether the user is trying to use cloud tunnels while on a free (or unknown) plan.
+/// Check whether the user is trying to use cloud tunnels without permission — either on a
+/// free (or unknown) plan, and not a member of any team whose plan grants cloud tunnels.
 /// This produces a visible upsell prompt in `portzero status` and the web dashboard.
 fn check_cloud_plan(state_dir: &Path) -> Option<Diagnostic> {
     // Only relevant if logged in
@@ -746,13 +747,14 @@ fn check_cloud_plan(state_dir: &Path) -> Option<Diagnostic> {
     let auth = crate::auth::AuthConfig::load_from(&config_dir);
     auth.token?;
 
-    let plan = crate::discovery_loop::read_cloud_plan_from_path(state_dir);
-    let is_free_or_unknown = match plan.as_deref() {
-        Some(p) if p.eq_ignore_ascii_case("free") || p.is_empty() => true,
+    let can_use_cloud_tunnels =
+        crate::discovery_loop::read_cloud_can_use_tunnels_from_path(state_dir);
+    let lacks_permission = match can_use_cloud_tunnels {
+        Some(true) => false,
+        Some(false) => true,
         None => true, // haven't seen Welcome yet but trying cloud?
-        Some(_) => false,
     };
-    if !is_free_or_unknown {
+    if !lacks_permission {
         return None;
     }
 

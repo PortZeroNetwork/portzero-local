@@ -39,6 +39,9 @@ pub struct CloudConnector {
     /// Plan reported by the edge on Welcome (e.g. "free", "pro").
     /// Used to drive upsell prompts for non-paying users attempting cloud tunnels.
     plan: Arc<Mutex<Option<String>>>,
+    /// Whether the account can create cloud tunnels right now (own plan or a
+    /// paid team it belongs to), reported by the edge on Welcome.
+    can_use_cloud_tunnels: Arc<Mutex<Option<bool>>>,
     /// Latest user-facing status message from the edge (e.g. plan limit explanation).
     /// This is surfaced in `portzero status` and the web dashboard when present.
     status_message: Arc<Mutex<Option<String>>>,
@@ -66,6 +69,7 @@ impl CloudConnector {
             edge_url: resolve_edge_url(),
             session_id: None,
             plan: Arc::new(Mutex::new(None)),
+            can_use_cloud_tunnels: Arc::new(Mutex::new(None)),
             status_message: Arc::new(Mutex::new(None)),
             inbound_alive: Arc::new(AtomicBool::new(false)),
             auth_failed: Arc::new(AtomicBool::new(false)),
@@ -83,6 +87,7 @@ impl CloudConnector {
             edge_url,
             session_id: None,
             plan: Arc::new(Mutex::new(None)),
+            can_use_cloud_tunnels: Arc::new(Mutex::new(None)),
             status_message: Arc::new(Mutex::new(None)),
             inbound_alive: Arc::new(AtomicBool::new(false)),
             auth_failed: Arc::new(AtomicBool::new(false)),
@@ -148,6 +153,7 @@ impl CloudConnector {
         let inbound_alive = Arc::clone(&self.inbound_alive);
         let auth_failed = Arc::clone(&self.auth_failed);
         let plan_for_reader = Arc::clone(&self.plan);
+        let can_use_cloud_tunnels_for_reader = Arc::clone(&self.can_use_cloud_tunnels);
         let status_msg_for_reader = Arc::clone(&self.status_message);
         tokio::spawn(async move {
             while let Some(msg_result) = ws_stream_rx.next().await {
@@ -180,9 +186,16 @@ impl CloudConnector {
                 // Capture plan (from Welcome) and friendly upsell / plan messages for the client UI.
                 // These drive "you need a paid plan" prompts when users try *.portzero.cloud on free.
                 match &server_msg {
-                    ServerMessage::Welcome { plan, .. } => {
+                    ServerMessage::Welcome {
+                        plan,
+                        can_use_cloud_tunnels,
+                        ..
+                    } => {
                         if let Ok(mut g) = plan_for_reader.lock() {
                             *g = Some(plan.clone());
+                        }
+                        if let Ok(mut g) = can_use_cloud_tunnels_for_reader.lock() {
+                            *g = Some(*can_use_cloud_tunnels);
                         }
                         tracing::info!("Edge session established (plan: {})", plan);
                     }
@@ -326,6 +339,12 @@ impl CloudConnector {
         self.plan.lock().ok().and_then(|g| g.clone())
     }
 
+    /// Whether the account can create cloud tunnels right now (own plan or a
+    /// paid team it belongs to). None until the first Welcome is received.
+    pub fn can_use_cloud_tunnels(&self) -> Option<bool> {
+        self.can_use_cloud_tunnels.lock().ok().and_then(|g| *g)
+    }
+
     /// Latest user-facing status message (plan limits, quota, etc.).
     /// Set by the inbound reader on relevant ServerMessages.
     pub fn status_message(&self) -> Option<String> {
@@ -338,6 +357,9 @@ impl CloudConnector {
         self.tx = None;
         self.session_id = None;
         if let Ok(mut g) = self.plan.lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = self.can_use_cloud_tunnels.lock() {
             *g = None;
         }
         if let Ok(mut g) = self.status_message.lock() {
@@ -472,6 +494,7 @@ mod tests {
             session_id: "sess_123".to_string(),
             account_id: "acct_1".to_string(),
             plan: "free".to_string(),
+            can_use_cloud_tunnels: false,
         };
         let result = handle_incoming(msg, &router).await.unwrap();
         assert!(result.is_none());
