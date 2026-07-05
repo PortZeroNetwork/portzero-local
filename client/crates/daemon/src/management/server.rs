@@ -21,8 +21,8 @@ pub struct PortRegistration {
     pub local_port: u16,
     /// Full domain name to map to this port. Accepted patterns:
     /// `*.portzero.local` for local overlay-only resolution, or
-    /// `*.<username>.portzero.cloud` for a cloud-proxied tunnel domain.
-    #[schema(examples("api.alice.portzero.cloud", "myservice.portzero.local"))]
+    /// `*.<username>.tunnel.portzero.cloud` for a cloud-proxied tunnel domain.
+    #[schema(examples("api.alice.tunnel.portzero.cloud", "myservice.portzero.local"))]
     pub domain: String,
 }
 

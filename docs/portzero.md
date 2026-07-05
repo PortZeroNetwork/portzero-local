@@ -10,8 +10,8 @@ The value **must be a full domain name, including its suffix**. Nothing is ever
 appended implicitly. The daemon takes the value verbatim.
 
 ```
-PZ_TUNNEL=hello.portzero.local            # valid (local overlay)
-PZ_TUNNEL=web.alice.portzero.cloud        # valid (cloud tunnel)
+PZ_TUNNEL=hello.portzero.local                   # valid (local overlay)
+PZ_TUNNEL=web.alice.tunnel.portzero.cloud        # valid (cloud tunnel)
 PZ_TUNNEL=hello                          # NOT valid — no suffix
 ```
 
@@ -22,14 +22,14 @@ The daemon routes based purely on the **suffix** of the full domain:
 | Suffix                                            | Target                  |
 |---------------------------------------------------|-------------------------|
 | `.portzero.local` | Local tunnel |
-| `*.<username>.portzero.cloud` (incl. `foo.user.portzero.cloud`) | Cloud tunnel |
+| `*.<username>.tunnel.portzero.cloud` (incl. `foo.user.tunnel.portzero.cloud`) | Cloud tunnel |
 
 - `.portzero.local` → the process or container is given a virtual IP from `10.254.0.0/16`,
   served by scoped DNS, and proxied through the TUN + user-space stack on this
   machine. See [architecture.md](architecture.md).
-- `*.<username>.portzero.cloud` → the process or container is exposed via the
+- `*.<username>.tunnel.portzero.cloud` → the process or container is exposed via the
   Cloud tunnel (requires login). Namespaced forms like
-  `foo.team.username.portzero.cloud` are also Cloud tunnels.
+  `foo.team.username.tunnel.portzero.cloud` are also Cloud tunnels.
 
 You choose the path simply by which suffix you put in the value.
 
@@ -70,7 +70,7 @@ git context:
 
 ```
 PZ_TUNNEL=web-{branch}.portzero.local
-PZ_TUNNEL=api-{worktree}.{username}.portzero.cloud
+PZ_TUNNEL=api-{worktree}.{username}.tunnel.portzero.cloud
 ```
 
 The daemon resolves these itself from the host (for native processes from the

@@ -65,7 +65,7 @@ pub(super) fn scan_processes(
                     domain,
                     error = %e,
                     "PZ_TUNNEL value is not a valid full tunnel domain (and not .local). \
-                     Provide the full name including suffix, e.g. my-api.alice.portzero.cloud"
+                     Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
                 );
                 continue;
             }
@@ -190,7 +190,7 @@ pub(super) fn scan_processes_windows(
                 domain,
                 error = %e,
                 "PZ_TUNNEL value is not a valid full tunnel domain (and not .local). \
-                 Provide the full name including suffix, e.g. my-api.alice.portzero.cloud"
+                 Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
             );
             continue;
         }

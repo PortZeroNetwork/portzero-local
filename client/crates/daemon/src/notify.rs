@@ -89,7 +89,7 @@ impl Issue {
             Issue::LegacyListener { port, .. } => format!(
                 "Set PZ_TUNNEL on this process (e.g. \
                  PZ_TUNNEL=my-svc.portzero.local for the local overlay, or \
-                 my-svc.<user>.portzero.cloud for a cloud tunnel) and reach it by name \
+                 my-svc.<user>.tunnel.portzero.cloud for a cloud tunnel) and reach it by name \
                  instead of localhost:{port}. Until then this service bypasses the tunnel."
             ),
             Issue::DockerPortConflict { port, .. } => format!(

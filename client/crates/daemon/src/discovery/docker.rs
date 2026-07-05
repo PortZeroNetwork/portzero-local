@@ -145,7 +145,7 @@ fn inspect_container(
             domain,
             error = %e,
             "PZ_TUNNEL value on container is not a valid full tunnel domain (and not .local). \
-             Use a full name like web-mybranch.alice.portzero.cloud"
+             Use a full name like web-mybranch.alice.tunnel.portzero.cloud"
         );
         return Ok(None);
     }

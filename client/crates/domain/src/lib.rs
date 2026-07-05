@@ -1,30 +1,31 @@
 //! Domain template engine for PZ_TUNNEL support.
 //!
-//! Resolves templates like `{service}-{project}-{branch}.{username}.portzero.cloud`
+//! Resolves templates like `{service}-{project}-{branch}.{username}.tunnel.portzero.cloud`
 //! into stable DNS-safe domain names for tunnel routes.
 //!
-//! Cloud tunnel routes live under `*.<username>.portzero.cloud`. The prefix before
-//! `.<username>.portzero.cloud` may contain dots to encode namespaces
-//! (e.g. `api.team.alice.portzero.cloud`); each dot-separated segment must be
+//! Cloud tunnel routes live under `*.<username>.tunnel.portzero.cloud`. The prefix before
+//! `.<username>.tunnel.portzero.cloud` may contain dots to encode namespaces
+//! (e.g. `api.team.alice.tunnel.portzero.cloud`); each dot-separated segment must be
 //! a valid DNS label (ASCII alphanumeric + hyphens, no leading/trailing hyphens,
 //! ≤ 63 chars).
 
 use std::path::{Path, PathBuf};
 
-/// Default base domain for portzero.cloud services.
-pub const DEFAULT_BASE_DOMAIN: &str = "portzero.cloud";
+/// Default base domain for portzero.cloud tunnels. The portzero-cloud edge only
+/// accepts tunnel routes ending in this suffix.
+pub const DEFAULT_BASE_DOMAIN: &str = "tunnel.portzero.cloud";
 
 /// Default domain template used when none is specified.
 ///
-/// Produces a username-scoped hostname under `*.<username>.portzero.cloud`.
+/// Produces a username-scoped hostname under `*.<username>.tunnel.portzero.cloud`.
 /// The base domain can be overridden via `PZ_TUNNEL_BASE_DOMAIN` for local
 /// development.
-pub const DEFAULT_TEMPLATE: &str = "{service}-{project}-{branch}.{username}.portzero.cloud";
+pub const DEFAULT_TEMPLATE: &str = "{service}-{project}-{branch}.{username}.tunnel.portzero.cloud";
 
 /// Build the default domain template using the configured base domain.
 ///
 /// Reads `PZ_TUNNEL_BASE_DOMAIN` from the environment, falling back to
-/// `portzero.cloud`.
+/// `tunnel.portzero.cloud`.
 pub fn default_template() -> String {
     let base =
         std::env::var("PZ_TUNNEL_BASE_DOMAIN").unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
@@ -44,7 +45,7 @@ pub struct DomainContext {
     /// Falls back to the OS username when not logged in.
     pub uid: Option<String>,
     /// Cloud account username (e.g. "alice"). Used for namespace-aware tunnel
-    /// domains like `{service}.{username}.portzero.cloud`.
+    /// domains like `{service}.{username}.tunnel.portzero.cloud`.
     /// Falls back to `{uid}` when not available.
     pub username: Option<String>,
 }
@@ -185,16 +186,17 @@ pub fn split_tunnel_port(value: &str) -> (&str, Option<u16>) {
 /// Validate that `domain` is a legal cloud tunnel subdomain.
 ///
 /// Rules:
-/// - Must end with `.portzero.cloud` (or the configured base domain).
+/// - Must end with `.tunnel.portzero.cloud` (or the configured base domain).
 /// - Must include a username scope, so at least two labels must appear before
-///   the base domain (e.g. `api.alice.portzero.cloud`).
-/// - The prefix before `.<username>.portzero.cloud` may contain dots to encode
-///   namespaces (e.g. `api.team.alice.portzero.cloud`).
+///   the base domain (e.g. `api.alice.tunnel.portzero.cloud`).
+/// - The prefix before `.<username>.tunnel.portzero.cloud` may contain dots to
+///   encode namespaces (e.g. `api.team.alice.tunnel.portzero.cloud`).
 /// - Each dot-separated segment must be a valid DNS label: non-empty, ≤ 63
 ///   characters, ASCII alphanumeric or hyphens, no leading/trailing hyphens.
-/// - Bare base domains like `portzero.cloud` or `alice.portzero.cloud` are rejected.
+/// - Bare base domains like `tunnel.portzero.cloud` or `alice.tunnel.portzero.cloud`
+///   are rejected.
 ///
-/// The expected base domain (e.g. `portzero.cloud`) is derived from
+/// The expected base domain (e.g. `tunnel.portzero.cloud`) is derived from
 /// `PZ_TUNNEL_BASE_DOMAIN`.
 pub fn validate_tunnel_domain(domain: &str) -> Result<(), String> {
     let base =
@@ -496,8 +498,8 @@ mod tests {
         };
 
         let result =
-            ctx.resolve("{service}-{project}-{branch}-{user}-{uid}.{username}.portzero.cloud");
-        assert_eq!(result, "api-myapp-main-alice-abc12345.alice.portzero.cloud");
+            ctx.resolve("{service}-{project}-{branch}-{user}-{uid}.{username}.tunnel.portzero.cloud");
+        assert_eq!(result, "api-myapp-main-alice-abc12345.alice.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -513,8 +515,8 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}-{uid}.{username}.portzero.cloud");
-        assert_eq!(result, "web-bob.bob.portzero.cloud");
+        let result = ctx.resolve("{service}-{uid}.{username}.tunnel.portzero.cloud");
+        assert_eq!(result, "web-bob.bob.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -530,8 +532,8 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}-{worktree}.{username}.portzero.cloud");
-        assert_eq!(result, "web-main.bob.portzero.cloud");
+        let result = ctx.resolve("{service}-{worktree}.{username}.tunnel.portzero.cloud");
+        assert_eq!(result, "web-main.bob.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -567,8 +569,8 @@ mod tests {
             username: Some("alice".to_string()),
         };
 
-        let result = ctx.resolve("{service}.{username}.portzero.cloud");
-        assert_eq!(result, "api.alice.portzero.cloud");
+        let result = ctx.resolve("{service}.{username}.tunnel.portzero.cloud");
+        assert_eq!(result, "api.alice.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -584,8 +586,8 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}.{username}.portzero.cloud");
-        assert_eq!(result, "api.abc12345.portzero.cloud");
+        let result = ctx.resolve("{service}.{username}.tunnel.portzero.cloud");
+        assert_eq!(result, "api.abc12345.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -601,8 +603,8 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}.{username}.portzero.cloud");
-        assert_eq!(result, "api.osuser.portzero.cloud");
+        let result = ctx.resolve("{service}.{username}.tunnel.portzero.cloud");
+        assert_eq!(result, "api.osuser.tunnel.portzero.cloud");
     }
 
     #[test]
@@ -625,17 +627,17 @@ mod tests {
 
     #[test]
     fn test_validate_tunnel_domain_valid() {
-        assert!(validate_tunnel_domain("myapp.alice.portzero.cloud").is_ok());
-        assert!(validate_tunnel_domain("api-myapp-main.alice.portzero.cloud").is_ok());
-        assert!(validate_tunnel_domain("a.b.portzero.cloud").is_ok());
-        assert!(validate_tunnel_domain("api.alice.portzero.cloud").is_ok());
-        assert!(validate_tunnel_domain("my-api.alice.portzero.cloud").is_ok());
-        assert!(validate_tunnel_domain("svc.team-name.alice.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("myapp.alice.tunnel.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("api-myapp-main.alice.tunnel.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("a.b.tunnel.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("api.alice.tunnel.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("my-api.alice.tunnel.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("svc.team-name.alice.tunnel.portzero.cloud").is_ok());
     }
 
     #[test]
     fn test_validate_tunnel_domain_reserved_bare() {
-        let err = validate_tunnel_domain("portzero.cloud").unwrap_err();
+        let err = validate_tunnel_domain("tunnel.portzero.cloud").unwrap_err();
         assert!(
             err.contains("reserved"),
             "Expected reserved error, got: {err}"
@@ -644,36 +646,36 @@ mod tests {
 
     #[test]
     fn test_validate_tunnel_domain_missing_username_scope() {
-        let err = validate_tunnel_domain("myapp.portzero.cloud").unwrap_err();
-        assert!(err.contains("*.<username>.portzero.cloud"), "got: {err}");
+        let err = validate_tunnel_domain("myapp.tunnel.portzero.cloud").unwrap_err();
+        assert!(err.contains("*.<username>.tunnel.portzero.cloud"), "got: {err}");
     }
 
     #[test]
     fn test_validate_tunnel_domain_multi_label_valid() {
-        assert!(validate_tunnel_domain("api.myapp.alice.portzero.cloud").is_ok());
+        assert!(validate_tunnel_domain("api.myapp.alice.tunnel.portzero.cloud").is_ok());
     }
 
     #[test]
     fn test_validate_tunnel_domain_multi_label_invalid_segment() {
-        assert!(validate_tunnel_domain("api._bad.alice.portzero.cloud").is_err());
-        assert!(validate_tunnel_domain("api..alice.portzero.cloud").is_err());
+        assert!(validate_tunnel_domain("api._bad.alice.tunnel.portzero.cloud").is_err());
+        assert!(validate_tunnel_domain("api..alice.tunnel.portzero.cloud").is_err());
     }
 
     #[test]
     fn test_validate_tunnel_domain_hyphen_edges() {
-        assert!(validate_tunnel_domain("-bad.alice.portzero.cloud").is_err());
-        assert!(validate_tunnel_domain("bad-.alice.portzero.cloud").is_err());
+        assert!(validate_tunnel_domain("-bad.alice.tunnel.portzero.cloud").is_err());
+        assert!(validate_tunnel_domain("bad-.alice.tunnel.portzero.cloud").is_err());
     }
 
     #[test]
     fn test_validate_tunnel_domain_invalid_chars() {
-        assert!(validate_tunnel_domain("my_app.alice.portzero.cloud").is_err());
-        assert!(validate_tunnel_domain("my app.alice.portzero.cloud").is_err());
+        assert!(validate_tunnel_domain("my_app.alice.tunnel.portzero.cloud").is_err());
+        assert!(validate_tunnel_domain("my app.alice.tunnel.portzero.cloud").is_err());
     }
 
     #[test]
     fn test_validate_tunnel_domain_label_too_long() {
-        let long = format!("{}.alice.portzero.cloud", "a".repeat(64));
+        let long = format!("{}.alice.tunnel.portzero.cloud", "a".repeat(64));
         assert!(validate_tunnel_domain(&long).is_err());
     }
 
@@ -718,8 +720,8 @@ mod tests {
     #[test]
     fn test_split_tunnel_port_cloud_domain() {
         assert_eq!(
-            split_tunnel_port("api.alice.portzero.cloud:8080"),
-            ("api.alice.portzero.cloud", Some(8080))
+            split_tunnel_port("api.alice.tunnel.portzero.cloud:8080"),
+            ("api.alice.tunnel.portzero.cloud", Some(8080))
         );
     }
 

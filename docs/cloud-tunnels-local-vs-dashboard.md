@@ -1,6 +1,6 @@
 # Cloud tunnels in the local UI vs app.portzero.cloud
 
-**Audience:** Developers who set `PZ_TUNNEL` to a `*.portzero.cloud` domain, run the Port Zero daemon, and compare the Cloud tunnels section in the local management page against the dashboard at https://app.portzero.cloud.
+**Audience:** Developers who set `PZ_TUNNEL` to a `*.tunnel.portzero.cloud` domain, run the Port Zero daemon, and compare the Cloud tunnels section in the local management page against the dashboard at https://app.portzero.cloud.
 
 ## The lists and counts do not match
 
@@ -36,7 +36,7 @@ It also labels individual routes Online, Idle, or Offline using the same freshne
 3. In another terminal, run a service with a cloud domain (use your real username):
 
    ```bash
-   PZ_TUNNEL=debug-$(whoami).portzero.cloud python -m http.server 0
+   PZ_TUNNEL=debug-$(whoami).tunnel.portzero.cloud python -m http.server 0
    ```
 
 4. Open http://portzero.local (or the exact URL the daemon printed).
@@ -48,7 +48,7 @@ You will usually see the domain appear in both places within a few seconds, but 
 ## What happens step by step
 
 1. The daemon scans processes and containers for the `PZ_TUNNEL` environment variable.
-2. It sees a name ending in `.portzero.cloud`, classifies it as a cloud route (not a `.portzero.local` overlay route), and writes an entry to `~/.portzero/daemon/routes.json`.
+2. It sees a name ending in `.tunnel.portzero.cloud`, classifies it as a cloud route (not a `.portzero.local` overlay route), and writes an entry to `~/.portzero/daemon/routes.json`.
 3. The daemon connects (or re-uses) its WebSocket to the cloud edge and sends a `RegisterRoute` message.
 4. The edge forwards the registration to the control plane API. The API validates namespace and plan limits, then upserts a row in the database and sets `last_seen_at` to the current time.
 5. The local UI reads the local JSON files and shows the route under "Cloud tunnels" with the overall connection state.
@@ -96,7 +96,7 @@ There is no "offline tunnel" record by design. If you see a stale row on the web
 - The local cloud tunnels list is not the list of things the internet can reach right now.
 - last_seen is not a "last connected" timestamp. It is a "last registered or last saw HTTP traffic" timestamp.
 - Local "connected" means this daemon's WebSocket to the edge is up. It does not mean every route in the local list has been accepted by the cloud.
-- The suffix decides the path: `.portzero.cloud` goes through the cloud edge and appears in both places; `.portzero.local` stays local only.
+- The suffix decides the path: `.tunnel.portzero.cloud` goes through the cloud edge and appears in both places; `.portzero.local` stays local only.
 
 ## Files
 

@@ -789,7 +789,7 @@ fn check_cloud_plan(state_dir: &Path) -> Option<Diagnostic> {
         category: "auth".into(),
         title: "Cloud tunnels require a paid plan".to_string(),
         detail:
-            "You are using *.portzero.cloud domains but your current plan does not include them. \
+            "You are using *.tunnel.portzero.cloud domains but your current plan does not include them. \
                  Local .portzero.local tunnels continue to work for free."
                 .to_string(),
         fix: Some(Fix {

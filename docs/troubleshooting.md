@@ -24,7 +24,7 @@ reads the frozen `execve()` environment (`/proc/<pid>/environ` on Linux,
 - Verify before launching: `echo $PZ_TUNNEL`.
 - Use direnv or `portzero-exec` so it is exported before exec.
 - Confirm the value is a **full domain** with a recognized suffix
-  (`.portzero.local` or `*.<username>.portzero.cloud`); nothing is appended implicitly.
+  (`.portzero.local` or `*.<username>.tunnel.portzero.cloud`); nothing is appended implicitly.
 
 ## The literal `{branch}` appears in `status`
 
@@ -39,7 +39,7 @@ those fails the placeholder is left literal. See
 The **suffix** decides the target, not any flag:
 
 - `.portzero.local` → local overlay
-- `*.<username>.portzero.cloud` → cloud tunnel
+- `*.<username>.tunnel.portzero.cloud` → cloud tunnel
 
 Double-check the suffix in your `PZ_TUNNEL` value.
 

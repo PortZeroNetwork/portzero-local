@@ -25,7 +25,7 @@ Port Zero runs a background process on your local dev machine that scans for pro
 3. Create a virtual DNS record for that virtual IP address, based on the template specified in `PZ_TUNNEL`
 4. Forward the port specified in `PZ_TUNNEL` on the virtual IP address to the randomly-assigned port on the actual process or Docker container
 
-Cloud tunnels (using `*.portzero.cloud`) are also supported via the same `PZ_TUNNEL` mechanism (requires login and a subscription).
+Cloud tunnels (using `*.tunnel.portzero.cloud`) are also supported via the same `PZ_TUNNEL` mechanism (requires login and a subscription).
 
 ## Documentation
 

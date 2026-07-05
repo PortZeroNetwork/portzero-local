@@ -15,7 +15,7 @@ use crate::discovery::{DiscoveredService, PortMapping, ServiceSource};
 /// A single route entry: domain -> local endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Route {
-    /// The full PZ_TUNNEL value (e.g. "api-myapp-main.alice.portzero.cloud").
+    /// The full PZ_TUNNEL value (e.g. "api-myapp-main.alice.tunnel.portzero.cloud").
     pub domain: String,
     /// Original PZ_TUNNEL domain value before template substitution.
     #[serde(default)]

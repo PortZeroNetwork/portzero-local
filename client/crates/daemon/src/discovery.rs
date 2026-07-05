@@ -4,13 +4,13 @@
 //! substitution). No implicit suffixes are added.
 //!
 //! - If it ends with `.portzero.local` (or `.local`) → local virtual overlay.
-//! - Otherwise it must be a valid tunnel domain ending in `.portzero.cloud`
-//!   (or the configured base), under a username scope like `api.alice.portzero.cloud`.
+//! - Otherwise it must be a valid tunnel domain ending in `.tunnel.portzero.cloud`
+//!   (or the configured base), under a username scope like `api.alice.tunnel.portzero.cloud`.
 //!
 //! Examples (full names required):
-//!   PZ_TUNNEL=my-api.alice.portzero.cloud
+//!   PZ_TUNNEL=my-api.alice.tunnel.portzero.cloud
 //!   PZ_TUNNEL=my-db-{branch}.portzero.local
-//!   PZ_TUNNEL=web-{branch}.{username}.portzero.cloud
+//!   PZ_TUNNEL=web-{branch}.{username}.tunnel.portzero.cloud
 //!
 //! Cross-platform support:
 //! - Linux: full (reads /proc/<pid>/environ and /proc/<pid>/fd for inode-based port scoping)
@@ -63,7 +63,7 @@ use process::{
 ///
 /// The value (after substitution) must be a full domain name:
 /// - `*.portzero.local` → local overlay
-/// - `*.<username>.portzero.cloud` (or configured base) → cloud tunnel
+/// - `*.<username>.tunnel.portzero.cloud` (or configured base) → cloud tunnel
 ///
 /// No implicit suffix is ever appended.
 const ENV_VAR_NAME: &str = "PZ_TUNNEL";

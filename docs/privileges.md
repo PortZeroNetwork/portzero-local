@@ -119,7 +119,7 @@ and keeps running. Concretely:
   embedded DNS server still runs, just isn't wired into the OS resolver.
 - Route install fails → logged, non-fatal.
 
-Cloud tunnels (`*.<username>.portzero.cloud`) and process/container **discovery** still
+Cloud tunnels (`*.<username>.tunnel.portzero.cloud`) and process/container **discovery** still
 work without root; only the local overlay data path needs it.
 
 ## Consequence: `.portzero.local` visibility

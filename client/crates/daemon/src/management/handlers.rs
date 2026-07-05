@@ -525,8 +525,8 @@ fn management_registrations_json(
         content = RegisterRequest,
         example = json!({
             "ports": [
-                {"local_port": 8080, "domain": "api.alice.portzero.cloud"},
-                {"local_port": 9090, "domain": "metrics.alice.portzero.cloud"}
+                {"local_port": 8080, "domain": "api.alice.tunnel.portzero.cloud"},
+                {"local_port": 9090, "domain": "metrics.alice.tunnel.portzero.cloud"}
             ]
         })
     ),
@@ -637,8 +637,8 @@ pub async fn deregister(
             example = json!({
                 "pid": 12345,
                 "ports": [
-                    {"local_port": 8080, "domain": "api.alice.portzero.cloud"},
-                    {"local_port": 9090, "domain": "metrics.alice.portzero.cloud"}
+                    {"local_port": 8080, "domain": "api.alice.tunnel.portzero.cloud"},
+                    {"local_port": 9090, "domain": "metrics.alice.tunnel.portzero.cloud"}
                 ]
             })),
         (status = 404, description = "No registrations found for this process", body = ErrorResponse,

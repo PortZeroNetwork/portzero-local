@@ -14,7 +14,7 @@ Port Zero is a developer tool that solves this problem once and for all. Port Ze
 Either way, you use Port Zero with your programs the same, whether they are a process or a Docker container. Configure all ports to 0 for any program you want Port Zero to manage; this tells the operating system to pick an available port at random. Then you start your programs with the `PZ_TUNNEL` environment variable. For example:
 
 - If you specify `PZ_TUNNEL={branch}.mytodoapp.portzero.local:80`, that is a Local tunnel
-- If you specify `PZ_TUNNEL={branch}.mytodoapp.<username>.portzero.cloud:80`, that is a Cloud tunnel
+- If you specify `PZ_TUNNEL={branch}.mytodoapp.<username>.tunnel.portzero.cloud:80`, that is a Cloud tunnel
 
 The `PZ_TUNNEL` setting tells PortZero the domain name and port that clients should use.
 
@@ -34,7 +34,7 @@ Homebrew maps `PortZeroNetwork/portzero` to the GitHub tap repository
 
 ## How does this work?
 
-Port Zero runs a background process on your local dev machine that scans for processes and Docker containers with the special `PZ_TUNNEL` environment variable. If `PZ_TUNNEL` ends in `<username>.portzero.cloud`, Port Zero opens a Cloud tunnel to `portzero.cloud` under that username-scoped subtree. If on the other hand the `PZ_TUNNEL` contains `portzero.local`, Port Zero opens a Local tunnel and does four things:
+Port Zero runs a background process on your local dev machine that scans for processes and Docker containers with the special `PZ_TUNNEL` environment variable. If `PZ_TUNNEL` ends in `<username>.tunnel.portzero.cloud`, Port Zero opens a Cloud tunnel to `portzero.cloud` under that username-scoped subtree. If on the other hand the `PZ_TUNNEL` contains `portzero.local`, Port Zero opens a Local tunnel and does four things:
 
 1. Create a virtual network interface card (NIC) on your local machine if Port Zero has not already done so
 2. Create a virtual IP address in this virtual NIC for that process
@@ -44,7 +44,7 @@ Port Zero runs a background process on your local dev machine that scans for pro
 ## Licensing
 
 - **Port Zero Local** (tunnels using `*.portzero.local`): governed by the [PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0). See the [LICENSE](LICENSE) file. Required notice: Copyright Loum Technologies (https://loumtechnologies.com).
-- **Port Zero Cloud** features (tunnels using `portzero.cloud`): governed by the [Terms of Service](https://portzero.net/terms).
+- **Port Zero Cloud** features (tunnels using `tunnel.portzero.cloud`): governed by the [Terms of Service](https://portzero.net/terms).
 
 By installing or using the software you agree to the terms applicable to the features you use.
 
