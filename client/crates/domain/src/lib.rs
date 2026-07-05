@@ -1,13 +1,29 @@
 //! Domain template engine for PZ_TUNNEL support.
 //!
-//! Resolves templates like `{service}-{project}-{branch}.{username}.tunnel.portzero.cloud`
+//! Resolves templates like `{service}-{project}-{branch}.{cloud-username}.tunnel.portzero.cloud`
 //! into stable DNS-safe domain names for tunnel routes.
 //!
-//! Cloud tunnel routes live under `*.<username>.tunnel.portzero.cloud`. The prefix before
-//! `.<username>.tunnel.portzero.cloud` may contain dots to encode namespaces
-//! (e.g. `api.team.alice.tunnel.portzero.cloud`); each dot-separated segment must be
-//! a valid DNS label (ASCII alphanumeric + hyphens, no leading/trailing hyphens,
-//! ≤ 63 chars).
+//! There are two distinct username placeholders, and they are never
+//! interchangeable:
+//!
+//! - `{local-username}` — the OS login username. Always available, and never
+//!   changes based on whether you are logged in to Port Zero Cloud. Using it
+//!   in a `.local` tunnel template lets you scope a tunnel name per-machine
+//!   without that name shifting the moment you run `portzero login`.
+//! - `{cloud-username}` — the Port Zero Cloud account username. Only
+//!   available when logged in. Cloud tunnel routes live under
+//!   `*.<cloud-username>.tunnel.portzero.cloud`.
+//!
+//! `{local-username}` must never be used in a cloud tunnel template — cloud
+//! tunnels are already scoped by `{cloud-username}`, and allowing the OS
+//! username in as well would break the orthogonality between `.local` and
+//! `.cloud` tunnel names. `{cloud-username}` may be used in a `.local`
+//! template, but requires being logged in to resolve.
+//!
+//! The prefix before `.<cloud-username>.tunnel.portzero.cloud` may contain
+//! dots to encode namespaces (e.g. `api.team.alice.tunnel.portzero.cloud`);
+//! each dot-separated segment must be a valid DNS label (ASCII alphanumeric +
+//! hyphens, no leading/trailing hyphens, ≤ 63 chars).
 
 use std::path::{Path, PathBuf};
 
@@ -17,10 +33,11 @@ pub const DEFAULT_BASE_DOMAIN: &str = "tunnel.portzero.cloud";
 
 /// Default domain template used when none is specified.
 ///
-/// Produces a username-scoped hostname under `*.<username>.tunnel.portzero.cloud`.
-/// The base domain can be overridden via `PZ_TUNNEL_BASE_DOMAIN` for local
-/// development.
-pub const DEFAULT_TEMPLATE: &str = "{service}-{project}-{branch}.{username}.tunnel.portzero.cloud";
+/// Produces a cloud-username-scoped hostname under
+/// `*.<cloud-username>.tunnel.portzero.cloud`. The base domain can be
+/// overridden via `PZ_TUNNEL_BASE_DOMAIN` for local development.
+pub const DEFAULT_TEMPLATE: &str =
+    "{service}-{project}-{branch}.{cloud-username}.tunnel.portzero.cloud";
 
 /// Build the default domain template using the configured base domain.
 ///
@@ -29,7 +46,7 @@ pub const DEFAULT_TEMPLATE: &str = "{service}-{project}-{branch}.{username}.tunn
 pub fn default_template() -> String {
     let base =
         std::env::var("PZ_TUNNEL_BASE_DOMAIN").unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
-    format!("{{service}}-{{project}}-{{branch}}.{{username}}.{base}")
+    format!("{{service}}-{{project}}-{{branch}}.{{cloud-username}}.{base}")
 }
 
 /// Context for resolving PZ_TUNNEL templates.
@@ -44,9 +61,15 @@ pub struct DomainContext {
     /// Short account identifier (first 8 chars of account UUID).
     /// Falls back to the OS username when not logged in.
     pub uid: Option<String>,
-    /// Cloud account username (e.g. "alice"). Used for namespace-aware tunnel
-    /// domains like `{service}.{username}.tunnel.portzero.cloud`.
-    /// Falls back to `{uid}` when not available.
+    /// Cloud account username (e.g. "alice"). Used for `{cloud-username}` in
+    /// namespace-aware tunnel domains like
+    /// `{service}.{cloud-username}.tunnel.portzero.cloud`.
+    ///
+    /// `None` when not logged in. Unlike the old unified `{username}`
+    /// placeholder, this deliberately has no fallback — resolving
+    /// `{cloud-username}` without an account would silently change a tunnel's
+    /// identity depending on login state, which is exactly what the
+    /// `{local-username}`/`{cloud-username}` split exists to prevent.
     pub username: Option<String>,
 }
 
@@ -56,7 +79,7 @@ impl DomainContext {
     /// - `service_name`: compose service name or directory name
     /// - `project_dir`: path to the project root (git repo root)
     /// - `account_id`: authenticated account UUID (used for `{uid}`)
-    /// - `username`: cloud account username (used for `{username}`)
+    /// - `username`: cloud account username (used for `{cloud-username}`)
     ///
     /// Branch and worktree detection failures are silently treated as
     /// "unknown" so the daemon keeps running even outside a git repo.
@@ -135,11 +158,19 @@ impl DomainContext {
     /// All values are DNS-sanitized before substitution.
     ///
     /// Supported variables: `{service}`, `{project}`, `{branch}`, `{worktree}`,
-    /// `{user}`, `{machine}`, `{uid}`, `{username}`.
+    /// `{user}`, `{machine}`, `{uid}`, `{local-username}`, `{cloud-username}`.
+    ///
+    /// `{local-username}` always resolves to the OS username and never
+    /// changes based on login state. `{cloud-username}` resolves to the
+    /// logged-in cloud account username, or an empty string when not logged
+    /// in — callers should validate placeholder usage with
+    /// [`validate_username_placeholders`] before resolving so that misuse
+    /// (or a missing login) surfaces as a diagnostic instead of a silently
+    /// broken domain.
     pub fn resolve(&self, template: &str) -> String {
         let worktree_value = self.worktree.as_deref().unwrap_or(&self.branch);
         let uid_value = self.uid.as_deref().unwrap_or(&self.user);
-        let username_value = self.username.as_deref().unwrap_or(uid_value);
+        let cloud_username_value = self.username.as_deref().unwrap_or("");
 
         template
             .replace("{service}", &sanitize_for_dns(&self.service))
@@ -149,8 +180,49 @@ impl DomainContext {
             .replace("{user}", &sanitize_for_dns(&self.user))
             .replace("{machine}", &sanitize_for_dns(&self.machine))
             .replace("{uid}", &sanitize_for_dns(uid_value))
-            .replace("{username}", &sanitize_for_dns(username_value))
+            .replace("{local-username}", &sanitize_for_dns(&self.user))
+            .replace("{cloud-username}", &sanitize_for_dns(cloud_username_value))
     }
+}
+
+/// Validate that `{local-username}`/`{cloud-username}` are used correctly for
+/// the kind of tunnel `template` targets.
+///
+/// - `{local-username}` is reserved for `.local` tunnels. Using it in a cloud
+///   tunnel template would tie the cloud tunnel's name to this machine's OS
+///   username, breaking the orthogonality between `.local` and `.cloud`
+///   tunnel names — this is always an error, regardless of login state.
+/// - `{cloud-username}` may be used in a `.local` template, but needs an
+///   authenticated account to resolve. Note that logging in is only required
+///   to resolve the *value*: the `.local` tunnel itself remains free either
+///   way — all local tunnels are free, always.
+///
+/// `is_local` should reflect the template's suffix (`.portzero.local` vs.
+/// `*.tunnel.portzero.cloud`), which callers can determine before resolving
+/// since the suffix is literal text, never templated.
+pub fn validate_username_placeholders(
+    template: &str,
+    is_local: bool,
+    logged_in: bool,
+) -> Result<(), String> {
+    if !is_local && template.contains("{local-username}") {
+        return Err(format!(
+            "'{template}' uses {{local-username}} in a cloud tunnel domain — \
+             {{local-username}} is reserved for .local tunnels, so that a .local tunnel's \
+             name never changes when you run `portzero login`. Use {{cloud-username}} instead."
+        ));
+    }
+
+    if is_local && template.contains("{cloud-username}") && !logged_in {
+        return Err(format!(
+            "'{template}' uses {{cloud-username}}, which requires being logged in to resolve. \
+             Run `portzero login` to fix this. Note: this is a .local tunnel, and local tunnels \
+             are always free — logging in is only needed here to resolve {{cloud-username}}, not \
+             because this tunnel will be billed."
+        ));
+    }
+
+    Ok(())
 }
 
 /// Split an optional trailing `:<port>` off a raw `PZ_TUNNEL` value.
@@ -187,9 +259,9 @@ pub fn split_tunnel_port(value: &str) -> (&str, Option<u16>) {
 ///
 /// Rules:
 /// - Must end with `.tunnel.portzero.cloud` (or the configured base domain).
-/// - Must include a username scope, so at least two labels must appear before
-///   the base domain (e.g. `api.alice.tunnel.portzero.cloud`).
-/// - The prefix before `.<username>.tunnel.portzero.cloud` may contain dots to
+/// - Must include a cloud username scope, so at least two labels must appear
+///   before the base domain (e.g. `api.alice.tunnel.portzero.cloud`).
+/// - The prefix before `.<cloud-username>.tunnel.portzero.cloud` may contain dots to
 ///   encode namespaces (e.g. `api.team.alice.tunnel.portzero.cloud`).
 /// - Each dot-separated segment must be a valid DNS label: non-empty, ≤ 63
 ///   characters, ASCII alphanumeric or hyphens, no leading/trailing hyphens.
@@ -212,8 +284,8 @@ pub fn validate_tunnel_domain(domain: &str) -> Result<(), String> {
     let scoped = domain.strip_suffix(&suffix).ok_or_else(|| {
         format!(
             "'{domain}' is not a valid cloud tunnel domain: it must end with '.{base}' and be \
-             scoped to your username, e.g. 'myservice.<username>.{base}'. \
-             Run `portzero whoami` to find your username."
+             scoped to your cloud username, e.g. 'myservice.<cloud-username>.{base}'. \
+             Run `portzero whoami` to find your cloud username."
         )
     })?;
 
@@ -226,9 +298,10 @@ pub fn validate_tunnel_domain(domain: &str) -> Result<(), String> {
     let mut segments: Vec<&str> = scoped.split('.').collect();
     if segments.len() < 2 {
         return Err(format!(
-            "'{domain}' is missing the username scope — cloud tunnel domains must be under \
-             '*.<username>.{base}' (e.g. '{scoped}.<username>.{base}'). \
-             Run `portzero whoami` to find your username."
+            "'{domain}' is missing the cloud username scope — cloud tunnel domains must be under \
+             '*.<cloud-username>.{base}' (e.g. '{scoped}.<cloud-username>.{base}'). \
+             Run `portzero whoami` to find your cloud username, or `portzero login` if you are \
+             not logged in yet."
         ));
     }
 
@@ -500,12 +573,16 @@ mod tests {
             user: "alice".to_string(),
             machine: "dev-box".to_string(),
             uid: Some("abc12345".to_string()),
-            username: Some("alice".to_string()),
+            username: Some("alice-cloud".to_string()),
         };
 
-        let result =
-            ctx.resolve("{service}-{project}-{branch}-{user}-{uid}.{username}.tunnel.portzero.cloud");
-        assert_eq!(result, "api-myapp-main-alice-abc12345.alice.tunnel.portzero.cloud");
+        let result = ctx.resolve(
+            "{service}-{project}-{branch}-{user}-{uid}.{cloud-username}.tunnel.portzero.cloud",
+        );
+        assert_eq!(
+            result,
+            "api-myapp-main-alice-abc12345.alice-cloud.tunnel.portzero.cloud"
+        );
     }
 
     #[test]
@@ -521,7 +598,7 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}-{uid}.{username}.tunnel.portzero.cloud");
+        let result = ctx.resolve("{service}-{uid}.{local-username}.tunnel.portzero.cloud");
         assert_eq!(result, "web-bob.bob.tunnel.portzero.cloud");
     }
 
@@ -538,7 +615,7 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}-{worktree}.{username}.tunnel.portzero.cloud");
+        let result = ctx.resolve("{service}-{worktree}.{local-username}.tunnel.portzero.cloud");
         assert_eq!(result, "web-main.bob.tunnel.portzero.cloud");
     }
 
@@ -555,7 +632,7 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}-{project}-{branch}-{user}.{username}.example.com");
+        let result = ctx.resolve("{service}-{project}-{branch}-{user}.{local-username}.example.com");
         assert_eq!(
             result,
             "my-api-my-app-feat-long-branch-alice-b.alice-b.example.com"
@@ -563,7 +640,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_username_template() {
+    fn test_resolve_local_username_ignores_login_state() {
         let ctx = DomainContext {
             service: "api".to_string(),
             project: "proj".to_string(),
@@ -575,12 +652,14 @@ mod tests {
             username: Some("alice".to_string()),
         };
 
-        let result = ctx.resolve("{service}.{username}.tunnel.portzero.cloud");
-        assert_eq!(result, "api.alice.tunnel.portzero.cloud");
+        // {local-username} always resolves to the OS user, regardless of
+        // whether a cloud account is logged in.
+        let result = ctx.resolve("{service}.{local-username}.portzero.local");
+        assert_eq!(result, "api.osuser.portzero.local");
     }
 
     #[test]
-    fn test_resolve_username_falls_back_to_uid() {
+    fn test_resolve_cloud_username_template() {
         let ctx = DomainContext {
             service: "api".to_string(),
             project: "proj".to_string(),
@@ -589,15 +668,15 @@ mod tests {
             user: "osuser".to_string(),
             machine: "laptop".to_string(),
             uid: Some("abc12345".to_string()),
-            username: None,
+            username: Some("alice".to_string()),
         };
 
-        let result = ctx.resolve("{service}.{username}.tunnel.portzero.cloud");
-        assert_eq!(result, "api.abc12345.tunnel.portzero.cloud");
+        let result = ctx.resolve("{service}.{cloud-username}.tunnel.portzero.cloud");
+        assert_eq!(result, "api.alice.tunnel.portzero.cloud");
     }
 
     #[test]
-    fn test_resolve_username_falls_back_to_user_when_no_uid() {
+    fn test_resolve_cloud_username_empty_when_not_logged_in() {
         let ctx = DomainContext {
             service: "api".to_string(),
             project: "proj".to_string(),
@@ -609,8 +688,67 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}.{username}.tunnel.portzero.cloud");
-        assert_eq!(result, "api.osuser.tunnel.portzero.cloud");
+        // No silent fallback to {uid}/{user} — an unresolved {cloud-username}
+        // must surface as a diagnostic, not a mystery domain.
+        let result = ctx.resolve("{service}.{cloud-username}.tunnel.portzero.cloud");
+        assert_eq!(result, "api..tunnel.portzero.cloud");
+    }
+
+    // -------------------------------------------------------------------------
+    // validate_username_placeholders tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_username_placeholders_local_username_in_cloud_template_errors() {
+        let err = validate_username_placeholders(
+            "web.{local-username}.tunnel.portzero.cloud",
+            false,
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("{local-username}"), "got: {err}");
+        assert!(err.contains("cloud tunnel"), "got: {err}");
+    }
+
+    #[test]
+    fn test_validate_username_placeholders_local_username_in_local_template_ok() {
+        assert!(
+            validate_username_placeholders("web.{local-username}.portzero.local", true, false)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_username_placeholders_cloud_username_in_local_template_requires_login() {
+        let err =
+            validate_username_placeholders("web.{cloud-username}.portzero.local", true, false)
+                .unwrap_err();
+        assert!(err.contains("logged in"), "got: {err}");
+        assert!(
+            err.contains("free"),
+            "diagnostic must clarify local tunnels stay free, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_username_placeholders_cloud_username_in_local_template_ok_when_logged_in() {
+        assert!(
+            validate_username_placeholders("web.{cloud-username}.portzero.local", true, true)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_username_placeholders_cloud_username_in_cloud_template_ok() {
+        // Cloud templates already require login structurally (an unresolved
+        // {cloud-username} fails validate_tunnel_domain), so this helper
+        // doesn't need to special-case it.
+        assert!(validate_username_placeholders(
+            "web.{cloud-username}.tunnel.portzero.cloud",
+            false,
+            false
+        )
+        .is_ok());
     }
 
     #[test]
@@ -653,7 +791,10 @@ mod tests {
     #[test]
     fn test_validate_tunnel_domain_missing_username_scope() {
         let err = validate_tunnel_domain("myapp.tunnel.portzero.cloud").unwrap_err();
-        assert!(err.contains("*.<username>.tunnel.portzero.cloud"), "got: {err}");
+        assert!(
+            err.contains("*.<cloud-username>.tunnel.portzero.cloud"),
+            "got: {err}"
+        );
         assert!(err.contains("portzero whoami"), "got: {err}");
     }
 
@@ -666,8 +807,8 @@ mod tests {
             "should mention the expected base domain, got: {err}"
         );
         assert!(
-            err.contains("<username>"),
-            "should mention the username scope requirement, got: {err}"
+            err.contains("<cloud-username>"),
+            "should mention the cloud username scope requirement, got: {err}"
         );
         assert!(err.contains("portzero whoami"), "got: {err}");
     }

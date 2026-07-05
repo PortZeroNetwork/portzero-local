@@ -22,12 +22,12 @@ The daemon routes based purely on the **suffix** of the full domain:
 | Suffix                                            | Target                  |
 |---------------------------------------------------|-------------------------|
 | `.portzero.local` | Local tunnel |
-| `*.<username>.tunnel.portzero.cloud` (incl. `foo.user.tunnel.portzero.cloud`) | Cloud tunnel |
+| `*.<cloud-username>.tunnel.portzero.cloud` (incl. `foo.user.tunnel.portzero.cloud`) | Cloud tunnel |
 
 - `.portzero.local` → the process or container is given a virtual IP from `10.254.0.0/16`,
   served by scoped DNS, and proxied through the TUN + user-space stack on this
   machine. See [architecture.md](architecture.md).
-- `*.<username>.tunnel.portzero.cloud` → the process or container is exposed via the
+- `*.<cloud-username>.tunnel.portzero.cloud` → the process or container is exposed via the
   Cloud tunnel (requires login). Namespaced forms like
   `foo.team.username.tunnel.portzero.cloud` are also Cloud tunnels.
 
@@ -70,7 +70,7 @@ git context:
 
 ```
 PZ_TUNNEL=web-{branch}.portzero.local
-PZ_TUNNEL=api-{worktree}.{username}.tunnel.portzero.cloud
+PZ_TUNNEL=api-{worktree}.{cloud-username}.tunnel.portzero.cloud
 ```
 
 The daemon resolves these itself from the host (for native processes from the
@@ -79,6 +79,46 @@ labels), so the literal `{branch}` works even inside a container where no shell
 ran. When using direnv you may also resolve the branch directly in the shell with
 `$(git rev-parse --abbrev-ref HEAD)` — both approaches yield a fully-resolved
 domain by the time the daemon reads it.
+
+## `{local-username}` vs `{cloud-username}`
+
+There are two separate username placeholders. They are **never** interchangeable,
+and the daemon enforces that:
+
+| Placeholder         | Resolves to                                    | Changes when you `portzero login`? |
+|----------------------|------------------------------------------------|-------------------------------------|
+| `{local-username}`  | your OS login username                          | never                               |
+| `{cloud-username}`  | your Port Zero Cloud account username           | becomes available once you log in   |
+
+This split exists so a `.local` tunnel's name is stable regardless of login
+state. A single unified `{username}` placeholder would either have to change
+value the moment you ran `portzero login` (breaking a `.local` tunnel someone
+was already using), or never reflect your cloud identity at all — neither is
+acceptable, so the two are kept orthogonal instead:
+
+- `{local-username}` may be used freely in a `.local` tunnel template. **It
+  must never be used in a cloud tunnel template** (`*.tunnel.portzero.cloud`)
+  — doing so would tie the cloud tunnel's name to this machine's OS username,
+  which breaks the guarantee that `.local` and `.cloud` tunnel names stay
+  independent. The daemon rejects this with an error diagnostic.
+- `{cloud-username}` may be used in a `.local` tunnel template, but needs an
+  authenticated account to resolve. If you use `{cloud-username}` in a
+  `.local` template while logged out, the daemon raises a diagnostic with a
+  **"Log in (still free)"** fix button in the [portzero.local dashboard](http://portzero.local#issues) —
+  clicking it starts the same browser login flow as running `portzero login`
+  yourself, without leaving the browser. **Local tunnels are always free**,
+  regardless of login state; logging in here only resolves the
+  `{cloud-username}` value, it does not change billing for this tunnel.
+- `{cloud-username}` is required (implicitly) in cloud tunnel templates,
+  since cloud tunnel domains must be scoped under
+  `*.<cloud-username>.tunnel.portzero.cloud` — see the suffix table above.
+
+```
+PZ_TUNNEL=db-{local-username}.portzero.local                       # ok: local-only scoping, never changes
+PZ_TUNNEL=web-{branch}.{cloud-username}.tunnel.portzero.cloud       # ok: cloud tunnel, scoped by cloud username
+PZ_TUNNEL=web-{branch}.{local-username}.tunnel.portzero.cloud       # ERROR: {local-username} not allowed in cloud tunnels
+PZ_TUNNEL=db-{cloud-username}.portzero.local                        # ok if logged in; diagnostic + "Log in" fix if not
+```
 
 ## Bind to port 0
 

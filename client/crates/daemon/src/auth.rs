@@ -62,7 +62,7 @@ pub struct AuthConfig {
     pub token: Option<String>,
     /// Account UUID from the auth server — used for `{uid}` template substitution.
     pub account_id: Option<String>,
-    /// Cloud username — used for `{username}` template substitution.
+    /// Cloud username — used for `{cloud-username}` template substitution.
     pub username: Option<String>,
     /// Directory where auth.json lives (defaults to `~/.portzero/`).
     pub config_dir: PathBuf,

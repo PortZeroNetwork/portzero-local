@@ -128,6 +128,26 @@ fn inspect_container(
     // On the cloud path the edge assigns the URL, so the port is ignored.
     let (raw_domain, canonical_port) = split_tunnel_port(&raw);
     warn_if_port_like_rejected(&raw, canonical_port, container_pid);
+
+    let is_local = is_local_overlay_domain(raw_domain);
+    if let Err(e) =
+        portzero_domain::validate_username_placeholders(raw_domain, is_local, username.is_some())
+    {
+        tracing::warn!(
+            container = name,
+            template = raw_domain,
+            error = %e,
+            "PZ_TUNNEL template misuses {{local-username}}/{{cloud-username}}"
+        );
+        issues.push(crate::notify::Issue::InvalidUsernamePlaceholder {
+            template: raw_domain.to_string(),
+            reason: e,
+            context: format!("container {name}"),
+            requires_login: is_local,
+        });
+        return Ok(None);
+    }
+
     let substitutions =
         template_substitutions(project_dir.as_deref(), account_id, username, Some(name));
     let domain = resolve_tunnel_template(raw_domain, project_dir.as_deref(), account_id, username);

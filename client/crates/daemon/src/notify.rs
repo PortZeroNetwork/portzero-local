@@ -56,9 +56,9 @@ pub enum Issue {
     },
     /// A `PZ_TUNNEL` value looked like a cloud tunnel request (it doesn't end
     /// in `.local`/`.portzero.local`) but is missing the required
-    /// `<username>` scope — e.g. `myservice.portzero.cloud` or
+    /// `<cloud-username>` scope — e.g. `myservice.portzero.cloud` or
     /// `myservice.tunnel.portzero.cloud` instead of
-    /// `myservice.<username>.tunnel.portzero.cloud`.
+    /// `myservice.<cloud-username>.tunnel.portzero.cloud`.
     InvalidCloudTunnelScope {
         /// The resolved (post-template) domain that failed validation.
         domain: String,
@@ -66,6 +66,22 @@ pub enum Issue {
         reason: String,
         /// Best-effort description of the owning context (cwd / container).
         context: String,
+    },
+    /// A `PZ_TUNNEL` template misused the `{local-username}`/`{cloud-username}`
+    /// placeholders — either `{local-username}` was used in a cloud tunnel
+    /// (which would break the orthogonality between `.local` and `.cloud`
+    /// tunnel names), or `{cloud-username}` was used in a `.local` tunnel
+    /// while not logged in.
+    InvalidUsernamePlaceholder {
+        /// The raw (pre-resolution) `PZ_TUNNEL` template.
+        template: String,
+        /// The specific validation failure from `validate_username_placeholders`.
+        reason: String,
+        /// Best-effort description of the owning context (cwd / container).
+        context: String,
+        /// Whether the fix is to run `portzero login` — lets the UI offer a
+        /// one-click "Log in" button instead of just printing guidance text.
+        requires_login: bool,
     },
 }
 
@@ -92,7 +108,24 @@ impl Issue {
                 "Invalid cloud tunnel domain \"{}\" ({}): missing username scope",
                 domain, context
             ),
+            Issue::InvalidUsernamePlaceholder {
+                template, context, ..
+            } => format!(
+                "Invalid username placeholder in PZ_TUNNEL template \"{}\" ({})",
+                template, context
+            ),
         }
+    }
+
+    /// Whether the UI should offer a one-click "Log in" fix for this issue.
+    pub fn needs_login(&self) -> bool {
+        matches!(
+            self,
+            Issue::InvalidUsernamePlaceholder {
+                requires_login: true,
+                ..
+            }
+        )
     }
 
     /// Actionable guidance explaining how to fix the issue.
@@ -117,6 +150,10 @@ impl Issue {
             // `reason` is the message from `validate_tunnel_domain`, which already
             // spells out the expected format and points at `portzero whoami`.
             Issue::InvalidCloudTunnelScope { reason, .. } => reason.clone(),
+            // `reason` is the message from `validate_username_placeholders`, which
+            // already explains the fix (switch placeholders, or `portzero login`)
+            // and, when relevant, that local tunnels stay free either way.
+            Issue::InvalidUsernamePlaceholder { reason, .. } => reason.clone(),
         }
     }
 }

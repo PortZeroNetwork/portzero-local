@@ -396,7 +396,8 @@ fn substitution_alerts(
         "user",
         "machine",
         "uid",
-        "username",
+        "local-username",
+        "cloud-username",
         "folder-name",
     ];
 
@@ -1076,8 +1077,10 @@ function domainCell(row){
 }
 
 function renderIssue(i){
+  let fixBtn='';
+  if(i.needs_login) fixBtn='<a class="button" href="/login">Log in (still free)</a>';
   return '<div class="diag diag-warning"><div class="diag-title"><span class="sev-warning">[WARNING]</span> '+esc(i.summary)+'</div>'
-    +'<div class="diag-fix">'+esc(i.fix_hint)+'</div></div>';
+    +'<div class="diag-fix">'+esc(i.fix_hint)+' '+fixBtn+'</div></div>';
 }
 
 function renderDiag(d){
@@ -1312,6 +1315,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
             serde_json::json!({
                 "summary": i.summary(),
                 "fix_hint": i.fix_hint(),
+                "needs_login": i.needs_login(),
             })
         })
         .collect();

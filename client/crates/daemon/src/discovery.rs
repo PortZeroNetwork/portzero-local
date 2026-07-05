@@ -10,7 +10,13 @@
 //! Examples (full names required):
 //!   PZ_TUNNEL=my-api.alice.tunnel.portzero.cloud
 //!   PZ_TUNNEL=my-db-{branch}.portzero.local
-//!   PZ_TUNNEL=web-{branch}.{username}.tunnel.portzero.cloud
+//!   PZ_TUNNEL=web-{branch}.{cloud-username}.tunnel.portzero.cloud
+//!
+//! `{local-username}` (OS username, always available) and `{cloud-username}`
+//! (cloud account username, requires login) are distinct placeholders —
+//! `{local-username}` may not appear in a cloud tunnel template, and
+//! `{cloud-username}` may appear in a `.local` template but needs login to
+//! resolve. See `portzero_domain::validate_username_placeholders`.
 //!
 //! Cross-platform support:
 //! - Linux: full (reads /proc/<pid>/environ and /proc/<pid>/fd for inode-based port scoping)

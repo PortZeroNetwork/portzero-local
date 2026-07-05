@@ -37,6 +37,26 @@ pub(super) fn scan_processes(
             // On the cloud path the edge assigns the URL, so the port is ignored.
             let (raw_domain, _canonical_port) = split_tunnel_port(&raw);
             warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
+
+            let is_local = is_local_overlay_domain(raw_domain);
+            if let Err(e) =
+                portzero_domain::validate_username_placeholders(raw_domain, is_local, username.is_some())
+            {
+                tracing::warn!(
+                    pid = pid_u32,
+                    template = raw_domain,
+                    error = %e,
+                    "PZ_TUNNEL template misuses {{local-username}}/{{cloud-username}}"
+                );
+                issues.push(crate::notify::Issue::InvalidUsernamePlaceholder {
+                    template: raw_domain.to_string(),
+                    reason: e,
+                    context: format!("pid {pid_u32}"),
+                    requires_login: is_local,
+                });
+                continue;
+            }
+
             let substitutions = template_substitutions(
                 process_context.project_dir.as_deref(),
                 account_id,
@@ -169,6 +189,26 @@ pub(super) fn scan_processes_windows(
         let process_context = process_template_context(&sys, pid_u32);
         let (raw_domain, _canonical_port) = split_tunnel_port(&raw);
         warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
+
+        let is_local = is_local_overlay_domain(raw_domain);
+        if let Err(e) =
+            portzero_domain::validate_username_placeholders(raw_domain, is_local, username.is_some())
+        {
+            tracing::warn!(
+                pid = pid_u32,
+                template = raw_domain,
+                error = %e,
+                "PZ_TUNNEL template misuses {{local-username}}/{{cloud-username}}"
+            );
+            issues.push(crate::notify::Issue::InvalidUsernamePlaceholder {
+                template: raw_domain.to_string(),
+                reason: e,
+                context: format!("pid {pid_u32}"),
+                requires_login: is_local,
+            });
+            continue;
+        }
+
         let substitutions = template_substitutions(
             process_context.project_dir.as_deref(),
             account_id,
@@ -327,15 +367,16 @@ pub(super) fn template_substitutions(
     );
     values.insert("folder-name".to_string(), folder_name);
     values.insert("project".to_string(), ctx.project);
-    values.insert("user".to_string(), ctx.user);
+    values.insert("user".to_string(), ctx.user.clone());
     values.insert("machine".to_string(), ctx.machine);
     values.insert(
         "uid".to_string(),
         ctx.uid.unwrap_or_else(|| "unknown".to_string()),
     );
+    values.insert("local-username".to_string(), ctx.user);
     values.insert(
-        "username".to_string(),
-        ctx.username.unwrap_or_else(|| "unknown".to_string()),
+        "cloud-username".to_string(),
+        ctx.username.unwrap_or_else(|| "not-logged-in".to_string()),
     );
     values
 }
