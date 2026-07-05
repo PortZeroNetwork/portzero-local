@@ -19,18 +19,6 @@
 - [ ] I have updated documentation where necessary
 - [ ] I have run format/lint checks
 
-## CLA
-
-**All contributors must sign the CLA before a PR can be merged.**
-
-By submitting this pull request, I confirm that I agree to the terms of the [Contributor License Agreement](https://github.com/PortZeroNetwork/portzero-local/blob/develop/CLA.md).
-
-To sign, post the following comment **exactly** on this pull request:
-
-```
-I have read the CLA Document and I hereby sign the CLA
-```
-
 ---
 
 <!-- Additional notes for reviewers (optional) -->
