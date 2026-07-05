@@ -268,6 +268,6 @@ if (-not (Open-Browser -Url "http://portzero.local")) {
 Write-Host "If this terminal was already open, PATH has been updated for this process; new terminals will also find portzero.exe."
 
 Write-Host ""
-Write-Host "Local tunnels (*.portzero.local) governed by the PolyForm Shield License:"
+Write-Host "Local tunnels (*.portzero.local) governed by the GNU General Public License v3.0:"
 Write-Host "  https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE"
 Write-Host "Cloud features governed by https://portzero.net/terms"

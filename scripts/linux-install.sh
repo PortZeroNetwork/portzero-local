@@ -405,7 +405,7 @@ case ":${PATH}:" in
 esac
 
 echo ""
-info "Local tunnels (*.portzero.local) governed by the PolyForm Shield License:"
+info "Local tunnels (*.portzero.local) governed by the GNU General Public License v3.0:"
 info "  https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE"
 info "Cloud features governed by https://portzero.net/terms"
 

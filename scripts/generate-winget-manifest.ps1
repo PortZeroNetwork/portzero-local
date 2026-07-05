@@ -79,7 +79,7 @@ PublisherUrl: https://portzero.cloud/
 PublisherSupportUrl: https://github.com/$Repo/issues
 PackageName: PortZero
 PackageUrl: https://portzero.cloud/
-License: PolyForm-Shield-1.0.0
+License: GPL-3.0-or-later
 LicenseUrl: https://github.com/$Repo/blob/develop/LICENSE
 Copyright: Copyright (c) Loum Technologies
 ShortDescription: Eliminate port conflicts in local dev environments

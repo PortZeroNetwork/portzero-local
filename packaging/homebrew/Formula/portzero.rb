@@ -2,7 +2,7 @@ class Portzero < Formula
   desc "Eliminate port conflicts in local dev environments with virtual NIC port forwarding"
   homepage "https://portzero.cloud"
   version "0.1.0"
-  license "PolyForm-Shield-1.0.0"
+  license "GPL-3.0-or-later"
 
   on_macos do
     on_arm do

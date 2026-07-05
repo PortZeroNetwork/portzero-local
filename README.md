@@ -62,7 +62,7 @@ After installing, open http://portzero.local in your browser.
 
 ## Licensing
 
-- **Port Zero Local** (tunnels using `*.portzero.local`): governed by the [PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0). See the [LICENSE](LICENSE) file. Required notice: Copyright Loum Technologies (https://loumtechnologies.com).
+- **Port Zero Local** (tunnels using `*.portzero.local`): governed by the [GNU General Public License v3.0](LICENSE). See the [LICENSE](LICENSE) file.
 - **Port Zero Cloud** features (tunnels using `tunnel.portzero.cloud`): governed by the [Terms of Service](https://portzero.net/terms).
 
 By installing or using the software you agree to the terms applicable to the features you use.

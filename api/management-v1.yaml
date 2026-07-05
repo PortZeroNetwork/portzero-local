@@ -22,8 +22,8 @@ info:
 
     When the daemon detects that a registered PID has exited, it automatically removes all mappings for that PID. Processes may also call `DELETE /v1/register` to deregister explicitly (e.g., on graceful shutdown).
   license:
-    name: PolyForm-Shield-1.0.0
-    identifier: PolyForm-Shield-1.0.0
+    name: GNU General Public License v3.0 or later
+    identifier: GPL-3.0-or-later
   version: 1.0.0
 servers:
 - url: http://portzero.local

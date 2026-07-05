@@ -2,7 +2,7 @@
 name = "portzero-cli"
 version = "0.1.0"
 edition = "2021"
-license = "PolyForm-Shield-1.0.0"
+license = "GPL-3.0-or-later"
 description = "Eliminate port conflicts in local dev by letting the OS pick random available ports, then forwarding them to virtual domains on a virtual NIC"
 repository = "https://github.com/PortZeroNetwork/portzero-local"
 homepage = "https://portzero.cloud"
@@ -47,7 +47,7 @@ maintainer-scripts = "../../../packaging/linux/deb"
 
 [package.metadata.generate-rpm]
 name = "portzero"
-license = "PolyForm-Shield-1.0.0"
+license = "GPL-3.0-or-later"
 summary = "Eliminate port conflicts in your dev environment by letting the OS pick random available ports, then forwarding those ports to virtual domains on a virtual NIC. Run multiple branches simultaneously without clashing."
 url = "https://portzero.cloud"
 vendor = "Loum Technologies"
