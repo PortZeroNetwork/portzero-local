@@ -54,6 +54,19 @@ pub enum Issue {
         /// The container (name or id) that failed to start.
         container: String,
     },
+    /// A `PZ_TUNNEL` value looked like a cloud tunnel request (it doesn't end
+    /// in `.local`/`.portzero.local`) but is missing the required
+    /// `<username>` scope — e.g. `myservice.portzero.cloud` or
+    /// `myservice.tunnel.portzero.cloud` instead of
+    /// `myservice.<username>.tunnel.portzero.cloud`.
+    InvalidCloudTunnelScope {
+        /// The resolved (post-template) domain that failed validation.
+        domain: String,
+        /// The specific validation failure from `validate_tunnel_domain`.
+        reason: String,
+        /// Best-effort description of the owning context (cwd / container).
+        context: String,
+    },
 }
 
 impl Issue {
@@ -74,6 +87,10 @@ impl Issue {
             Issue::DockerPortConflict { port, container } => format!(
                 "Docker container \"{}\" failed to start: host port {} is already in use",
                 container, port
+            ),
+            Issue::InvalidCloudTunnelScope { domain, context, .. } => format!(
+                "Invalid cloud tunnel domain \"{}\" ({}): missing username scope",
+                domain, context
             ),
         }
     }
@@ -97,6 +114,9 @@ impl Issue {
                  published port. To route the container through the tunnel, set PZ_TUNNEL in \
                  its environment instead of publishing a fixed host port."
             ),
+            // `reason` is the message from `validate_tunnel_domain`, which already
+            // spells out the expected format and points at `portzero whoami`.
+            Issue::InvalidCloudTunnelScope { reason, .. } => reason.clone(),
         }
     }
 }
@@ -475,6 +495,29 @@ mod tests {
         assert!(docker.summary().contains("web-1"));
         assert!(docker.summary().contains("8080"));
         assert!(docker.fix_hint().contains("8080"));
+    }
+
+    #[test]
+    fn test_invalid_cloud_tunnel_scope_issue_roundtrip() {
+        let state = IssuesState {
+            issues: vec![Issue::InvalidCloudTunnelScope {
+                domain: "myservice.portzero.cloud".to_string(),
+                reason: "'myservice.portzero.cloud' is not a valid cloud tunnel domain \
+                    it must end with '.tunnel.portzero.cloud' and be scoped to your \
+                    username, e.g. 'myservice.<username>.tunnel.portzero.cloud'. \
+                    Run `portzero whoami` to find your username."
+                    .to_string(),
+                context: "pid 1234".to_string(),
+            }],
+        };
+        let parsed = IssuesState::from_json(&state.to_json());
+        assert_eq!(state, parsed);
+
+        let issue = &state.issues[0];
+        assert!(issue.summary().contains("myservice.portzero.cloud"));
+        assert!(issue.summary().contains("pid 1234"));
+        assert!(issue.fix_hint().contains("portzero whoami"));
+        assert!(issue.fix_hint().contains("<username>"));
     }
 
     #[test]

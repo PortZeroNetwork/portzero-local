@@ -209,9 +209,13 @@ pub fn validate_tunnel_domain(domain: &str) -> Result<(), String> {
         ));
     }
 
-    let scoped = domain
-        .strip_suffix(&suffix)
-        .ok_or_else(|| format!("Cloud tunnel domain must end with '.{base}', got '{domain}'"))?;
+    let scoped = domain.strip_suffix(&suffix).ok_or_else(|| {
+        format!(
+            "'{domain}' is not a valid cloud tunnel domain: it must end with '.{base}' and be \
+             scoped to your username, e.g. 'myservice.<username>.{base}'. \
+             Run `portzero whoami` to find your username."
+        )
+    })?;
 
     if scoped.is_empty() {
         return Err(format!(
@@ -222,7 +226,9 @@ pub fn validate_tunnel_domain(domain: &str) -> Result<(), String> {
     let mut segments: Vec<&str> = scoped.split('.').collect();
     if segments.len() < 2 {
         return Err(format!(
-            "Cloud tunnel domain must be under '*.<username>.{base}', got '{domain}'"
+            "'{domain}' is missing the username scope — cloud tunnel domains must be under \
+             '*.<username>.{base}' (e.g. '{scoped}.<username>.{base}'). \
+             Run `portzero whoami` to find your username."
         ));
     }
 
@@ -648,6 +654,22 @@ mod tests {
     fn test_validate_tunnel_domain_missing_username_scope() {
         let err = validate_tunnel_domain("myapp.tunnel.portzero.cloud").unwrap_err();
         assert!(err.contains("*.<username>.tunnel.portzero.cloud"), "got: {err}");
+        assert!(err.contains("portzero whoami"), "got: {err}");
+    }
+
+    #[test]
+    fn test_validate_tunnel_domain_missing_tunnel_prefix() {
+        // e.g. a user drops the `tunnel.` segment entirely: myservice.portzero.cloud
+        let err = validate_tunnel_domain("myservice.portzero.cloud").unwrap_err();
+        assert!(
+            err.contains("tunnel.portzero.cloud"),
+            "should mention the expected base domain, got: {err}"
+        );
+        assert!(
+            err.contains("<username>"),
+            "should mention the username scope requirement, got: {err}"
+        );
+        assert!(err.contains("portzero whoami"), "got: {err}");
     }
 
     #[test]

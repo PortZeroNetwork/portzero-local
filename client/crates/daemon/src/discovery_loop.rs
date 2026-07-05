@@ -510,6 +510,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 overlay_issues,
                 &overlay_services,
                 docker_conflicts,
+                Vec::new(),
                 &mut notified_issues,
             )
             .await;
@@ -640,7 +641,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             }
 
             // Discover services
-            let mut discovered =
+            let (mut discovered, cloud_scope_issues) =
                 discovery::scan_all(account_id.as_deref(), username.as_deref()).await;
 
             // Filter out services whose processes have exited and whose grace period
@@ -742,6 +743,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 overlay_issues,
                 &overlay_services,
                 docker_conflicts,
+                cloud_scope_issues,
                 &mut notified_issues,
             )
             .await;
@@ -1158,6 +1160,7 @@ async fn gather_and_publish_issues(
     overlay_issues: Vec<notify::Issue>,
     overlay_services: &[DiscoveredNetworkService],
     docker_conflicts: Vec<notify::Issue>,
+    cloud_scope_issues: Vec<notify::Issue>,
     notified_issues: &mut IssuesState,
 ) {
     let managed = build_managed_context(route_table, overlay_services);
@@ -1172,6 +1175,9 @@ async fn gather_and_publish_issues(
     all.extend(legacy);
     // Real-time Docker port-bind conflicts caught by the event monitor (task-8).
     all.extend(docker_conflicts);
+    // Invalidly-scoped PZ_TUNNEL cloud tunnel domains found on this scan
+    // (e.g. myservice.portzero.cloud instead of myservice.<username>.tunnel.portzero.cloud).
+    all.extend(cloud_scope_issues);
     publish_issues(all, config, notified_issues);
 }
 

@@ -7,7 +7,7 @@ use super::*;
 pub(super) fn scan_processes(
     account_id: Option<&str>,
     username: Option<&str>,
-) -> Vec<DiscoveredService> {
+) -> (Vec<DiscoveredService>, Vec<crate::notify::Issue>) {
     #[cfg(target_os = "windows")]
     {
         scan_processes_windows(account_id, username)
@@ -19,6 +19,7 @@ pub(super) fn scan_processes(
         sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
         let mut services = Vec::new();
+        let mut issues = Vec::new();
 
         for pid in sys.processes().keys() {
             let pid_u32 = pid.as_u32();
@@ -67,6 +68,11 @@ pub(super) fn scan_processes(
                     "PZ_TUNNEL value is not a valid full tunnel domain (and not .local). \
                      Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
                 );
+                issues.push(crate::notify::Issue::InvalidCloudTunnelScope {
+                    domain,
+                    reason: e,
+                    context: format!("pid {pid_u32}"),
+                });
                 continue;
             }
 
@@ -134,7 +140,7 @@ pub(super) fn scan_processes(
             });
         }
 
-        services
+        (services, issues)
     }
 }
 
@@ -142,12 +148,13 @@ pub(super) fn scan_processes(
 pub(super) fn scan_processes_windows(
     account_id: Option<&str>,
     username: Option<&str>,
-) -> Vec<DiscoveredService> {
+) -> (Vec<DiscoveredService>, Vec<crate::notify::Issue>) {
     let mut sys = System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
     let listening_by_pid = discover_all_ports_windows_by_pid();
     let mut services = Vec::new();
+    let mut issues = Vec::new();
 
     for (pid_u32, listening) in listening_by_pid {
         if pid_u32 <= 1 || listening.is_empty() {
@@ -192,6 +199,11 @@ pub(super) fn scan_processes_windows(
                 "PZ_TUNNEL value is not a valid full tunnel domain (and not .local). \
                  Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
             );
+            issues.push(crate::notify::Issue::InvalidCloudTunnelScope {
+                domain,
+                reason: e,
+                context: format!("pid {pid_u32}"),
+            });
             continue;
         }
 
@@ -247,7 +259,7 @@ pub(super) fn scan_processes_windows(
         });
     }
 
-    services
+    (services, issues)
 }
 
 /// Emit a warning when a `PZ_TUNNEL` value had a trailing `:something` that

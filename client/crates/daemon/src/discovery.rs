@@ -224,8 +224,17 @@ enum SelectedPort {
 // ---------------------------------------------------------------------------
 
 /// Scan all processes and Docker containers for PZ_TUNNEL.
-pub async fn scan_all(account_id: Option<&str>, username: Option<&str>) -> Vec<DiscoveredService> {
+///
+/// Returns the discovered services alongside any [`crate::notify::Issue`]s
+/// found along the way (e.g. `PZ_TUNNEL` values that look like a cloud tunnel
+/// request but are missing the required username scope), so callers can
+/// surface both through `portzero status`.
+pub async fn scan_all(
+    account_id: Option<&str>,
+    username: Option<&str>,
+) -> (Vec<DiscoveredService>, Vec<crate::notify::Issue>) {
     let mut services = Vec::new();
+    let mut issues = Vec::new();
     // `scan_processes` does a full sysinfo refresh and shells out (`ps`/`lsof`)
     // for every process system-wide, all synchronously. Run it on a blocking
     // thread so the async task yields control — otherwise the executor thread is
@@ -239,7 +248,10 @@ pub async fn scan_all(account_id: Option<&str>, username: Option<&str>) -> Vec<D
     )
     .await
     {
-        Ok(Ok(process_services)) => services.extend(process_services),
+        Ok(Ok((process_services, process_issues))) => {
+            services.extend(process_services);
+            issues.extend(process_issues);
+        }
         Ok(Err(_)) => tracing::debug!("process scan panicked"),
         Err(_) => tracing::debug!("process scan timed out"),
     }
@@ -249,10 +261,13 @@ pub async fn scan_all(account_id: Option<&str>, username: Option<&str>) -> Vec<D
     )
     .await
     {
-        Ok(docker_services) => services.extend(docker_services),
+        Ok((docker_services, docker_issues)) => {
+            services.extend(docker_services);
+            issues.extend(docker_issues);
+        }
         Err(_) => tracing::debug!("Docker container scan timed out"),
     }
-    services
+    (services, issues)
 }
 
 // ---------------------------------------------------------------------------

@@ -172,6 +172,14 @@ fn read_route_table(state_dir: &std::path::Path) -> RouteTable {
     RouteTable::load(&state_dir.join("routes.json")).unwrap_or_default()
 }
 
+/// Read and parse `issues.json` (visibility-layer problems: duplicate overlay
+/// names, legacy listeners, Docker port conflicts, invalidly-scoped cloud
+/// tunnel domains). Returns an empty state on any error, matching `portzero
+/// status`'s CLI behavior for the same file.
+fn read_issues(state_dir: &std::path::Path) -> crate::notify::IssuesState {
+    crate::notify::read_issues(&state_dir.join("issues.json"))
+}
+
 /// Read `cloud_state.json` and extract connected + error + plan + can_use_cloud_tunnels +
 /// message for upsells.
 fn read_cloud_state(
@@ -1067,6 +1075,11 @@ function domainCell(row){
   return '<div class="domain-stack">'+domain+'<code>template: '+esc(row.domain_template||row.domain)+'</code><code>materialized: '+esc(row.domain)+'</code>'+alerts+'</div>';
 }
 
+function renderIssue(i){
+  return '<div class="diag diag-warning"><div class="diag-title"><span class="sev-warning">[WARNING]</span> '+esc(i.summary)+'</div>'
+    +'<div class="diag-fix">'+esc(i.fix_hint)+'</div></div>';
+}
+
 function renderDiag(d){
   const sev=d.severity.toLowerCase();
   let fix='';
@@ -1160,6 +1173,14 @@ function render(d){
   html+='<p class="hint">Saved to ~/.portzero/config.toml and applied live within several seconds (new connections; no restart).</p>';
   html+='</div></section>';
 
+  html+='<section class="section" id="issues"><div class="section-head"><h2>Issues</h2></div>';
+  if(!d.issues||d.issues.length===0){
+    html+='<p class="no-issues">no issues detected</p>';
+  } else {
+    d.issues.forEach(function(i){html+=renderIssue(i);});
+  }
+  html+='</section>';
+
   html+='<section class="section" id="diagnostics"><div class="section-head"><h2>Diagnostics</h2></div>';
   const diags=d.diagnostics&&d.diagnostics.issues;
   if(!diags||diags.length===0){
@@ -1235,6 +1256,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         read_cloud_state(&state.state_dir);
     let auth_authenticated = crate::auth::AuthConfig::load().is_authenticated();
     let diagnostics = crate::diagnostics::load_report(&state.state_dir);
+    let issues = read_issues(&state.state_dir);
 
     let registrations_guard = state.store.read().await;
     let management_registrations = management_registrations_json(&registrations_guard);
@@ -1283,6 +1305,17 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
 
     add_duplicate_route_alerts(&mut local_services, &mut cloud_routes);
 
+    let issues_json: Vec<serde_json::Value> = issues
+        .issues
+        .iter()
+        .map(|i| {
+            serde_json::json!({
+                "summary": i.summary(),
+                "fix_hint": i.fix_hint(),
+            })
+        })
+        .collect();
+
     let https_policy = crate::discovery_loop::DaemonConfig::load().overlay_https;
 
     Json(serde_json::json!({
@@ -1298,6 +1331,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         "cloud_routes": cloud_routes,
         "management_registrations": management_registrations,
         "management_registrations_feature_stability": "unstable",
+        "issues": issues_json,
         "diagnostics": diagnostics,
         "languages": detected_languages(),
         "environment": detected_environment(),
@@ -1345,7 +1379,8 @@ pub async fn update_https_policy(
 #[cfg(test)]
 mod tests {
     use super::{
-        add_duplicate_route_alerts, has_dns_token, local_service_link_url, substitution_alerts,
+        add_duplicate_route_alerts, has_dns_token, local_service_link_url, read_issues,
+        substitution_alerts,
     };
     use std::collections::BTreeMap;
 
@@ -1369,6 +1404,23 @@ mod tests {
     fn local_service_link_url_skips_non_web_ports() {
         assert_eq!(local_service_link_url("db.portzero.local", 5432), None);
         assert_eq!(local_service_link_url("admin.portzero.local", 8080), None);
+    }
+
+    #[test]
+    fn status_json_surfaces_issues_from_issues_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = crate::notify::IssuesState {
+            issues: vec![crate::notify::Issue::InvalidCloudTunnelScope {
+                domain: "myservice.portzero.cloud".to_string(),
+                reason: "missing username scope".to_string(),
+                context: "pid 42".to_string(),
+            }],
+        };
+        crate::notify::write_issues(&dir.path().join("issues.json"), &state);
+
+        let loaded = read_issues(dir.path());
+        assert_eq!(loaded.issues.len(), 1);
+        assert!(loaded.issues[0].summary().contains("myservice.portzero.cloud"));
     }
 
     #[test]

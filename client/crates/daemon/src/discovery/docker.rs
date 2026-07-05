@@ -7,9 +7,9 @@ use super::*;
 pub(super) async fn scan_docker_containers(
     account_id: Option<&str>,
     username: Option<&str>,
-) -> Vec<DiscoveredService> {
+) -> (Vec<DiscoveredService>, Vec<crate::notify::Issue>) {
     if !command_on_path("docker") {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     let acct = account_id.map(str::to_owned);
@@ -20,13 +20,13 @@ pub(super) async fn scan_docker_containers(
     .await
     .unwrap_or_else(|_| Err(anyhow::anyhow!("spawn_blocking panicked")))
     {
-        Ok(services) => services,
+        Ok(result) => result,
         Err(e) => {
             tracing::debug!(
                 "Docker container scan failed (Docker may not be running): {}",
                 e
             );
-            Vec::new()
+            (Vec::new(), Vec::new())
         }
     }
 }
@@ -34,7 +34,7 @@ pub(super) async fn scan_docker_containers(
 fn scan_docker_containers_impl(
     account_id: Option<&str>,
     username: Option<&str>,
-) -> Result<Vec<DiscoveredService>> {
+) -> Result<(Vec<DiscoveredService>, Vec<crate::notify::Issue>)> {
     use std::process::Command;
 
     let output = Command::new("docker")
@@ -49,23 +49,25 @@ fn scan_docker_containers_impl(
     let container_ids: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
 
     if container_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let mut services = Vec::new();
+    let mut issues = Vec::new();
     for container_id in container_ids {
-        if let Some(svc) = inspect_container(container_id, account_id, username)? {
+        if let Some(svc) = inspect_container(container_id, account_id, username, &mut issues)? {
             services.push(svc);
         }
     }
 
-    Ok(services)
+    Ok((services, issues))
 }
 
 fn inspect_container(
     container_id: &str,
     account_id: Option<&str>,
     username: Option<&str>,
+    issues: &mut Vec<crate::notify::Issue>,
 ) -> Result<Option<DiscoveredService>> {
     use std::process::Command;
 
@@ -147,6 +149,11 @@ fn inspect_container(
             "PZ_TUNNEL value on container is not a valid full tunnel domain (and not .local). \
              Use a full name like web-mybranch.alice.tunnel.portzero.cloud"
         );
+        issues.push(crate::notify::Issue::InvalidCloudTunnelScope {
+            domain,
+            reason: e,
+            context: format!("container {name}"),
+        });
         return Ok(None);
     }
 
