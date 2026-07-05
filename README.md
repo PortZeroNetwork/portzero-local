@@ -20,18 +20,6 @@ The `PZ_TUNNEL` setting tells PortZero the domain name and port that clients sho
 
 With your program running, you can open `http://master.mytodoapp.portzero.local:80` in your browser. You might also be running a different version of your program in a separate git worktree. Port Zero supports this; `http://some-other-branch.mytodoapp.portzero.local:80` can be available at the same time without port conflicts. This doesn't just work for http; it works for *any* TCP protocol.
 
-## Install
-
-### macOS
-
-```bash
-brew tap PortZeroNetwork/portzero
-brew install portzero
-```
-
-Homebrew maps `PortZeroNetwork/portzero` to the GitHub tap repository
-`PortZeroNetwork/homebrew-portzero`.
-
 ## How does this work?
 
 Port Zero runs a background process on your local dev machine that scans for processes and Docker containers with the special `PZ_TUNNEL` environment variable. If `PZ_TUNNEL` ends in `<username>.tunnel.portzero.cloud`, Port Zero opens a Cloud tunnel to `portzero.cloud` under that username-scoped subtree. If on the other hand the `PZ_TUNNEL` contains `portzero.local`, Port Zero opens a Local tunnel and does four things:
@@ -40,6 +28,37 @@ Port Zero runs a background process on your local dev machine that scans for pro
 2. Create a virtual IP address in this virtual NIC for that process
 3. Create a virtual DNS record for that virtual IP address, based on the template specified in `PZ_TUNNEL`
 4. Forward the port specified in `PZ_TUNNEL` on the virtual IP address to the randomly-assigned port on the actual process or Docker container
+
+## Install
+
+**macOS (Homebrew)**
+
+```sh
+brew tap PortZeroNetwork/portzero
+brew trust portzeronetwork/portzero
+brew install portzero
+```
+
+**Linux**
+```sh
+curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | sh
+```
+
+Uninstall:
+```sh
+~/.portzero/bin/portzero-uninstall
+```
+Or run the release asset directly:
+```sh
+curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-uninstall.sh | sh
+```
+
+**Windows (winget)**
+
+Download the `.msi` from the assets below and run it manually.
+
+The installer and daemon perform local setup automatically where supported.
+After installing, open http://portzero.local in your browser.
 
 ## Licensing
 
