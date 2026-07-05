@@ -104,7 +104,9 @@ impl Issue {
                 "Docker container \"{}\" failed to start: host port {} is already in use",
                 container, port
             ),
-            Issue::InvalidCloudTunnelScope { domain, context, .. } => format!(
+            Issue::InvalidCloudTunnelScope {
+                domain, context, ..
+            } => format!(
                 "Invalid cloud tunnel domain \"{}\" ({}): missing username scope",
                 domain, context
             ),

@@ -39,9 +39,11 @@ pub(super) fn scan_processes(
             warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
 
             let is_local = is_local_overlay_domain(raw_domain);
-            if let Err(e) =
-                portzero_domain::validate_username_placeholders(raw_domain, is_local, username.is_some())
-            {
+            if let Err(e) = portzero_domain::validate_username_placeholders(
+                raw_domain,
+                is_local,
+                username.is_some(),
+            ) {
                 tracing::warn!(
                     pid = pid_u32,
                     template = raw_domain,
@@ -191,9 +193,11 @@ pub(super) fn scan_processes_windows(
         warn_if_port_like_rejected(&raw, _canonical_port, pid_u32);
 
         let is_local = is_local_overlay_domain(raw_domain);
-        if let Err(e) =
-            portzero_domain::validate_username_placeholders(raw_domain, is_local, username.is_some())
-        {
+        if let Err(e) = portzero_domain::validate_username_placeholders(
+            raw_domain,
+            is_local,
+            username.is_some(),
+        ) {
             tracing::warn!(
                 pid = pid_u32,
                 template = raw_domain,

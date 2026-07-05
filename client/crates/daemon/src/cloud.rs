@@ -592,7 +592,8 @@ pub fn build_route_metadata(route: &crate::route_table::Route) -> portzero_proto
     sys.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[pid]),
         true,
-        ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always)
+        ProcessRefreshKind::nothing()
+            .with_exe(sysinfo::UpdateKind::Always)
             .with_cmd(sysinfo::UpdateKind::Always),
     );
     if let Some(proc) = sys.process(pid) {
@@ -605,9 +606,7 @@ pub fn build_route_metadata(route: &crate::route_table::Route) -> portzero_proto
             .collect();
     }
 
-    let hostname = hostname::get()
-        .ok()
-        .and_then(|h| h.into_string().ok());
+    let hostname = hostname::get().ok().and_then(|h| h.into_string().ok());
 
     portzero_proto::RouteMetadata {
         cwd,

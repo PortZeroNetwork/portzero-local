@@ -632,7 +632,8 @@ mod tests {
             username: None,
         };
 
-        let result = ctx.resolve("{service}-{project}-{branch}-{user}.{local-username}.example.com");
+        let result =
+            ctx.resolve("{service}-{project}-{branch}-{user}.{local-username}.example.com");
         assert_eq!(
             result,
             "my-api-my-app-feat-long-branch-alice-b.alice-b.example.com"

@@ -1452,7 +1452,9 @@ mod tests {
 
         let loaded = read_issues(dir.path());
         assert_eq!(loaded.issues.len(), 1);
-        assert!(loaded.issues[0].summary().contains("myservice.portzero.cloud"));
+        assert!(loaded.issues[0]
+            .summary()
+            .contains("myservice.portzero.cloud"));
     }
 
     #[test]
