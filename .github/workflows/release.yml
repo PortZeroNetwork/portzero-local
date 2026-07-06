@@ -555,9 +555,37 @@ jobs:
           name: portzero-winget
           path: packaging/winget/manifests/**
 
+  test-macos-interop:
+    name: macOS client interop test
+    needs: [version, build]
+    uses: PortZeroNetwork/portzero-cloud/.github/workflows/staging-client-interop.yml@staging
+    with:
+      os: macos
+      artifact_run_id: ${{ github.run_id }}
+    secrets:
+      source_repo_token: ${{ secrets.GITHUB_TOKEN }}
+
+  test-windows-interop:
+    name: Windows client interop test
+    needs: [version, build, package-windows]
+    uses: PortZeroNetwork/portzero-cloud/.github/workflows/staging-client-interop.yml@staging
+    with:
+      os: windows
+      artifact_run_id: ${{ github.run_id }}
+    secrets:
+      source_repo_token: ${{ secrets.GITHUB_TOKEN }}
+
   release:
     name: Create Release
-    needs: [version, build, package-linux, package-windows]
+    needs:
+      [
+        version,
+        build,
+        package-linux,
+        package-windows,
+        test-macos-interop,
+        test-windows-interop,
+      ]
     runs-on: [self-hosted, linux]
     permissions:
       contents: write
