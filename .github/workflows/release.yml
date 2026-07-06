@@ -578,14 +578,7 @@ jobs:
   release:
     name: Create Release
     needs:
-      [
-        version,
-        build,
-        package-linux,
-        package-windows,
-        test-macos-interop,
-        test-windows-interop,
-      ]
+      [version, build, package-linux, package-windows, test-macos-interop, test-windows-interop]
     runs-on: [self-hosted, linux]
     permissions:
       contents: write
