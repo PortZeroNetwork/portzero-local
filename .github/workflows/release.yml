@@ -17,7 +17,7 @@ env:
 jobs:
   version:
     name: Determine Version
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -58,18 +58,18 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: [self-hosted, linux]
+            os: ubuntu-latest
             bins: portzero
             archive_ext: tar.gz
             archive_name: portzero-linux-amd64
           - target: aarch64-unknown-linux-gnu
-            os: [self-hosted, linux]
+            os: ubuntu-latest
             bins: portzero
             cross: true
             archive_ext: tar.gz
             archive_name: portzero-linux-arm64
           - target: i686-unknown-linux-gnu
-            os: [self-hosted, linux]
+            os: ubuntu-latest
             bins: portzero
             cross: true
             archive_ext: tar.gz
@@ -345,7 +345,7 @@ jobs:
   package-linux:
     name: Build Linux Packages
     needs: [version, build]
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -579,7 +579,7 @@ jobs:
     name: Create Release
     needs:
       [version, build, package-linux, package-windows, test-macos-interop, test-windows-interop]
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
@@ -674,7 +674,7 @@ jobs:
   check-winget-token:
     name: Check WinGet Token
     needs: [release]
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     if: false  # Disabled along with update-winget (not shipping Winget yet)
     outputs:
       has-token: ${{ steps.check.outputs.has-token }}
@@ -686,7 +686,7 @@ jobs:
   update-winget:
     name: Update WinGet Package
     needs: [version, release, check-winget-token]
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     if: false  # Disabled: not shipping Winget packages yet
     permissions:
       contents: read
@@ -706,7 +706,7 @@ jobs:
   check-homebrew-token:
     name: Check Homebrew Token
     needs: [release]
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     outputs:
       has-token: ${{ steps.check.outputs.has-token }}
     steps:
@@ -717,7 +717,7 @@ jobs:
   update-homebrew:
     name: Update Homebrew Formula
     needs: [version, release, check-homebrew-token]
-    runs-on: [self-hosted, linux]
+    runs-on: ubuntu-latest
     if: ${{ needs.check-homebrew-token.outputs.has-token == 'true' }}
     steps:
       - name: Download macOS SHA256 files
