@@ -51,6 +51,7 @@ All documents in this directory are written for **developers using Port Zero Loc
 ### Troubleshooting
 
 - [Troubleshooting](troubleshooting.md) — common failure modes and fixes for day-to-day usage.
+- [FAQ](FAQ.md) — answers to recurring questions.
 
 ## For contributors
 
