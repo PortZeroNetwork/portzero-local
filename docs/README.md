@@ -36,6 +36,13 @@ All documents in this directory are written for **developers using Port Zero Loc
 - [PZ_TUNNEL semantics](portzero.md) — the full-domain rule, how the suffix selects cloud vs. local, `{branch}` / `{worktree}` templates, and when the variable must be set.
 - [Examples](examples.md) — checked-in instructions generated from the latest adjacent `portzero-examples` checkout.
 
+### Patterns
+
+- [Review apps (per-PR preview environments)](review-apps.md) — an orchestrator-neutral
+  pattern for per-PR preview URLs using only tunnel naming, with a plain `docker compose`
+  + GitHub Actions example. Documents that a deploy agent is explicitly out of scope for
+  the product.
+
 ### How it works
 
 - [Architecture overview](architecture.md) — the overlay data path: discovery → VIP allocation → scoped DNS → TUN → smoltcp user-space proxy.
