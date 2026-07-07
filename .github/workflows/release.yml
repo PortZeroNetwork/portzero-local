@@ -558,22 +558,55 @@ jobs:
   test-macos-interop:
     name: macOS client interop test
     needs: [version, build]
-    uses: PortZeroNetwork/portzero-cloud/.github/workflows/staging-client-interop.yml@staging
-    with:
-      os: macos
-      artifact_run_id: ${{ github.run_id }}
-    secrets:
-      source_repo_token: ${{ secrets.GITHUB_TOKEN }}
+    runs-on: macos-15
+    environment: staging
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download macOS client artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-darwin-arm64
+          path: artifacts
+
+      - name: Extract client binary
+        run: |
+          tar xzf artifacts/portzero-darwin-arm64.tar.gz -C artifacts
+          chmod +x artifacts/portzero-darwin-arm64/portzero
+
+      - name: Run cloud tunnel interop test
+        env:
+          STAGING_DOMAIN: ${{ vars.STAGING_DOMAIN }}
+          TEST_LOGIN_SEED_TOKEN: ${{ secrets.TEST_LOGIN_SEED_TOKEN }}
+          PORTZERO_PREBUILT_BINARY_PATH: artifacts/portzero-darwin-arm64/portzero
+        run: bash scripts/client-interop-e2e.sh
 
   test-windows-interop:
     name: Windows client interop test
     needs: [version, build, package-windows]
-    uses: PortZeroNetwork/portzero-cloud/.github/workflows/staging-client-interop.yml@staging
-    with:
-      os: windows
-      artifact_run_id: ${{ github.run_id }}
-    secrets:
-      source_repo_token: ${{ secrets.GITHUB_TOKEN }}
+    runs-on: windows-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download Windows MSI
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-msi
+          path: artifacts
+
+      - name: Run cloud tunnel interop test
+        shell: pwsh
+        env:
+          STAGING_DOMAIN: ${{ vars.STAGING_DOMAIN }}
+          TEST_LOGIN_SEED_TOKEN: ${{ secrets.TEST_LOGIN_SEED_TOKEN }}
+        run: |
+          $msi = Get-ChildItem -Path artifacts -Filter "portzero-*.msi" | Select-Object -First 1
+          if (-not $msi) {
+            throw "portzero MSI artifact not found"
+          }
+          $env:PORTZERO_MSI_PATH = $msi.FullName
+          ./scripts/client-interop-e2e.ps1
 
   release:
     name: Create Release
