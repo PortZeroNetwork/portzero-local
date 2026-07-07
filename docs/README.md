@@ -38,6 +38,13 @@ All documents in this directory are written for **developers using Port Zero Loc
 - [Dev-to-production flow](dev-to-production.md) — `portzero url` / `portzero env` / `portzero wait` for exporting tunnel URLs and gating CI and test runs on tunnel readiness.
 - [MCP server & `portzero inspect`](mcp.md) — the daemon's observed runtime truth (discovered services, tunnel domains, health paths, observed edges, exercised routes) for humans and AI coding agents, plus the observability caveat.
 
+### Patterns
+
+- [Review apps (per-PR preview environments)](review-apps.md) — an orchestrator-neutral
+  pattern for per-PR preview URLs using only tunnel naming, with a plain `docker compose`
+  + GitHub Actions example. Documents that a deploy agent is explicitly out of scope for
+  the product.
+
 ### How it works
 
 - [Architecture overview](architecture.md) — the overlay data path: discovery → VIP allocation → scoped DNS → TUN → smoltcp user-space proxy.
