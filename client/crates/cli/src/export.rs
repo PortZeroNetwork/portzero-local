@@ -139,10 +139,7 @@ pub fn env(github: bool) -> Result<()> {
             writeln!(file, "{}={}", env_var_name(&t.domain), t.url)
                 .with_context(|| format!("Failed to write to $GITHUB_ENV file: {github_env}"))?;
         }
-        eprintln!(
-            "Exported {} tunnel URL(s) to $GITHUB_ENV.",
-            tunnels.len()
-        );
+        eprintln!("Exported {} tunnel URL(s) to $GITHUB_ENV.", tunnels.len());
         return Ok(());
     }
 
@@ -193,7 +190,10 @@ mod tests {
 
     #[test]
     fn test_env_var_name() {
-        assert_eq!(env_var_name("web.portzero.local"), "PZ_URL_WEB_PORTZERO_LOCAL");
+        assert_eq!(
+            env_var_name("web.portzero.local"),
+            "PZ_URL_WEB_PORTZERO_LOCAL"
+        );
         assert_eq!(
             env_var_name("api-x.alice.tunnel.portzero.cloud"),
             "PZ_URL_API_X_ALICE_TUNNEL_PORTZERO_CLOUD"

@@ -1,7 +1,7 @@
 ---
 id: e77844ff-b30b-46c5-a91d-99cb31c2306c
 slug: task-62
-status: todo
+status: done
 title: Add portzero url and portzero env for exporting tunnel URLs to test configs
 relations:
   contains:
@@ -22,6 +22,6 @@ package talks to the daemon directly and is the preferred integration.
 
 ## Acceptance Criteria
 
-- [ ] `portzero url` prints exactly the URL on stdout (script-safe)
-- [ ] `portzero env --github` works in a GitHub Actions job
-- [ ] Errors clearly when the tunnel does not exist
+- [x] `portzero url` prints exactly the URL on stdout (script-safe)
+- [x] `portzero env --github` works in a GitHub Actions job
+- [x] Errors clearly when the tunnel does not exist
