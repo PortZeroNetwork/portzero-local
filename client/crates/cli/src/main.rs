@@ -9,6 +9,7 @@ mod auth;
 mod autostart;
 mod browser;
 mod daemon;
+mod export;
 mod setup;
 mod team;
 mod trust;
@@ -43,6 +44,21 @@ enum Command {
     Restart,
     /// Show daemon and tunnel status.
     Status,
+
+    /// Print the resolved URL for a tunnel domain (script-safe: only the URL
+    /// is written to stdout).
+    Url {
+        /// The tunnel domain, e.g. `web.myapp.portzero.local` or
+        /// `api.alice.tunnel.portzero.cloud`.
+        domain: String,
+    },
+    /// Print `export NAME="URL"` lines for every discovered tunnel.
+    Env {
+        /// Append `NAME=URL` lines to `$GITHUB_ENV` instead of printing export
+        /// lines (for use inside a GitHub Actions job).
+        #[arg(long)]
+        github: bool,
+    },
 
     /// Run privileged first-run setup after package installation.
     #[command(alias = "post-install")]
@@ -145,6 +161,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Stop => daemon::stop()?,
         Command::Restart => daemon::restart()?,
         Command::Status => daemon::status().await?,
+        Command::Url { domain } => export::url(&domain)?,
+        Command::Env { github } => export::env(github)?,
         Command::Setup => setup::run().await?,
 
         Command::Login {
