@@ -60,6 +60,9 @@ All documents in this directory are written for **developers using Port Zero Loc
 ### Troubleshooting
 
 - [Troubleshooting](troubleshooting.md) — common failure modes and fixes for day-to-day usage.
+- [Known limitations: local CA trust](known-limitations.md) — specific browser/engine CA-trust
+  gaps with an identified cause and documented workaround (Snap browsers, Playwright's bundled
+  Firefox).
 - [FAQ](FAQ.md) — answers to recurring questions.
 
 ## For contributors
