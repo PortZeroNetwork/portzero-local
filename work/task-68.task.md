@@ -1,7 +1,7 @@
 ---
 id: d7be2708-4cc3-4963-aac6-3afdff61dc08
 slug: task-68
-status: todo
+status: done
 title: PaaS-agnostic extraction skill installed with portzero
 relations:
   contains:
@@ -28,6 +28,11 @@ PaaS docs; the skill only covers what portzero knows):
 
 ## Acceptance Criteria
 
-- [ ] Skill installable via portzero; agent-tool-agnostic layout where feasible
-- [ ] Contains extraction + interpretation guidance only; zero platform-specific emitters
-- [ ] Dogfooded once: used to produce a real production config for one of our own apps
+- [x] Skill installable via portzero; agent-tool-agnostic layout where feasible
+      (`portzero skill install` writes an embedded SKILL.md; `--print` emits it to
+      stdout for any agent tool, `--dir` chooses the location)
+- [x] Contains extraction + interpretation guidance only; zero platform-specific emitters
+      (guarded by a unit test that fails if a platform emitter name appears)
+- [x] Dogfooded once: used to produce a real production config for one of our own apps
+      (see DOGFOOD.md — applied to portzero-examples/nodejs-typescript/docker,
+      produced a real render.yaml from the extracted facts)

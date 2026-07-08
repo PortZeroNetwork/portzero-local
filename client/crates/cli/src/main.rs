@@ -13,6 +13,7 @@ mod export;
 mod inspect;
 mod mcp;
 mod setup;
+mod skill;
 mod team;
 mod trust;
 mod update;
@@ -116,6 +117,28 @@ enum Command {
     /// Manage the local CA certificate and OS trust store.
     #[command(subcommand)]
     Trust(TrustCommand),
+
+    /// Install AI coding-agent skills into your project.
+    #[command(subcommand)]
+    Skill(SkillCommand),
+}
+
+#[derive(Subcommand)]
+enum SkillCommand {
+    /// Install the PaaS-agnostic "extract production config" skill into this
+    /// project (default: .claude/skills/). Use --print to emit it to stdout for
+    /// another agent tool, or --dir to choose the location.
+    Install {
+        /// Directory to install into (defaults to `.claude/skills`).
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
+        /// Overwrite an existing SKILL.md.
+        #[arg(long)]
+        force: bool,
+        /// Print the skill to stdout instead of writing a file.
+        #[arg(long)]
+        print: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -218,6 +241,9 @@ async fn main() -> anyhow::Result<()> {
             TrustCommand::Generate => trust::generate()?,
             TrustCommand::Install => trust::install()?,
             TrustCommand::Uninstall => trust::uninstall()?,
+        },
+        Command::Skill(cmd) => match cmd {
+            SkillCommand::Install { dir, force, print } => skill::install(dir, force, print)?,
         },
     }
 

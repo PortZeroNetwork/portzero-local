@@ -96,6 +96,16 @@ it records — with no extra instrumentation:
 Observations persist to `~/.portzero/daemon/observations.json` and accumulate
 while the daemon runs.
 
+## Extraction skill for AI agents
+
+`portzero skill install` drops a PaaS-agnostic **extraction skill** into your
+project (default `.claude/skills/`, or `--print` / `--dir` for other agent
+tools). It teaches an AI coding agent to consume the MCP tools above (plus your
+compose file) and extract everything needed to configure production hosting on
+**any** platform — which containers are public vs internal, ports, health paths,
+service dependencies, and a smoke-test route list. The skill extracts and
+interprets only; it contains no platform-specific templates.
+
 ## Observability caveat
 
 **Only traffic addressed via tunnel names is observed.** Container-to-container
