@@ -1826,6 +1826,7 @@ mod tests {
                 host: "127.0.0.1".to_string(),
                 port: 8080,
                 extra_ports: vec![],
+                health_path: None,
                 source: ServiceSource::Process { cwd: None },
                 pid: 1,
                 discovered_at: chrono::Utc::now(),
@@ -1853,6 +1854,7 @@ mod tests {
                 backend_protocol: None,
                 pid: 100,
                 source: ServiceSource::Process { cwd: None },
+                health_path: None,
             },
             DiscoveredNetworkService {
                 name: "my-api".to_string(),
@@ -1863,6 +1865,7 @@ mod tests {
                 backend_protocol: None,
                 pid: 101,
                 source: ServiceSource::Process { cwd: None },
+                health_path: None,
             },
         ];
 
@@ -1895,6 +1898,7 @@ mod tests {
                 backend_protocol: None,
                 pid: 100,
                 source: ServiceSource::Process { cwd: None },
+                health_path: None,
             },
             DiscoveredNetworkService {
                 name: "staging".to_string(),
@@ -1905,6 +1909,7 @@ mod tests {
                 backend_protocol: None,
                 pid: 101,
                 source: ServiceSource::Process { cwd: None },
+                health_path: None,
             },
         ];
 
@@ -1931,6 +1936,7 @@ mod tests {
             backend_protocol: None,
             pid: 100,
             source: ServiceSource::Process { cwd: None },
+            health_path: None,
         }];
 
         write_overlay_state(&config, &services, true);

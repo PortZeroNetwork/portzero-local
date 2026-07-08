@@ -1,7 +1,7 @@
 ---
 id: e1861148-9c64-450a-a6d0-95803340a22c
 slug: task-60
-status: todo
+status: done
 title: Discover PZ_HEALTH_PATH on tunneled processes and containers
 relations:
   contains:
@@ -23,7 +23,7 @@ Uses:
 
 ## Acceptance Criteria
 
-- [ ] Discovery reads `PZ_HEALTH_PATH` from process and container env, stored on the route/tunnel record
-- [ ] Absent var changes nothing (fully optional)
-- [ ] Shown in `portzero status` output for tunnels that declare it
-- [ ] Documented in portzero-local/docs alongside PZ_TUNNEL / PZ_TUNNEL_HTTP_PORT
+- [x] Discovery reads `PZ_HEALTH_PATH` from process and container env, stored on the route/tunnel record
+- [x] Absent var changes nothing (fully optional)
+- [x] Shown in `portzero status` output for tunnels that declare it
+- [x] Documented in portzero-local/docs alongside PZ_TUNNEL / PZ_TUNNEL_HTTP_PORT
