@@ -71,6 +71,14 @@ pub struct DomainContext {
     /// identity depending on login state, which is exactly what the
     /// `{local-username}`/`{cloud-username}` split exists to prevent.
     pub username: Option<String>,
+    /// Pull-request number for `{pr}`, from the CI environment (GitHub Actions
+    /// `GITHUB_REF=refs/pull/<n>/merge`, or an explicit `PZ_PR_NUMBER`). `None`
+    /// outside a pull request — resolving `{pr}` then fails discovery for that
+    /// tunnel with a clear diagnostic rather than producing a garbled name.
+    pub pr: Option<String>,
+    /// CI run id for `{run-id}`, from GitHub Actions `GITHUB_RUN_ID`. `None`
+    /// outside Actions.
+    pub run_id: Option<String>,
 }
 
 impl DomainContext {
@@ -111,6 +119,8 @@ impl DomainContext {
             machine,
             uid,
             username: username.map(|u| u.to_string()),
+            pr: detect_pr(),
+            run_id: detect_run_id(),
         }
     }
 
@@ -148,6 +158,8 @@ impl DomainContext {
                     machine,
                     uid,
                     username: username.map(|u| u.to_string()),
+                    pr: detect_pr(),
+                    run_id: detect_run_id(),
                 }
             }
         }
@@ -172,7 +184,7 @@ impl DomainContext {
         let uid_value = self.uid.as_deref().unwrap_or(&self.user);
         let cloud_username_value = self.username.as_deref().unwrap_or("");
 
-        template
+        let mut resolved = template
             .replace("{service}", &sanitize_for_dns(&self.service))
             .replace("{project}", &sanitize_for_dns(&self.project))
             .replace("{branch}", &sanitize_for_dns(&self.branch))
@@ -181,8 +193,90 @@ impl DomainContext {
             .replace("{machine}", &sanitize_for_dns(&self.machine))
             .replace("{uid}", &sanitize_for_dns(uid_value))
             .replace("{local-username}", &sanitize_for_dns(&self.user))
-            .replace("{cloud-username}", &sanitize_for_dns(cloud_username_value))
+            .replace("{cloud-username}", &sanitize_for_dns(cloud_username_value));
+
+        // `{pr}` and `{run-id}` come from the CI environment and are only
+        // available inside GitHub Actions (a pull request / a run). When absent
+        // we deliberately leave the literal `{pr}` / `{run-id}` in place so that
+        // [`unresolved_tokens`] can flag it and discovery fails cleanly with a
+        // clear diagnostic — never a garbled name like `web-.example.com`.
+        if let Some(pr) = self.pr.as_deref() {
+            resolved = resolved.replace("{pr}", &sanitize_for_dns(pr));
+        }
+        if let Some(run_id) = self.run_id.as_deref() {
+            resolved = resolved.replace("{run-id}", &sanitize_for_dns(run_id));
+        }
+
+        resolved
     }
+}
+
+/// Return every `{...}` token still present in an already-resolved name.
+///
+/// After [`DomainContext::resolve`] has run, a remaining `{token}` means the
+/// template referenced something the environment could not supply (e.g. `{pr}`
+/// outside a pull request) or an unknown placeholder. Discovery uses this to
+/// fail the tunnel with a clear diagnostic rather than registering a name that
+/// still contains braces.
+pub fn unresolved_tokens(resolved: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = resolved;
+    while let Some(start) = rest.find('{') {
+        let after = &rest[start..];
+        if let Some(end) = after.find('}') {
+            out.push(after[..=end].to_string());
+            rest = &after[end + 1..];
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+/// Validate that a single DNS label does not contain an ambiguous internal
+/// `--`.
+///
+/// `--` is the reserved hierarchy separator inside a single-label tunnel name
+/// (e.g. `{branch}--myapp`). For that to stay unambiguous, each `--`-delimited
+/// segment must itself be a clean sub-label: non-empty and not starting or
+/// ending with a hyphen. This rejects `a--` / `--a` / `a----b` (empty segment)
+/// and `a---b` (a `---` run), while accepting `feat--myapp` and
+/// `my-api--web`.
+pub fn validate_no_internal_double_hyphen(label: &str) -> Result<(), String> {
+    if !label.contains("--") {
+        return Ok(());
+    }
+    for segment in label.split("--") {
+        if segment.is_empty() || segment.starts_with('-') || segment.ends_with('-') {
+            return Err(format!(
+                "label '{label}' has an ambiguous internal '--': '--' separates hierarchy \
+                 segments, so each segment must be a non-empty label without a leading or \
+                 trailing hyphen (got an empty or hyphen-edged segment)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate the resolved (post-template) domain for token / `--` problems.
+///
+/// Returns `Err` with a single clear diagnostic when the name still contains an
+/// unresolved `{token}` or any dot-separated label carries an ambiguous internal
+/// `--`. Suitable for both `.local` overlay names and cloud tunnel domains.
+pub fn validate_resolved_name(resolved: &str) -> Result<(), String> {
+    let unresolved = unresolved_tokens(resolved);
+    if !unresolved.is_empty() {
+        return Err(format!(
+            "'{resolved}' still contains unresolved template token(s) {}: this value is only \
+             available in the right context (e.g. {{pr}} needs a pull request and {{run-id}} \
+             needs a GitHub Actions run). Discovery was skipped rather than register a garbled name.",
+            unresolved.join(", ")
+        ));
+    }
+    for label in resolved.split('.') {
+        validate_no_internal_double_hyphen(label)?;
+    }
+    Ok(())
 }
 
 /// Validate that `{local-username}`/`{cloud-username}` are used correctly for
@@ -508,6 +602,38 @@ fn detect_user() -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
+/// Detect the pull-request number for `{pr}` from the CI environment.
+///
+/// GitHub Actions sets `GITHUB_REF=refs/pull/<n>/merge` (or `/head`) on
+/// `pull_request` events. As an escape hatch for other CI systems, an explicit
+/// `PZ_PR_NUMBER` is also honoured. Returns `None` outside a pull request.
+fn detect_pr() -> Option<String> {
+    if let Ok(git_ref) = std::env::var("GITHUB_REF") {
+        if let Some(rest) = git_ref.strip_prefix("refs/pull/") {
+            if let Some(num) = rest.split('/').next() {
+                if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+                    return Some(num.to_string());
+                }
+            }
+        }
+    }
+    if let Ok(explicit) = std::env::var("PZ_PR_NUMBER") {
+        let trimmed = explicit.trim();
+        if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()) {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
+
+/// Detect the GitHub Actions run id for `{run-id}` from `GITHUB_RUN_ID`.
+fn detect_run_id() -> Option<String> {
+    std::env::var("GITHUB_RUN_ID")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Detect the machine hostname.
 fn detect_machine() -> String {
     hostname::get()
@@ -574,6 +700,8 @@ mod tests {
             machine: "dev-box".to_string(),
             uid: Some("abc12345".to_string()),
             username: Some("alice-cloud".to_string()),
+            pr: None,
+            run_id: None,
         };
 
         let result = ctx.resolve(
@@ -596,6 +724,8 @@ mod tests {
             machine: "laptop".to_string(),
             uid: None,
             username: None,
+            pr: None,
+            run_id: None,
         };
 
         let result = ctx.resolve("{service}-{uid}.{local-username}.tunnel.portzero.cloud");
@@ -613,6 +743,8 @@ mod tests {
             machine: "laptop".to_string(),
             uid: None,
             username: None,
+            pr: None,
+            run_id: None,
         };
 
         let result = ctx.resolve("{service}-{worktree}.{local-username}.tunnel.portzero.cloud");
@@ -630,6 +762,8 @@ mod tests {
             machine: "Dev Box!".to_string(),
             uid: None,
             username: None,
+            pr: None,
+            run_id: None,
         };
 
         let result =
@@ -651,6 +785,8 @@ mod tests {
             machine: "laptop".to_string(),
             uid: Some("abc12345".to_string()),
             username: Some("alice".to_string()),
+            pr: None,
+            run_id: None,
         };
 
         // {local-username} always resolves to the OS user, regardless of
@@ -670,6 +806,8 @@ mod tests {
             machine: "laptop".to_string(),
             uid: Some("abc12345".to_string()),
             username: Some("alice".to_string()),
+            pr: None,
+            run_id: None,
         };
 
         let result = ctx.resolve("{service}.{cloud-username}.tunnel.portzero.cloud");
@@ -687,6 +825,8 @@ mod tests {
             machine: "laptop".to_string(),
             uid: None,
             username: None,
+            pr: None,
+            run_id: None,
         };
 
         // No silent fallback to {uid}/{user} — an unresolved {cloud-username}
@@ -750,6 +890,90 @@ mod tests {
             false
         )
         .is_ok());
+    }
+
+    fn ci_ctx(pr: Option<&str>, run_id: Option<&str>) -> DomainContext {
+        DomainContext {
+            service: "web".to_string(),
+            project: "proj".to_string(),
+            branch: "main".to_string(),
+            worktree: None,
+            user: "alice".to_string(),
+            machine: "runner".to_string(),
+            uid: None,
+            username: Some("alice".to_string()),
+            pr: pr.map(str::to_string),
+            run_id: run_id.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn test_resolve_pr_and_run_id_tokens() {
+        let ctx = ci_ctx(Some("42"), Some("123456"));
+        assert_eq!(
+            ctx.resolve("web-pr-{pr}.alice.tunnel.portzero.cloud"),
+            "web-pr-42.alice.tunnel.portzero.cloud"
+        );
+        assert_eq!(
+            ctx.resolve("web-{run-id}.alice.tunnel.portzero.cloud"),
+            "web-123456.alice.tunnel.portzero.cloud"
+        );
+    }
+
+    #[test]
+    fn test_resolve_user_token_still_works() {
+        // {user} resolves to the (local) username — unchanged existing behavior.
+        let ctx = ci_ctx(None, None);
+        assert_eq!(
+            ctx.resolve("web-{user}.portzero.local"),
+            "web-alice.portzero.local"
+        );
+    }
+
+    #[test]
+    fn test_unresolved_pr_left_literal_then_flagged() {
+        // Outside a PR, {pr} stays literal so validate_resolved_name can flag it
+        // rather than producing "web-.example.com".
+        let ctx = ci_ctx(None, None);
+        let resolved = ctx.resolve("web-{pr}.alice.tunnel.portzero.cloud");
+        assert_eq!(resolved, "web-{pr}.alice.tunnel.portzero.cloud");
+        assert_eq!(unresolved_tokens(&resolved), vec!["{pr}".to_string()]);
+        let err = validate_resolved_name(&resolved).unwrap_err();
+        assert!(err.contains("{pr}"), "got: {err}");
+    }
+
+    #[test]
+    fn test_unresolved_run_id_flagged() {
+        let ctx = ci_ctx(Some("7"), None);
+        let resolved = ctx.resolve("web-{run-id}.alice.tunnel.portzero.cloud");
+        assert!(validate_resolved_name(&resolved).is_err());
+    }
+
+    #[test]
+    fn test_validate_resolved_name_ok_for_clean_names() {
+        assert!(validate_resolved_name("web-42.alice.tunnel.portzero.cloud").is_ok());
+        assert!(validate_resolved_name("web-main.portzero.local").is_ok());
+        // A single, deliberate `--` hierarchy separator is allowed.
+        assert!(validate_resolved_name("feat--myapp.alice.tunnel.portzero.cloud").is_ok());
+    }
+
+    #[test]
+    fn test_validate_no_internal_double_hyphen() {
+        assert!(validate_no_internal_double_hyphen("feat--myapp").is_ok());
+        assert!(validate_no_internal_double_hyphen("my-api--web").is_ok());
+        assert!(validate_no_internal_double_hyphen("plain").is_ok());
+        // Ambiguous forms are rejected.
+        assert!(validate_no_internal_double_hyphen("feat--").is_err());
+        assert!(validate_no_internal_double_hyphen("--myapp").is_err());
+        assert!(validate_no_internal_double_hyphen("a----b").is_err());
+        assert!(validate_no_internal_double_hyphen("a---b").is_err());
+    }
+
+    #[test]
+    fn test_validate_resolved_name_rejects_internal_double_hyphen_label() {
+        let err =
+            validate_resolved_name("bad--.alice.tunnel.portzero.cloud").unwrap_err();
+        assert!(err.contains("--"), "got: {err}");
     }
 
     #[test]

@@ -161,6 +161,25 @@ fn inspect_container(
         return Ok(None);
     }
 
+    // Fail cleanly on unresolved tokens ({pr}/{run-id} outside CI) or an
+    // ambiguous internal `--` in a label, rather than registering a garbled name.
+    if let Err(e) = portzero_domain::validate_resolved_name(&domain) {
+        tracing::warn!(
+            container = name,
+            template = raw_domain,
+            domain,
+            error = %e,
+            "PZ_TUNNEL template resolved to an invalid name"
+        );
+        issues.push(crate::notify::Issue::InvalidResolvedName {
+            template: raw_domain.to_string(),
+            resolved: domain.clone(),
+            reason: e,
+            context: format!("container {name}"),
+        });
+        return Ok(None);
+    }
+
     if let Err(e) = validate_tunnel_domain(&domain) {
         tracing::warn!(
             container = name,
@@ -412,6 +431,20 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
             tracing::warn!(
                 "PZ_TUNNEL=api.portzero.local is reserved by the portzero daemon; ignoring process {}",
                 pid
+            );
+            continue;
+        }
+
+        // Skip local overlay tunnels whose resolved name still carries an
+        // unresolved token ({pr}/{run-id} outside CI) or an ambiguous internal
+        // `--`, rather than registering a garbled overlay name.
+        if let Err(e) = portzero_domain::validate_resolved_name(&resolved_name) {
+            tracing::warn!(
+                container = _name,
+                template = raw_domain,
+                resolved_name,
+                error = %e,
+                "PZ_TUNNEL .local template resolved to an invalid name; skipping"
             );
             continue;
         }
