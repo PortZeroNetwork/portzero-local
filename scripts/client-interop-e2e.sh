@@ -10,7 +10,12 @@ DOMAIN="${STAGING_DOMAIN:?Set STAGING_DOMAIN to the staging base domain}"
 SEED_TOKEN="${TEST_LOGIN_SEED_TOKEN:?Set TEST_LOGIN_SEED_TOKEN to the staging test-seed-login bearer token}"
 BINARY_PATH="${PORTZERO_PREBUILT_BINARY_PATH:?Set PORTZERO_PREBUILT_BINARY_PATH to the just-built portzero binary}"
 EMAIL="${STAGING_CLIENT_E2E_EMAIL:-staging-client-e2e-macos@example.com}"
-USERNAME="${STAGING_CLIENT_E2E_USERNAME:-tunnel-e2e}"
+# Unique per platform/repo so concurrent E2E runs against shared staging
+# (this job, the sibling Windows job below, and portzero-cloud's own E2E
+# job) don't register the same tunnel domain. Kept as a single label:
+# Caddy's TLS cert for tunnel domains is a single-level wildcard
+# (*.tunnel.<domain>) and does not cover multi-label subdomains.
+USERNAME="${STAGING_CLIENT_E2E_USERNAME:-tunnel-e2e-macos}"
 ACCOUNT_ID="${STAGING_CLIENT_E2E_ACCOUNT_ID:-staging-client-e2e-macos-account}"
 VERIFY_CODE="${STAGING_CLIENT_E2E_CODE:-424242}"
 
@@ -18,7 +23,7 @@ API_URL="https://app.${DOMAIN}/api"
 EDGE_URL="wss://edge.${DOMAIN}/tunnel"
 AUTH_URL="${API_URL}/auth/verify"
 SEED_URL="${API_URL}/auth/test-seed-login"
-TUNNEL_DOMAIN="client-e2e-macos.${USERNAME}.tunnel.${DOMAIN}"
+TUNNEL_DOMAIN="${USERNAME}.tunnel.${DOMAIN}"
 EXPECTED_BODY="portzero-client-e2e-ok"
 
 WORK_DIR="$(mktemp -d)"
