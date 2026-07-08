@@ -67,11 +67,52 @@ git context:
 |--------------|-----------------------------------------------------|
 | `{branch}`   | the current git branch (e.g. `feature-x`)           |
 | `{worktree}` | the basename of the git worktree / repo root        |
+| `{project}`  | the git repository / project name                   |
+| `{user}`     | your OS login username (same as `{local-username}`) |
+| `{pr}`       | pull-request number, from the CI environment        |
+| `{run-id}`   | GitHub Actions run id (`GITHUB_RUN_ID`)             |
 
 ```
 PZ_TUNNEL=web-{branch}.portzero.local
 PZ_TUNNEL=api-{worktree}.{cloud-username}.tunnel.portzero.cloud
+PZ_TUNNEL=pr-{pr}--myapp.{cloud-username}.tunnel.portzero.cloud   # review app per PR
 ```
+
+### CI tokens: `{pr}` and `{run-id}`
+
+`{pr}` and `{run-id}` are resolved from the CI environment:
+
+- `{pr}` — the pull-request number. In GitHub Actions it is read from
+  `GITHUB_REF` (`refs/pull/<n>/merge`); other CI systems can set `PZ_PR_NUMBER`
+  explicitly.
+- `{run-id}` — the GitHub Actions run id, from `GITHUB_RUN_ID`.
+
+If a template uses one of these **outside** the context that supplies it (e.g.
+`{pr}` when not running against a pull request), the daemon does **not** guess or
+drop the token. Discovery for that one tunnel is skipped with a clear diagnostic
+(surfaced in `portzero status` and the dashboard) rather than registering a
+garbled name such as `web-.example.com`. Other tunnels are unaffected.
+
+### Single-label names and the `--` hierarchy convention
+
+On the shared cloud domain a tunnel name stays a **single DNS label**. Express
+hierarchy with a double hyphen `--` inside that label, not with extra dots:
+
+```
+PZ_TUNNEL=pr-{pr}--myapp.{cloud-username}.tunnel.portzero.cloud   # "pr-<n>" under "myapp"
+```
+
+- `_` is not usable — it is invalid in hostnames and banned in certificate SANs.
+- Dots are reserved for the username scope and (cloud-side) wildcard custom
+  domains, so they are not used for per-name hierarchy here.
+- A label must not contain an **ambiguous internal `--`**: each `--`-separated
+  segment must be a clean sub-label (non-empty, no leading/trailing hyphen). So
+  `feat--myapp` and `my-api--web` are fine, but `feat--`, `--myapp`, `a----b`,
+  and `a---b` are rejected so the hierarchy stays unambiguous.
+
+Server-side validation of resolved names against team naming policies happens on
+the cloud edge; the rules above are what the local daemon enforces at discovery
+time.
 
 The daemon resolves these itself from the host (for native processes from the
 process context; for Docker containers by inspecting bind mounts and compose

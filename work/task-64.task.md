@@ -1,7 +1,7 @@
 ---
 id: 0e9ad524-482e-4461-aa57-59fc81cb80dc
 slug: task-64
-status: todo
+status: done
 title: Resolve {user}, {pr}, {run-id} tokens in PZ_TUNNEL templates
 relations:
   contains:
@@ -28,7 +28,7 @@ cloud counterpart (portzero-cloud backlog task-028).
 
 ## Acceptance Criteria
 
-- [ ] Tokens resolve for both process and container discovery
-- [ ] Unresolvable token (e.g. {pr} outside a PR) fails discovery for that tunnel with a clear diagnostic, not a garbled name
-- [ ] Segment validation rejects internal `--`
-- [ ] Docs updated with the token table and the `--` convention
+- [x] Tokens resolve for both process and container discovery
+- [x] Unresolvable token (e.g. {pr} outside a PR) fails discovery for that tunnel with a clear diagnostic, not a garbled name
+- [x] Segment validation rejects internal `--`
+- [x] Docs updated with the token table and the `--` convention

@@ -971,8 +971,7 @@ mod tests {
 
     #[test]
     fn test_validate_resolved_name_rejects_internal_double_hyphen_label() {
-        let err =
-            validate_resolved_name("bad--.alice.tunnel.portzero.cloud").unwrap_err();
+        let err = validate_resolved_name("bad--.alice.tunnel.portzero.cloud").unwrap_err();
         assert!(err.contains("--"), "got: {err}");
     }
 
