@@ -60,3 +60,54 @@ Actions job).
 > These commands are the script-friendly escape hatch. For Playwright
 > specifically, the [`@portzero/playwright`](../client) fixture package talks to
 > the daemon directly and is the preferred integration.
+
+## `portzero wait <tunnel-domain> [--healthy] [--timeout <secs>]`
+
+Blocks until the tunnel is **up**, then exits `0`. This is the readiness gate for
+CD smoke tests and Playwright `webServer` blocks — the same command works for
+Local and Cloud tunnels.
+
+```bash
+docker compose up -d
+portzero wait web.myapp.portzero.local            # up = discovered & routable
+portzero wait web.myapp.portzero.local --healthy  # also polls the health path
+portzero wait web.myapp.portzero.local --timeout 120
+```
+
+- **`--healthy`** additionally polls the endpoint's health path until it returns
+  `2xx`. If the endpoint declares [`PZ_HEALTH_PATH`](portzero.md#pz_health_path),
+  that path is polled automatically (even without `--healthy`); otherwise
+  `--healthy` defaults to `/`.
+- **`--timeout`** caps the wait (default **60s**). On timeout the command exits
+  non-zero with a message explaining what it was still waiting for.
+- **Paused vs dead.** A *paused* tunnel (an edge-only pause — a cloud-side
+  feature) is reported **distinctly**: `wait` fails fast with a "paused" message
+  rather than blocking, because waiting cannot help. A *dead* tunnel (one that
+  never comes up) fails on timeout. The two never look the same.
+
+### Playwright `webServer` example
+
+Start the stack and gate the test run on the tunnel being healthy before
+Playwright opens the first page:
+
+```ts
+// playwright.config.ts
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  webServer: {
+    command:
+      'docker compose up -d && portzero wait web.myapp.portzero.local --healthy',
+    url: 'http://web.myapp.portzero.local',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+  },
+  use: {
+    baseURL: 'http://web.myapp.portzero.local',
+  },
+});
+```
+
+The identical `webServer` block runs in local dev and in a GitHub Actions job —
+that is the point. In CI you can also export the URL first with
+`portzero env --github` and read `process.env.PZ_URL_*` for `baseURL`.

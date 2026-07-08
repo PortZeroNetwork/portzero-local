@@ -1,7 +1,7 @@
 ---
 id: fc757857-e263-4eec-a737-58fa44079c55
 slug: task-61
-status: todo
+status: done
 title: Add portzero wait <tunnel-domain> --healthy for CI and test readiness gates
 relations:
   contains:
@@ -30,7 +30,7 @@ distinctly.
 
 ## Acceptance Criteria
 
-- [ ] Exits 0 when tunnel is up (and healthy, if requested); nonzero on timeout with a clear message
-- [ ] Works for Local and Cloud tunnels
-- [ ] `--timeout` with a sensible default
-- [ ] Documented with a Playwright webServer example
+- [x] Exits 0 when tunnel is up (and healthy, if requested); nonzero on timeout with a clear message
+- [x] Works for Local and Cloud tunnels
+- [x] `--timeout` with a sensible default
+- [x] Documented with a Playwright webServer example

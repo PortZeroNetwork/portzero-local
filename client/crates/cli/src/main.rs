@@ -14,6 +14,7 @@ mod setup;
 mod team;
 mod trust;
 mod update;
+mod wait;
 
 #[derive(Parser)]
 #[command(
@@ -58,6 +59,18 @@ enum Command {
         /// lines (for use inside a GitHub Actions job).
         #[arg(long)]
         github: bool,
+    },
+    /// Block until a tunnel is up (readiness gate for CI and test runs).
+    Wait {
+        /// The tunnel domain, e.g. `web.myapp.portzero.local`.
+        domain: String,
+        /// Also poll the tunnel's health path until it returns 2xx. Health is
+        /// polled automatically when the endpoint declares PZ_HEALTH_PATH.
+        #[arg(long)]
+        healthy: bool,
+        /// Maximum seconds to wait before failing (default: 60).
+        #[arg(long)]
+        timeout: Option<u64>,
     },
 
     /// Run privileged first-run setup after package installation.
@@ -163,6 +176,11 @@ async fn main() -> anyhow::Result<()> {
         Command::Status => daemon::status().await?,
         Command::Url { domain } => export::url(&domain)?,
         Command::Env { github } => export::env(github)?,
+        Command::Wait {
+            domain,
+            healthy,
+            timeout,
+        } => wait::wait(&domain, healthy, timeout).await?,
         Command::Setup => setup::run().await?,
 
         Command::Login {

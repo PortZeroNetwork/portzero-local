@@ -12,9 +12,11 @@ use portzero_daemon::discovery_loop::DaemonConfig;
 use portzero_daemon::route_table::{OverlayState, RouteTable};
 
 /// A discovered tunnel and its resolved URL.
-struct TunnelUrl {
-    domain: String,
-    url: String,
+pub struct TunnelUrl {
+    pub domain: String,
+    pub url: String,
+    /// Declared readiness path (`PZ_HEALTH_PATH`), if any.
+    pub health_path: Option<String>,
 }
 
 /// Resolve the URL a client should use to reach a tunnel.
@@ -56,7 +58,7 @@ pub fn env_var_name(domain: &str) -> String {
 
 /// Collect every discovered tunnel (cloud routes + local overlay routes) with
 /// its resolved URL, sorted by domain for stable output.
-fn discovered_tunnels(config: &DaemonConfig) -> Vec<TunnelUrl> {
+pub fn discovered_tunnels(config: &DaemonConfig) -> Vec<TunnelUrl> {
     let table = RouteTable::load(&config.routes_path()).unwrap_or_default();
     let overlay = OverlayState::load(&config.overlay_path()).unwrap_or_default();
 
@@ -65,18 +67,28 @@ fn discovered_tunnels(config: &DaemonConfig) -> Vec<TunnelUrl> {
         out.push(TunnelUrl {
             url: tunnel_url(&route.domain, route.port),
             domain: route.domain.clone(),
+            health_path: route.health_path.clone(),
         });
     }
     for ov in &overlay.routes {
         out.push(TunnelUrl {
             url: tunnel_url(&ov.domain, ov.service_port),
             domain: ov.domain.clone(),
+            health_path: ov.health_path.clone(),
         });
     }
 
     out.sort_by(|a, b| a.domain.cmp(&b.domain));
     out.dedup_by(|a, b| a.domain.eq_ignore_ascii_case(&b.domain));
     out
+}
+
+/// Look up a single discovered tunnel by domain (case-insensitive).
+pub fn lookup_tunnel(config: &DaemonConfig, domain: &str) -> Option<TunnelUrl> {
+    let target = domain.trim();
+    discovered_tunnels(config)
+        .into_iter()
+        .find(|t| t.domain.eq_ignore_ascii_case(target))
 }
 
 /// `portzero url <domain>` — print exactly the resolved URL on stdout.
