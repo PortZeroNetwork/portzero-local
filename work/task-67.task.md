@@ -1,7 +1,7 @@
 ---
 id: 84791bc2-98c0-44da-a316-4033901b74c4
 slug: task-67
-status: todo
+status: in-progress
 title: Playwright fixture package for portzero tunnels
 relations:
   contains:
@@ -28,5 +28,12 @@ Same fixture works in local dev and GitHub Actions — that is the point.
 ## Acceptance Criteria
 
 - [ ] Package published; works against Local and Cloud tunnels
-- [ ] Example in portzero-examples (local dev + Actions workflow)
-- [ ] Degrades clearly when the daemon is not running
+      (package builds, `npm pack` succeeds, node tests pass, and it works against
+      both Local and Cloud tunnels via `portzero url`/`wait` — but PUBLISHING to
+      npm is a human step and is intentionally NOT done here)
+- [x] Example in portzero-examples (local dev + Actions workflow)
+      (example created: `client/npm/playwright/example/` has `playwright.config.ts`,
+      a spec, and `github-actions.example.yml`. Kept in this repo rather than the
+      sibling `portzero-examples` checkout because this worktree is scoped to
+      portzero-local only; mirroring it into portzero-examples is a follow-up.)
+- [x] Degrades clearly when the daemon is not running
