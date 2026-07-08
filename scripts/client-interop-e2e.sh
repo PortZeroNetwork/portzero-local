@@ -90,7 +90,7 @@ start_local_service() {
   printf '%s\n' "${EXPECTED_BODY}" > "${HTTP_DIR}/index.html"
   (
     cd "${HTTP_DIR}"
-    PZ_TUNNEL="${TUNNEL_DOMAIN}:80" python3 -m http.server 0 --bind 127.0.0.1
+    PZ_TUNNEL="${TUNNEL_DOMAIN}:80" python3 -u -m http.server 0 --bind 127.0.0.1
   ) > "${WORK_DIR}/http.log" 2>&1 &
   HTTP_PID="$!"
 
