@@ -136,6 +136,15 @@ wait_for_route() {
   exit 1
 }
 
+approve_route() {
+  curl -fsS \
+    -X POST \
+    -H "Authorization: Bearer $(jq -r .token "${HOME_DIR}/.portzero/auth.json")" \
+    -H 'Content-Type: application/json' \
+    -d '{}' \
+    "${API_URL}/routes/${TUNNEL_DOMAIN}/approve" >/dev/null
+}
+
 curl_public_tunnel() {
   for i in $(seq 1 30); do
     body="$(curl -fsS --connect-timeout 5 --max-time 10 "https://${TUNNEL_DOMAIN}/" || true)"
@@ -160,4 +169,5 @@ HOME="${HOME_DIR}" PZ_TUNNEL_API_URL="${API_URL}" "${BIN_DIR}/portzero" whoami
 start_local_service
 start_portzero
 wait_for_route
+approve_route
 curl_public_tunnel

@@ -161,6 +161,12 @@ function Wait-ForRoute {
     throw "Route did not register: $TunnelDomain"
 }
 
+function Approve-Route {
+    $authJson = Get-Content (Join-Path $AuthDir "auth.json") -Raw | ConvertFrom-Json
+    $headers = @{ Authorization = "Bearer $($authJson.token)" }
+    Invoke-RestMethod -Method Post -Uri "$ApiUrl/routes/$TunnelDomain/approve" -Headers $headers -ContentType "application/json" -Body "{}" | Out-Null
+}
+
 function Test-PublicTunnel {
     for ($i = 1; $i -le 30; $i++) {
         try {
@@ -192,6 +198,7 @@ try {
     Start-LocalService
     Start-Portzero
     Wait-ForRoute
+    Approve-Route
     Test-PublicTunnel
 }
 finally {
