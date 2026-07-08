@@ -170,6 +170,12 @@ impl DaemonConfig {
         self.state_dir.join("overlay.json")
     }
 
+    /// Path to the observed runtime-truth file (observed edges + exercised
+    /// routes), read by `portzero inspect` and the MCP server.
+    pub fn observations_path(&self) -> PathBuf {
+        self.state_dir.join("observations.json")
+    }
+
     /// Path to the diagnostics report file.
     pub fn diagnostics_path(&self) -> PathBuf {
         self.state_dir.join("diagnostics.json")
@@ -374,10 +380,18 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     let mut auth_failed = false;
     let mut cloud: Option<CloudConnector> = None;
 
+    // Records observed edges + exercised routes from forwarded cloud traffic
+    // (task-63), persisted to observations.json for `portzero inspect` and the
+    // MCP server. Shared with every cloud connector we create.
+    let observations = Arc::new(crate::observations::ObservationStore::new(
+        &config.state_dir,
+    ));
+
     if let Some(ref token) = current_token {
         tracing::info!("Auth token found, connecting to cloud edge");
         let mut connector = CloudConnector::new(token.clone());
         connector.set_status_path(config.cloud_route_status_path());
+        connector.set_observations(observations.clone());
         match connector.connect(domain_router.clone()).await {
             Ok(()) => {
                 let p = connector.plan();
@@ -937,6 +951,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                         );
                         let mut connector = CloudConnector::new(token);
                         connector.set_status_path(config.cloud_route_status_path());
+                        connector.set_observations(observations.clone());
                         match connector.connect(domain_router.clone()).await {
                             Ok(()) => {
                                 reconnect_backoff.on_success();
@@ -1027,6 +1042,10 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             ),
         }
     }
+
+    // Persist any observed edges / exercised routes that were buffered since the
+    // last throttled flush, so the final snapshot on disk is complete.
+    observations.flush();
 
     remove_pid_file(&config);
     tracing::info!("Discovery daemon stopped");

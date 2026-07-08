@@ -10,6 +10,8 @@ mod autostart;
 mod browser;
 mod daemon;
 mod export;
+mod inspect;
+mod mcp;
 mod setup;
 mod team;
 mod trust;
@@ -72,6 +74,12 @@ enum Command {
         #[arg(long)]
         timeout: Option<u64>,
     },
+    /// Show the daemon's observed runtime truth as human-friendly text
+    /// (discovered services, tunnels, observed edges, exercised routes).
+    Inspect,
+    /// Run the Model Context Protocol server (JSON-RPC over stdio) exposing the
+    /// same runtime truth to AI coding agents.
+    Mcp,
 
     /// Run privileged first-run setup after package installation.
     #[command(alias = "post-install")]
@@ -181,6 +189,8 @@ async fn main() -> anyhow::Result<()> {
             healthy,
             timeout,
         } => wait::wait(&domain, healthy, timeout).await?,
+        Command::Inspect => inspect::inspect()?,
+        Command::Mcp => mcp::serve()?,
         Command::Setup => setup::run().await?,
 
         Command::Login {

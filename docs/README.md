@@ -36,6 +36,7 @@ All documents in this directory are written for **developers using Port Zero Loc
 - [PZ_TUNNEL semantics](portzero.md) — the full-domain rule, how the suffix selects cloud vs. local, `{branch}` / `{worktree}` templates, and when the variable must be set.
 - [Examples](examples.md) — checked-in instructions generated from the latest adjacent `portzero-examples` checkout.
 - [Dev-to-production flow](dev-to-production.md) — `portzero url` / `portzero env` / `portzero wait` for exporting tunnel URLs and gating CI and test runs on tunnel readiness.
+- [MCP server & `portzero inspect`](mcp.md) — the daemon's observed runtime truth (discovered services, tunnel domains, health paths, observed edges, exercised routes) for humans and AI coding agents, plus the observability caveat.
 
 ### How it works
 

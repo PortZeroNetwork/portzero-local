@@ -1,7 +1,7 @@
 ---
 id: bea44529-7acf-4375-87ae-b36173cc37ab
 slug: task-63
-status: todo
+status: done
 title: Expose daemon runtime truth via MCP server, plus human-friendly portzero inspect
 relations:
   contains:
@@ -34,7 +34,7 @@ container-to-container traffic over compose-internal DNS bypasses the daemon.
 
 ## Acceptance Criteria
 
-- [ ] MCP server ships with the daemon and is documented (how agents connect, tool/resource list)
-- [ ] MCP exposes services, ports, tunnel domains, health paths, observed edges, exercised routes
-- [ ] `portzero inspect` renders the same data as human-friendly text (no JSON output mode)
-- [ ] Observability caveat documented
+- [x] MCP server ships with the daemon and is documented (how agents connect, tool/resource list)
+- [x] MCP exposes services, ports, tunnel domains, health paths, observed edges, exercised routes
+- [x] `portzero inspect` renders the same data as human-friendly text (no JSON output mode)
+- [x] Observability caveat documented
