@@ -30,6 +30,10 @@ pub struct Route {
     /// Additional raw port mappings from PZ_TUNNEL_PORTS.
     #[serde(default)]
     pub extra_ports: Vec<PortMapping>,
+    /// Optional readiness path from PZ_HEALTH_PATH (e.g. "/health"). `None` when
+    /// the endpoint does not declare one.
+    #[serde(default)]
+    pub health_path: Option<String>,
     /// How the service was discovered.
     pub source: ServiceSource,
     /// Process ID that owns the service.
@@ -97,7 +101,10 @@ impl RouteTable {
 
         for (domain, svc) in &seen_domains {
             if let Some(existing) = self.routes.get(domain) {
-                if existing.port != svc.port || existing.pid != svc.pid {
+                if existing.port != svc.port
+                    || existing.pid != svc.pid
+                    || existing.health_path != svc.health_path
+                {
                     let route = Route {
                         domain: domain.clone(),
                         domain_template: svc.domain_template.clone(),
@@ -105,6 +112,7 @@ impl RouteTable {
                         host: "127.0.0.1".to_string(),
                         port: svc.port,
                         extra_ports: svc.extra_ports.clone(),
+                        health_path: svc.health_path.clone(),
                         source: svc.source.clone(),
                         pid: svc.pid,
                         discovered_at: existing.discovered_at,
@@ -125,6 +133,7 @@ impl RouteTable {
                     host: "127.0.0.1".to_string(),
                     port: svc.port,
                     extra_ports: svc.extra_ports.clone(),
+                    health_path: svc.health_path.clone(),
                     source: svc.source.clone(),
                     pid: svc.pid,
                     discovered_at: now,
@@ -204,6 +213,10 @@ pub struct OverlayRoute {
     pub service_port: u16,
     /// Actual host address the daemon proxies to (e.g. "127.0.0.1:32771").
     pub real_addr: String,
+    /// Optional readiness path from PZ_HEALTH_PATH (e.g. "/health"). `None` when
+    /// the endpoint does not declare one.
+    #[serde(default)]
+    pub health_path: Option<String>,
     /// Process ID that owns the service (0 for containers).
     pub pid: u32,
     /// How the service was discovered.
@@ -264,6 +277,7 @@ mod tests {
             substitutions: Default::default(),
             port,
             extra_ports: vec![],
+            health_path: None,
             pid,
             source: ServiceSource::Process {
                 cwd: Some(PathBuf::from("/tmp/test")),
@@ -343,6 +357,55 @@ mod tests {
         assert!(loaded.routes.contains_key("api.example.com"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_health_path_carried_onto_route_and_persisted() {
+        let dir = std::env::temp_dir().join(format!("portzero-health-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("routes.json");
+
+        let mut svc = make_service("api.alice.tunnel.portzero.cloud", 8080, 100);
+        svc.health_path = Some("/health".to_string());
+
+        let mut table = RouteTable::new();
+        table.update(vec![svc]);
+        let route = table
+            .routes
+            .get("api.alice.tunnel.portzero.cloud")
+            .expect("route present");
+        assert_eq!(route.health_path.as_deref(), Some("/health"));
+
+        // Survives a save/load round-trip.
+        table.save(&path).unwrap();
+        let loaded = RouteTable::load(&path).unwrap();
+        assert_eq!(
+            loaded
+                .routes
+                .get("api.alice.tunnel.portzero.cloud")
+                .and_then(|r| r.health_path.as_deref()),
+            Some("/health")
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_health_path_change_updates_route() {
+        let mut table = RouteTable::new();
+        let mut svc = make_service("api.example.com", 8080, 100);
+        table.update(vec![svc.clone()]);
+
+        // Same port/pid, but a newly-declared health path must be persisted.
+        svc.health_path = Some("/ready".to_string());
+        table.update(vec![svc]);
+        assert_eq!(
+            table
+                .routes
+                .get("api.example.com")
+                .and_then(|r| r.health_path.as_deref()),
+            Some("/ready")
+        );
     }
 
     #[test]

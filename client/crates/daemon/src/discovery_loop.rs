@@ -681,6 +681,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                         substitutions: route.substitutions.clone(),
                         port: route.port,
                         extra_ports: route.extra_ports.clone(),
+                        health_path: route.health_path.clone(),
                         pid: route.pid,
                         source: route.source.clone(),
                     });
@@ -1069,6 +1070,7 @@ fn write_overlay_state(
             substitutions: s.substitutions.clone(),
             service_port: s.service_port,
             real_addr: s.real_addr.to_string(),
+            health_path: s.health_path.clone(),
             pid: s.pid,
             source: s.source.clone(),
         })

@@ -106,6 +106,9 @@ pub(super) fn scan_processes(
                 .map(|v| parse_extra_ports(&v))
                 .unwrap_or_default();
 
+            let health_path = scan_process_env(pid_u32, ENV_HEALTH_PATH_VAR)
+                .and_then(|v| normalize_health_path(&v));
+
             let listening = discover_process_ports(pid_u32);
 
             let port = match select_http_port(&listening, &http_selection) {
@@ -155,6 +158,7 @@ pub(super) fn scan_processes(
                 substitutions,
                 port,
                 extra_ports,
+                health_path,
                 pid: pid_u32,
                 source: ServiceSource::Process {
                     cwd: process_context.cwd,
@@ -259,6 +263,9 @@ pub(super) fn scan_processes_windows(
             .map(|v| parse_extra_ports(&v))
             .unwrap_or_default();
 
+        let health_path =
+            scan_process_env(pid_u32, ENV_HEALTH_PATH_VAR).and_then(|v| normalize_health_path(&v));
+
         let port = match select_http_port(&listening, &http_selection) {
             SelectedPort::Found(p) => p,
             SelectedPort::ExplicitNotOwned(requested) => {
@@ -296,6 +303,7 @@ pub(super) fn scan_processes_windows(
             substitutions,
             port,
             extra_ports,
+            health_path,
             pid: pid_u32,
             source: ServiceSource::Process {
                 cwd: process_context.cwd,
@@ -1291,6 +1299,7 @@ struct NetProcessCandidate {
     needs_probe: bool,
     pid: u32,
     cwd: Option<PathBuf>,
+    health_path: Option<String>,
 }
 
 // Blocking half: sysinfo refresh + per-process ps/lsof calls. Must not .await.
@@ -1401,6 +1410,8 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
                 needs_probe,
                 pid: pid_u32,
                 cwd: process_context.cwd,
+                health_path: scan_process_env(pid_u32, ENV_HEALTH_PATH_VAR)
+                    .and_then(|v| normalize_health_path(&v)),
             });
         }
 
@@ -1511,6 +1522,8 @@ fn scan_network_processes_sync_macos() -> Vec<NetProcessCandidate> {
             needs_probe,
             pid: pid_u32,
             cwd: process_context.cwd,
+            health_path: scan_process_env(pid_u32, ENV_HEALTH_PATH_VAR)
+                .and_then(|v| normalize_health_path(&v)),
         });
     }
 
@@ -1631,6 +1644,8 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
             needs_probe,
             pid: pid_u32,
             cwd: process_context.cwd,
+            health_path: scan_process_env(pid_u32, ENV_HEALTH_PATH_VAR)
+                .and_then(|v| normalize_health_path(&v)),
         });
     }
 
@@ -1680,6 +1695,7 @@ pub(super) async fn scan_network_processes(
             backend_protocol: detected,
             pid: c.pid,
             source: ServiceSource::Process { cwd: c.cwd },
+            health_path: c.health_path,
         });
     }
 

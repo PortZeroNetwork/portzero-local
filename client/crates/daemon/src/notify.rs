@@ -408,6 +408,7 @@ mod tests {
             source: ServiceSource::Process {
                 cwd: cwd.map(PathBuf::from),
             },
+            health_path: None,
         }
     }
 
@@ -424,6 +425,7 @@ mod tests {
                 id: id.to_string(),
                 name: name.to_string(),
             },
+            health_path: None,
         }
     }
 

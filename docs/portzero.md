@@ -125,3 +125,39 @@ PZ_TUNNEL=db-{cloud-username}.portzero.local                        # ok if logg
 Always bind your listener to port 0 so the OS assigns an ephemeral port. The
 daemon discovers the real port; you never hardcode it. The VIP exposes a stable
 tunnel port (e.g. `:5432`, `:80`) regardless of the random backend port.
+
+## Companion environment variables
+
+These optional variables are read from the same process/container environment as
+`PZ_TUNNEL`, and like `PZ_TUNNEL` they must be set **before launch**.
+
+| Variable              | Purpose                                                                 |
+|-----------------------|-------------------------------------------------------------------------|
+| `PZ_TUNNEL_HTTP_PORT` | Choose which HTTP port to forward: an explicit port, or `CHOOSE_LOWEST` (default) / `CHOOSE_HIGHEST`. |
+| `PZ_TUNNEL_PORTS`     | Extra raw port mappings for non-HTTP forwarding: `local:tunnel[;local:tunnel...]` (e.g. `9222:9222`). |
+| `PZ_HEALTH_PATH`      | HTTP path that signals the endpoint is ready (e.g. `/health`).          |
+
+### `PZ_HEALTH_PATH`
+
+`PZ_HEALTH_PATH` declares the HTTP path that returns `2xx` once the tunneled
+endpoint is ready to serve traffic. It is **entirely optional** — omitting it
+changes nothing.
+
+```bash
+export PZ_TUNNEL=web-{branch}.portzero.local
+export PZ_HEALTH_PATH=/health          # bare paths are rooted automatically → /health
+```
+
+- The value is normalized to a rooted path: `health`, `/health`, and ` health `
+  all become `/health`.
+- It is stored on the discovered route/tunnel record and shown in the `HEALTH`
+  column of `portzero status` (and in `portzero inspect`) for any tunnel that
+  declares it. Tunnels without it are unaffected and the column is hidden when
+  no tunnel declares one.
+- [`portzero wait <domain> --healthy`](portzero.md) polls this path until it
+  returns `2xx`, which is how CI and Playwright `webServer` blocks gate on real
+  readiness rather than mere port-up.
+- The path is a **portable fact**: it survives graduation to a production PaaS
+  (which will have its own health-check configuration) even though the `PZ_*`
+  variable itself does not. AI coding-agent skills carry the value into the
+  production config at graduation time.

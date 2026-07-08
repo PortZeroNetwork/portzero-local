@@ -84,6 +84,31 @@ const ENV_PORTS_VAR: &str = "PZ_TUNNEL_PORTS";
 /// process (or on the daemon's own env) probing is skipped entirely.
 const ENV_NO_PROBE_VAR: &str = "PZ_TUNNEL_NO_PROBE";
 
+/// Optional HTTP path that signals the tunneled endpoint is ready (e.g.
+/// `/health`). Discovered alongside `PZ_TUNNEL`; entirely optional. Consumed by
+/// `portzero wait --healthy` and surfaced in `portzero status` / `portzero
+/// inspect`. The value survives graduation to a PaaS even though the `PZ_*` var
+/// itself does not.
+const ENV_HEALTH_PATH_VAR: &str = "PZ_HEALTH_PATH";
+
+/// Normalize a raw `PZ_HEALTH_PATH` value into a rooted HTTP path.
+///
+/// - Trims surrounding whitespace.
+/// - Returns `None` for an empty value (fully optional — absent changes nothing).
+/// - Ensures a single leading `/` so `health`, `/health`, and ` health ` all
+///   normalize to `/health`.
+pub fn normalize_health_path(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with('/') {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("/{trimmed}"))
+    }
+}
+
 /// Returns true if the (full) resolved name indicates the local virtual overlay
 /// (must end with .portzero.local or .local).
 ///
@@ -121,6 +146,9 @@ pub struct DiscoveredService {
     pub port: u16,
     /// Additional port mappings from PZ_TUNNEL_PORTS.
     pub extra_ports: Vec<PortMapping>,
+    /// Optional readiness path from PZ_HEALTH_PATH (e.g. "/health"), normalized
+    /// to be rooted. `None` when the endpoint does not declare one.
+    pub health_path: Option<String>,
     /// Process ID that owns the service.
     pub pid: u32,
     /// How the service was discovered.
@@ -304,6 +332,9 @@ pub struct DiscoveredNetworkService {
     pub domain_template: String,
     /// Values available for template substitution when this service was found.
     pub substitutions: BTreeMap<String, String>,
+    /// Optional readiness path from PZ_HEALTH_PATH (e.g. "/health"), normalized
+    /// to be rooted. `None` when the endpoint does not declare one.
+    pub health_path: Option<String>,
 }
 
 /// Scan for services that should participate in the virtual overlay.
@@ -408,6 +439,7 @@ fn append_registered_network_services(
                 backend_protocol: Some(protocol_detect::Canonical::Http),
                 pid: *pid,
                 source: ServiceSource::Process { cwd: None },
+                health_path: None,
             });
         }
     }
@@ -806,6 +838,24 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_health_path() {
+        assert_eq!(
+            normalize_health_path("/health"),
+            Some("/health".to_string())
+        );
+        // A bare path gets a leading slash.
+        assert_eq!(normalize_health_path("health"), Some("/health".to_string()));
+        assert_eq!(
+            normalize_health_path("  /healthz  "),
+            Some("/healthz".to_string())
+        );
+        assert_eq!(normalize_health_path("readyz"), Some("/readyz".to_string()));
+        // Absent / empty stays None so it changes nothing (fully optional).
+        assert_eq!(normalize_health_path(""), None);
+        assert_eq!(normalize_health_path("   "), None);
+    }
+
+    #[test]
     fn test_parse_extra_ports() {
         let mappings = parse_extra_ports("9222:9222;9300:9300");
         assert_eq!(mappings.len(), 2);
@@ -1120,6 +1170,7 @@ mod tests {
             source: ServiceSource::Process {
                 cwd: Some(PathBuf::from("/work/app")),
             },
+            health_path: None,
         };
 
         let dup = DiscoveredNetworkService { ..svc.clone() };
@@ -1142,6 +1193,7 @@ mod tests {
             source: ServiceSource::Process {
                 cwd: Some(PathBuf::from("/work/a")),
             },
+            health_path: None,
         };
 
         let b = DiscoveredNetworkService {
@@ -1167,6 +1219,7 @@ mod tests {
             source: ServiceSource::Process {
                 cwd: Some(PathBuf::from("/work/a")),
             },
+            health_path: None,
         };
 
         let b = DiscoveredNetworkService {
@@ -1191,6 +1244,7 @@ mod tests {
             backend_protocol: None,
             pid: 100,
             source: ServiceSource::Process { cwd: None },
+            health_path: None,
         };
 
         let b = DiscoveredNetworkService {
