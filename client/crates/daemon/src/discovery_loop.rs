@@ -730,7 +730,20 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 .routes
                 .iter()
                 .filter(|(domain, route)| {
-                    !is_process_alive(route.pid) && !grace_tracker.process_missing(domain)
+                    if is_process_alive(route.pid) {
+                        // A live process cannot change its environment after
+                        // exec, so a scan that misses it (e.g. a `ps` failure
+                        // under load) is scanner noise, not a removed service.
+                        // Keep process-sourced routes until the process exits;
+                        // a fresh successful scan of the same domain still wins
+                        // over this re-injected copy in RouteTable::update.
+                        matches!(
+                            route.source,
+                            crate::discovery::ServiceSource::Process { .. }
+                        )
+                    } else {
+                        !grace_tracker.process_missing(domain)
+                    }
                 })
                 .map(|(_, route)| route.clone())
                 .map(|route| route.domain.clone())
