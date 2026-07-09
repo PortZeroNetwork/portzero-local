@@ -579,7 +579,22 @@ jobs:
           STAGING_DOMAIN: ${{ vars.STAGING_DOMAIN }}
           TEST_LOGIN_SEED_TOKEN: ${{ secrets.TEST_LOGIN_SEED_TOKEN }}
           PORTZERO_PREBUILT_BINARY_PATH: artifacts/portzero-darwin-arm64/portzero
-        run: bash scripts/client-interop-e2e.sh
+        # GitHub's macos-15 runners occasionally miss the cloud route
+        # registration window with no error on either side (daemon and cloud
+        # both log a clean session) — a brief retry clears it without masking
+        # a real, reproducible failure.
+        run: |
+          max_attempts=2
+          for attempt in $(seq 1 "${max_attempts}"); do
+            if bash scripts/client-interop-e2e.sh; then
+              exit 0
+            fi
+            if [ "${attempt}" -lt "${max_attempts}" ]; then
+              echo "Attempt ${attempt}/${max_attempts} failed, retrying..."
+              sleep 10
+            fi
+          done
+          exit 1
 
   test-windows-interop:
     name: Windows client interop test

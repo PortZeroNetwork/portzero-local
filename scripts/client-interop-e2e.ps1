@@ -142,9 +142,21 @@ function Start-Portzero {
     $env:PZ_TUNNEL_EDGE_URL = $EdgeUrl
     $env:PZ_TUNNEL_BASE_DOMAIN = $Domain
     & $PortzeroExe start --no-browser
-    if ($LASTEXITCODE -ne 0) {
-        throw "portzero start failed with exit code $LASTEXITCODE"
+
+    # $LASTEXITCODE after `portzero start` has proven unreliable on GitHub's
+    # windows-latest runner: observed as $null even on runs where the daemon
+    # printed its own success output and the daemon log showed a clean startup
+    # and cloud edge connection. Verify functionally via `portzero status`
+    # instead of trusting the native exit code.
+    for ($i = 0; $i -lt 30; $i++) {
+        $status = & $PortzeroExe status 2>&1 | Out-String
+        if ($status -match "Daemon: running") {
+            return
+        }
+        Start-Sleep -Seconds 1
     }
+
+    throw "portzero daemon did not report running via 'portzero status'"
 }
 
 function Wait-ForRoute {
