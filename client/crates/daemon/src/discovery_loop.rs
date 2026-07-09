@@ -29,6 +29,12 @@ const TOKEN_REFRESH_CHECK_INTERVAL_SECS: u64 = 300;
 /// first-hit policy updates visible quickly without requiring a daemon restart.
 const CONFIG_RELOAD_INTERVAL_SECS: u64 = 5;
 const OVERLAY_REFRESH_TIMEOUT: Duration = Duration::from_secs(3);
+/// Hard deadline for the entire overlay network startup (trust install, TUN
+/// device creation, DNS server, scoped resolver). Startup is best-effort and
+/// must never block the discovery loop: if it exceeds this, the daemon
+/// continues in cloud/local-only mode. Generous because first-time wintun
+/// driver/adapter installation on Windows can legitimately take a while.
+const OVERLAY_START_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct ReconnectBackoff {
     next_attempt_at: Option<Instant>,
@@ -504,17 +510,58 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             }
         };
 
-    let overlay: Option<Arc<OverlayNetwork>> = match OverlayNetwork::start(
-        OverlayConfig {
+    // Overlay startup does privileged, platform-heavy work (trust-store install,
+    // TUN/wintun device creation, scoped resolver setup) that has been observed
+    // to wedge indefinitely on some systems (Windows CI runners in particular),
+    // and it sits in front of the discovery loop. The overlay is best-effort, so
+    // it must never be able to block cloud tunnel discovery: run it on a
+    // dedicated blocking-pool thread with a hard deadline, and continue in
+    // cloud/local-only mode if it doesn't finish in time. The per-phase progress
+    // log identifies exactly which setup step wedged when that happens.
+    let mut overlay_start_task = {
+        let overlay_config = OverlayConfig {
             https_policy: config.overlay_https,
             dns_first_hit_policy: config.dns_first_hit_policy,
             ..OverlayConfig::default()
-        },
-        dns_rescan.clone(),
-    )
-    .await
-    {
-        Ok(ov) => {
+        };
+        let dns_rescan = dns_rescan.clone();
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            runtime.block_on(OverlayNetwork::start_with_progress(
+                overlay_config,
+                dns_rescan,
+                |step| tracing::info!("overlay startup step: {step:?}"),
+            ))
+        })
+    };
+    let overlay_start_result: Option<Result<OverlayNetwork>> =
+        match tokio::time::timeout(OVERLAY_START_TIMEOUT, &mut overlay_start_task).await {
+            Ok(Ok(result)) => Some(result),
+            Ok(Err(join_err)) => Some(Err(anyhow::anyhow!(
+                "overlay startup task panicked: {join_err}"
+            ))),
+            Err(_) => {
+                tracing::warn!(
+                    "Virtual overlay network startup did not complete within {}s \
+                     (continuing in cloud/local-only mode). The last logged \
+                     'overlay startup step' names the setup phase that wedged.",
+                    OVERLAY_START_TIMEOUT.as_secs()
+                );
+                // If startup eventually finishes, tear the overlay down cleanly
+                // rather than leaving a half-attached TUN/resolver behind.
+                tokio::spawn(async move {
+                    if let Ok(Ok(ov)) = overlay_start_task.await {
+                        tracing::warn!(
+                            "overlay startup completed after the deadline; shutting it down"
+                        );
+                        ov.shutdown().await;
+                    }
+                });
+                None
+            }
+        };
+    let overlay: Option<Arc<OverlayNetwork>> = match overlay_start_result {
+        Some(Ok(ov)) => {
             tracing::info!("Virtual overlay network started (.portzero.local)");
             // Seed the overlay immediately so existing services are reachable
             // without waiting for the first scan cycle.
@@ -544,12 +591,16 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             .await;
             Some(Arc::new(ov))
         }
-        Err(e) => {
+        Some(Err(e)) => {
             tracing::warn!(
                 "Virtual overlay network not started (continuing in cloud/local-only mode): {:#}. \
                  The overlay needs elevated privileges (root / CAP_NET_ADMIN) to create a TUN device.",
                 e
             );
+            write_overlay_state(&config, &[], false);
+            None
+        }
+        None => {
             write_overlay_state(&config, &[], false);
             None
         }
