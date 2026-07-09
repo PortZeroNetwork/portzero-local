@@ -40,6 +40,13 @@ All documents in this directory are written for **developers using Port Zero Loc
 
 ### Patterns
 
+- [Running portzero in CI](../tunnel-action/README.md) — a GitHub Action
+  (`tunnel-action/`) that installs the daemon on a hosted runner, waits for
+  your `PZ_TUNNEL`-tagged process/container to become reachable, and exposes
+  its URL as a step output. For ephemeral, single-job tunnels (a test suite
+  that needs a real HTTPS URL for the duration of one CI run) — see
+  [Review apps](review-apps.md) below instead for long-lived preview
+  environments.
 - [Review apps (per-PR preview environments)](review-apps.md) — an orchestrator-neutral
   pattern for per-PR preview URLs using only tunnel naming, with a plain `docker compose`
   + GitHub Actions example. Documents that a deploy agent is explicitly out of scope for

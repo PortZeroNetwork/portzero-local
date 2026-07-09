@@ -121,18 +121,21 @@ self-hosted, reused runner).
 - **macOS/Windows runners are not covered by v1.** The daemon supports both
   platforms for local development, but this action has only been built and
   documented against `ubuntu-latest`.
-- **Cloud tunnels are out of scope for this action.** A `*.tunnel.portzero.cloud`
-  domain works the same way from a developer's laptop, but wiring it into CI
-  without a long-lived secret depends on an OIDC credential exchange that is a
-  separate, cloud-side feature currently being built. This action does not
-  implement it; once available, `tunnels:` entries with a `.tunnel.portzero.cloud`
-  suffix will be able to use it without any change to this action's interface.
+- **Cloud tunnels are out of scope for this action (for now).** A
+  `*.tunnel.portzero.cloud` domain works the same way from a developer's
+  laptop, but wiring it into CI without a long-lived secret needs an OIDC
+  credential exchange. The cloud-side half of that (GitHub Actions OIDC token
+  exchange for short-lived scoped tunnel credentials) has since shipped on
+  `portzero-cloud`; this action's client-side integration with it has not.
+  This action does not implement it yet; once wired up, `tunnels:` entries
+  with a `.tunnel.portzero.cloud` suffix will be able to use it without any
+  change to this action's interface.
 
 ## Status
 
-This action ships today from `tunnel-action/` in the `PortZeroNetwork/portzero-local`
-repo (this repo), on the `milestone-4-aux` branch pending merge to `develop`.
-It is usable today via `uses: PortZeroNetwork/portzero-local/tunnel-action@<ref>`
-once that branch/commit is pushed and merged. Mirroring it into a dedicated
+This action ships from `tunnel-action/` in the `PortZeroNetwork/portzero-local`
+repo (this repo), merged to `develop`. It is usable today via
+`uses: PortZeroNetwork/portzero-local/tunnel-action@develop` (or a release
+tag once one exists). Mirroring it into a dedicated
 `portzero/tunnel-action` repo for a shorter `uses:` line is a follow-up human
 step, not done as part of this change — see `work/task-65.task.md`.
