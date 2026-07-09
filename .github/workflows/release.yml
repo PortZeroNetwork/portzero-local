@@ -673,9 +673,8 @@ jobs:
           body: |
             ## Install
 
-            > **Local** (`*.portzero.local`) is governed by the [PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0) ([LICENSE](https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE)).  
-            > **Cloud** features are governed by the [Port Zero Terms of Service](https://portzero.net/terms).  
-            > Required notice: Copyright Loum Technologies (https://loumtechnologies.com)
+            > **Local** (`*.portzero.local`) is free, open-source software under the [GNU GPL v3.0](https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE).
+            > **Cloud** features are governed by the [Port Zero Terms of Service](https://portzero.net/terms).
 
             **macOS (Homebrew)**
             ```sh
