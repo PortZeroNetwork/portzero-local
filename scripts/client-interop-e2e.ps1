@@ -110,21 +110,28 @@ function Start-LocalService {
 
     $stderrLog = Join-Path $WorkDir "http.log"
     $stdoutLog = Join-Path $WorkDir "http.stdout.log"
+    # -u: unbuffered stdout/stderr. Without it, Python fully buffers stdout
+    # when it isn't a TTY (as it isn't here, redirected to a file), so the
+    # "Serving HTTP on ..." banner sits unflushed and this loop always times
+    # out. The banner itself goes to stdout (a plain print(), no file=
+    # argument) — stderr only gets per-request access logs — so it must be
+    # checked in $stdoutLog, not $stderrLog.
     $script:HttpProcess = Start-Process -FilePath "python" `
-        -ArgumentList @("-m", "http.server", "0", "--bind", "127.0.0.1") `
+        -ArgumentList @("-u", "-m", "http.server", "0", "--bind", "127.0.0.1") `
         -WorkingDirectory $HttpDir `
         -RedirectStandardOutput $stdoutLog `
         -RedirectStandardError $stderrLog `
         -PassThru -WindowStyle Hidden
 
     for ($i = 0; $i -lt 30; $i++) {
-        if ((Test-Path $stderrLog) -and (Select-String -Path $stderrLog -Pattern "Serving HTTP" -Quiet)) {
+        if ((Test-Path $stdoutLog) -and (Select-String -Path $stdoutLog -Pattern "Serving HTTP" -Quiet)) {
             return
         }
         Start-Sleep -Seconds 1
     }
 
     Write-Host "::group::local http server log"
+    if (Test-Path $stdoutLog) { Get-Content $stdoutLog | Write-Host }
     if (Test-Path $stderrLog) { Get-Content $stderrLog | Write-Host }
     Write-Host "::endgroup::"
     throw "Local HTTP server did not start"
