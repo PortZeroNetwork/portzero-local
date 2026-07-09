@@ -9,6 +9,7 @@ mod auth;
 mod autostart;
 mod browser;
 mod daemon;
+mod doctor;
 mod export;
 mod inspect;
 mod mcp;
@@ -48,6 +49,15 @@ enum Command {
     Restart,
     /// Show daemon and tunnel status.
     Status,
+
+    /// Diagnose the overlay, DNS, and TLS path in one command.
+    ///
+    /// Runs a series of named checks (daemon running, overlay active, scoped
+    /// resolver, embedded DNS, end-to-end resolution, local CA trust,
+    /// per-tunnel reachability, cloud state), printing pass/warn/fail with a
+    /// concrete fix on failure. Exits non-zero if any check fails. Works even
+    /// when the daemon is not running.
+    Doctor,
 
     /// Print the resolved URL for a tunnel domain (script-safe: only the URL
     /// is written to stdout).
@@ -205,6 +215,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Stop => daemon::stop()?,
         Command::Restart => daemon::restart()?,
         Command::Status => daemon::status().await?,
+        Command::Doctor => doctor::run().await?,
         Command::Url { domain } => export::url(&domain)?,
         Command::Env { github } => export::env(github)?,
         Command::Wait {
