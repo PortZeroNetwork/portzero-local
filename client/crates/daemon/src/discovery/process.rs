@@ -21,16 +21,43 @@ pub(super) fn scan_processes(
         let mut services = Vec::new();
         let mut issues = Vec::new();
 
-        for pid in sys.processes().keys() {
-            let pid_u32 = pid.as_u32();
+        // (pid, PZ_TUNNEL) candidates. On macOS this MUST be one batched `ps`
+        // call: the previous per-pid `ps` (one subprocess for every process on
+        // the system, every scan cycle) made scan cycles take tens of seconds
+        // under CI load, so services were not discovered within test windows
+        // and healthy routes flapped. Mirrors the identical fix in
+        // scan_network_processes_sync_macos. Linux reads /proc/<pid>/environ
+        // directly, which is cheap enough per-pid.
+        #[cfg(target_os = "macos")]
+        let candidates: Vec<(u32, String)> = {
+            use std::process::Command;
+            match Command::new("ps")
+                .args(["-axo", "pid=,command=", "-wwwE"])
+                .output()
+            {
+                Ok(o) if o.status.success() => {
+                    parse_macos_ps_env_candidates(&String::from_utf8_lossy(&o.stdout), ENV_VAR_NAME)
+                }
+                _ => Vec::new(),
+            }
+        };
+        #[cfg(not(target_os = "macos"))]
+        let candidates: Vec<(u32, String)> = sys
+            .processes()
+            .keys()
+            .filter_map(|pid| {
+                let pid_u32 = pid.as_u32();
+                match scan_process_env(pid_u32, ENV_VAR_NAME) {
+                    Some(v) if !v.is_empty() => Some((pid_u32, v)),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        for (pid_u32, raw) in candidates {
             if pid_u32 <= 1 {
                 continue;
             }
-
-            let raw = match scan_process_env(pid_u32, ENV_VAR_NAME) {
-                Some(v) if !v.is_empty() => v,
-                _ => continue,
-            };
 
             let process_context = process_template_context(&sys, pid_u32);
             // Strip an optional canonical `:port` before classification/validation.
