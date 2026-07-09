@@ -1009,6 +1009,12 @@ fn verify_installation_impl(ca_cert_path: &Path) -> Result<TrustVerificationRepo
 
 #[cfg(target_os = "macos")]
 fn install_system_keychain(ca_cert_path: &Path) -> Result<()> {
+    // Remove any previously installed PortZero CA anchors first. The keychain is
+    // keyed by cert identity, not common name, so regenerating the CA (e.g. the
+    // legacy → name-constrained migration) would otherwise leave the old,
+    // broadly-trusted anchor behind alongside the new one.
+    remove_existing_system_keychain_certs();
+
     let cert_str = ca_cert_path
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("CA cert path is not valid UTF-8"))?;
@@ -1027,6 +1033,35 @@ fn install_system_keychain(ca_cert_path: &Path) -> Result<()> {
     .context("security add-trusted-cert")?;
     tracing::info!("macOS: installed CA cert to system keychain");
     Ok(())
+}
+
+/// Best-effort removal of every "PortZero Local CA" anchor from the system
+/// keychain. `security delete-certificate` removes one match per invocation, so
+/// loop until none remain (bounded to avoid spinning on a persistent failure).
+#[cfg(target_os = "macos")]
+fn remove_existing_system_keychain_certs() {
+    for _ in 0..16 {
+        if !system_keychain_contains_ca().unwrap_or(false) {
+            return;
+        }
+        if run_command(
+            "security",
+            &[
+                "delete-certificate",
+                "-c",
+                CERT_NICKNAME,
+                "-t",
+                "/Library/Keychains/System.keychain",
+            ],
+        )
+        .is_err()
+        {
+            // Nothing left to delete, or the delete failed — stop and let the
+            // add proceed; a leftover duplicate is not fatal.
+            return;
+        }
+        tracing::info!("macOS: removed a stale PortZero CA anchor from system keychain");
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1230,6 +1265,17 @@ fn verify_installation_impl(ca_cert_path: &Path) -> Result<TrustVerificationRepo
 fn install_windows_root_store(ca_cert_path: &Path, use_machine_store: bool) -> Result<()> {
     let der = read_first_pem_cert_der(ca_cert_path)?;
     let store = WindowsCertStore::open_root(use_machine_store)?;
+    // Remove any previously installed PortZero CA anchors first. CERT_STORE_ADD_
+    // REPLACE_EXISTING only replaces a byte-identical cert, so regenerating the
+    // CA (e.g. the legacy → name-constrained migration) would otherwise leave
+    // the old, broadly-trusted anchor behind alongside the new one.
+    match store.delete_by_subject(CERT_NICKNAME) {
+        Ok(count) if count > 0 => {
+            tracing::info!("Windows: removed {count} stale PortZero CA anchor(s) before install")
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Windows: could not remove stale PortZero CA anchors: {e:#}"),
+    }
     store.add_encoded_cert(&der)?;
     tracing::info!(
         "Windows: installed CA cert to {}",
