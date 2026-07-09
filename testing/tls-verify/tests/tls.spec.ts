@@ -17,7 +17,7 @@ test("loads the tunneled HTTPS page", async ({ page, browserName }) => {
   test.info().annotations.push({
     type: "tls-trust",
     description: securityDetails
-      ? `${browserName}: issuer=${securityDetails.issuer()}`
+      ? `${browserName}: issuer=${securityDetails.issuer}`
       : `${browserName}: no securityDetails() available from this engine`,
   });
 });
