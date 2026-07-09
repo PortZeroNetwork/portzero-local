@@ -62,6 +62,9 @@ pub struct CloudConnector {
     /// Where to persist `route_statuses` for the dashboard to read. Set by the
     /// discovery loop once the state dir is known.
     status_path: Arc<Mutex<Option<PathBuf>>>,
+    /// Records observed edges + exercised routes from forwarded traffic (task-63).
+    /// Set by the discovery loop; `None` disables observation recording.
+    observations: Arc<Mutex<Option<Arc<crate::observations::ObservationStore>>>>,
 }
 
 impl CloudConnector {
@@ -84,6 +87,7 @@ impl CloudConnector {
             auth_failed: Arc::new(AtomicBool::new(false)),
             route_statuses: Arc::new(Mutex::new(HashMap::new())),
             status_path: Arc::new(Mutex::new(None)),
+            observations: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -104,6 +108,7 @@ impl CloudConnector {
             auth_failed: Arc::new(AtomicBool::new(false)),
             route_statuses: Arc::new(Mutex::new(HashMap::new())),
             status_path: Arc::new(Mutex::new(None)),
+            observations: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -112,6 +117,14 @@ impl CloudConnector {
     pub fn set_status_path(&self, path: PathBuf) {
         if let Ok(mut g) = self.status_path.lock() {
             *g = Some(path);
+        }
+    }
+
+    /// Give the connector an observation store so forwarded requests record
+    /// observed edges and exercised routes. Called once by the discovery loop.
+    pub fn set_observations(&self, store: Arc<crate::observations::ObservationStore>) {
+        if let Ok(mut g) = self.observations.lock() {
+            *g = Some(store);
         }
     }
 
@@ -186,6 +199,7 @@ impl CloudConnector {
         let status_msg_for_reader = Arc::clone(&self.status_message);
         let route_statuses_for_reader = Arc::clone(&self.route_statuses);
         let status_path_for_reader = Arc::clone(&self.status_path);
+        let observations_for_reader = self.observations.lock().ok().and_then(|g| g.clone());
         tokio::spawn(async move {
             while let Some(msg_result) = ws_stream_rx.next().await {
                 let msg = match msg_result {
@@ -311,7 +325,9 @@ impl CloudConnector {
                     _ => {}
                 }
 
-                match handle_incoming(server_msg, &domain_router).await {
+                match handle_incoming(server_msg, &domain_router, observations_for_reader.as_ref())
+                    .await
+                {
                     Ok(Some(response)) => {
                         if let Err(e) = tx_for_reader.send(response).await {
                             tracing::error!("Failed to queue response: {}", e);
@@ -440,6 +456,7 @@ impl CloudConnector {
 pub async fn handle_incoming(
     msg: ServerMessage,
     domain_router: &DomainRouter,
+    observations: Option<&Arc<crate::observations::ObservationStore>>,
 ) -> Result<Option<ClientMessage>> {
     match msg {
         ServerMessage::Welcome {
@@ -515,6 +532,21 @@ pub async fn handle_incoming(
             headers,
             body,
         } => {
+            // Record observed runtime truth: this request was addressed to the
+            // `host` tunnel; a Referer/Origin identifies a caller edge, and an
+            // X-PZ-Test header attributes the exercised route to a test.
+            if let Some(store) = observations {
+                let header = |name: &str| {
+                    headers
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                        .map(|(_, v)| v.as_str())
+                };
+                let referer = header("referer").or_else(|| header("origin"));
+                let x_pz_test = header("x-pz-test");
+                store.record_http(&host, &method, &path, referer, x_pz_test);
+            }
+
             let local_port = domain_router.resolve(&host).ok_or_else(|| {
                 anyhow::anyhow!(
                     "No local service for host '{}' — route may have been removed",
@@ -671,7 +703,7 @@ mod tests {
             plan: "free".to_string(),
             can_use_cloud_tunnels: false,
         };
-        let result = handle_incoming(msg, &router).await.unwrap();
+        let result = handle_incoming(msg, &router, None).await.unwrap();
         assert!(result.is_none());
     }
 
@@ -679,7 +711,7 @@ mod tests {
     async fn test_handle_incoming_ping() {
         let router = DomainRouter::new();
         let msg = ServerMessage::Ping { timestamp: 42 };
-        let result = handle_incoming(msg, &router).await.unwrap();
+        let result = handle_incoming(msg, &router, None).await.unwrap();
         match result {
             Some(ClientMessage::Pong { timestamp }) => assert_eq!(timestamp, 42),
             other => panic!("Expected Pong, got {:?}", other),
@@ -696,7 +728,7 @@ mod tests {
             url: Some("https://api-test.alice.portzero.cloud".to_string()),
             status: Some(portzero_proto::RouteStatus::Published),
         };
-        let result = handle_incoming(msg, &router).await.unwrap();
+        let result = handle_incoming(msg, &router, None).await.unwrap();
         assert!(result.is_none());
     }
 
@@ -710,7 +742,7 @@ mod tests {
             url: None,
             status: None,
         };
-        let result = handle_incoming(msg, &router).await.unwrap();
+        let result = handle_incoming(msg, &router, None).await.unwrap();
         assert!(result.is_none());
     }
 
@@ -721,7 +753,7 @@ mod tests {
             code: portzero_proto::ErrorCode::InternalError,
             message: "service unavailable".to_string(),
         };
-        let result = handle_incoming(msg, &router).await.unwrap();
+        let result = handle_incoming(msg, &router, None).await.unwrap();
         assert!(result.is_none());
     }
 
@@ -736,7 +768,7 @@ mod tests {
             headers: vec![],
             body: vec![],
         };
-        let result = handle_incoming(msg, &router).await;
+        let result = handle_incoming(msg, &router, None).await;
         assert!(result.is_err());
     }
 

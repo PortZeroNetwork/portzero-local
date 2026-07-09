@@ -81,6 +81,26 @@ pub(super) fn scan_processes(
                 continue;
             }
 
+            // Fail cleanly on unresolved tokens ({pr}/{run-id} outside CI) or an
+            // ambiguous internal `--` in a label, rather than registering a
+            // garbled cloud tunnel name.
+            if let Err(e) = portzero_domain::validate_resolved_name(&domain) {
+                tracing::warn!(
+                    pid = pid_u32,
+                    template = raw_domain,
+                    domain,
+                    error = %e,
+                    "PZ_TUNNEL template resolved to an invalid name"
+                );
+                issues.push(crate::notify::Issue::InvalidResolvedName {
+                    template: raw_domain.to_string(),
+                    resolved: domain.clone(),
+                    reason: e,
+                    context: format!("pid {pid_u32}"),
+                });
+                continue;
+            }
+
             // For cloud tunnels we require a full domain name (no implicit suffix).
             if let Err(e) = validate_tunnel_domain(&domain) {
                 tracing::warn!(
@@ -105,6 +125,9 @@ pub(super) fn scan_processes(
             let extra_ports = scan_process_env(pid_u32, ENV_PORTS_VAR)
                 .map(|v| parse_extra_ports(&v))
                 .unwrap_or_default();
+
+            let health_path = scan_process_env(pid_u32, ENV_HEALTH_PATH_VAR)
+                .and_then(|v| normalize_health_path(&v));
 
             let listening = discover_process_ports(pid_u32);
 
@@ -155,6 +178,7 @@ pub(super) fn scan_processes(
                 substitutions,
                 port,
                 extra_ports,
+                health_path,
                 pid: pid_u32,
                 source: ServiceSource::Process {
                     cwd: process_context.cwd,
@@ -235,6 +259,25 @@ pub(super) fn scan_processes_windows(
             continue;
         }
 
+        // Fail cleanly on unresolved tokens ({pr}/{run-id} outside CI) or an
+        // ambiguous internal `--` in a label.
+        if let Err(e) = portzero_domain::validate_resolved_name(&domain) {
+            tracing::warn!(
+                pid = pid_u32,
+                template = raw_domain,
+                domain,
+                error = %e,
+                "PZ_TUNNEL template resolved to an invalid name"
+            );
+            issues.push(crate::notify::Issue::InvalidResolvedName {
+                template: raw_domain.to_string(),
+                resolved: domain.clone(),
+                reason: e,
+                context: format!("pid {pid_u32}"),
+            });
+            continue;
+        }
+
         if let Err(e) = validate_tunnel_domain(&domain) {
             tracing::warn!(
                 pid = pid_u32,
@@ -258,6 +301,9 @@ pub(super) fn scan_processes_windows(
         let extra_ports = scan_process_env(pid_u32, ENV_PORTS_VAR)
             .map(|v| parse_extra_ports(&v))
             .unwrap_or_default();
+
+        let health_path =
+            scan_process_env(pid_u32, ENV_HEALTH_PATH_VAR).and_then(|v| normalize_health_path(&v));
 
         let port = match select_http_port(&listening, &http_selection) {
             SelectedPort::Found(p) => p,
@@ -296,6 +342,7 @@ pub(super) fn scan_processes_windows(
             substitutions,
             port,
             extra_ports,
+            health_path,
             pid: pid_u32,
             source: ServiceSource::Process {
                 cwd: process_context.cwd,
@@ -382,6 +429,14 @@ pub(super) fn template_substitutions(
         "cloud-username".to_string(),
         ctx.username.unwrap_or_else(|| "not-logged-in".to_string()),
     );
+    // CI-only tokens: surface the resolved value for the dashboard/inspect when
+    // present. Absent outside a pull request / GitHub Actions run.
+    if let Some(pr) = ctx.pr {
+        values.insert("pr".to_string(), pr);
+    }
+    if let Some(run_id) = ctx.run_id {
+        values.insert("run-id".to_string(), run_id);
+    }
     values
 }
 
@@ -1291,6 +1346,7 @@ struct NetProcessCandidate {
     needs_probe: bool,
     pid: u32,
     cwd: Option<PathBuf>,
+    health_path: Option<String>,
 }
 
 // Blocking half: sysinfo refresh + per-process ps/lsof calls. Must not .await.
@@ -1358,6 +1414,20 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
                 continue;
             }
 
+            // Skip local overlay tunnels whose resolved name still carries an
+            // unresolved token ({pr}/{run-id} outside CI) or an ambiguous
+            // internal `--`, rather than registering a garbled overlay name.
+            if let Err(e) = portzero_domain::validate_resolved_name(&resolved) {
+                tracing::warn!(
+                    pid = pid_u32,
+                    template = raw_domain,
+                    resolved,
+                    error = %e,
+                    "PZ_TUNNEL .local template resolved to an invalid name; skipping"
+                );
+                continue;
+            }
+
             let label = extract_local_label(&resolved);
             if label.is_empty() {
                 continue;
@@ -1401,6 +1471,8 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
                 needs_probe,
                 pid: pid_u32,
                 cwd: process_context.cwd,
+                health_path: scan_process_env(pid_u32, ENV_HEALTH_PATH_VAR)
+                    .and_then(|v| normalize_health_path(&v)),
             });
         }
 
@@ -1465,6 +1537,20 @@ fn scan_network_processes_sync_macos() -> Vec<NetProcessCandidate> {
             continue;
         }
 
+        // Skip local overlay tunnels whose resolved name still carries an
+        // unresolved token ({pr}/{run-id} outside CI) or an ambiguous internal
+        // `--`, rather than registering a garbled overlay name.
+        if let Err(e) = portzero_domain::validate_resolved_name(&resolved) {
+            tracing::warn!(
+                pid = pid_u32,
+                template = raw_domain,
+                resolved,
+                error = %e,
+                "PZ_TUNNEL .local template resolved to an invalid name; skipping"
+            );
+            continue;
+        }
+
         let label = extract_local_label(&resolved);
         if label.is_empty() {
             continue;
@@ -1511,6 +1597,8 @@ fn scan_network_processes_sync_macos() -> Vec<NetProcessCandidate> {
             needs_probe,
             pid: pid_u32,
             cwd: process_context.cwd,
+            health_path: scan_process_env(pid_u32, ENV_HEALTH_PATH_VAR)
+                .and_then(|v| normalize_health_path(&v)),
         });
     }
 
@@ -1593,6 +1681,20 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
             continue;
         }
 
+        // Skip local overlay tunnels whose resolved name still carries an
+        // unresolved token ({pr}/{run-id} outside CI) or an ambiguous internal
+        // `--`, rather than registering a garbled overlay name.
+        if let Err(e) = portzero_domain::validate_resolved_name(&resolved) {
+            tracing::warn!(
+                pid = pid_u32,
+                template = raw_domain,
+                resolved,
+                error = %e,
+                "PZ_TUNNEL .local template resolved to an invalid name; skipping"
+            );
+            continue;
+        }
+
         let label = extract_local_label(&resolved);
         if label.is_empty() {
             continue;
@@ -1631,6 +1733,8 @@ fn scan_network_processes_sync_windows() -> Vec<NetProcessCandidate> {
             needs_probe,
             pid: pid_u32,
             cwd: process_context.cwd,
+            health_path: scan_process_env(pid_u32, ENV_HEALTH_PATH_VAR)
+                .and_then(|v| normalize_health_path(&v)),
         });
     }
 
@@ -1680,6 +1784,7 @@ pub(super) async fn scan_network_processes(
             backend_protocol: detected,
             pid: c.pid,
             source: ServiceSource::Process { cwd: c.cwd },
+            health_path: c.health_path,
         });
     }
 

@@ -26,7 +26,9 @@ $SeedToken = Get-RequiredEnv "TEST_LOGIN_SEED_TOKEN"
 $MsiPath = Get-RequiredEnv "PORTZERO_MSI_PATH"
 
 $Email = if ($env:STAGING_CLIENT_E2E_EMAIL) { $env:STAGING_CLIENT_E2E_EMAIL } else { "staging-client-e2e-windows@example.com" }
-$Username = if ($env:STAGING_CLIENT_E2E_USERNAME) { $env:STAGING_CLIENT_E2E_USERNAME } else { "tunnel-e2e" }
+# Unique per platform/repo so concurrent E2E runs against shared staging
+# don't register the same tunnel domain (see client-interop-e2e.sh).
+$Username = if ($env:STAGING_CLIENT_E2E_USERNAME) { $env:STAGING_CLIENT_E2E_USERNAME } else { "tunnel-e2e-windows" }
 $AccountId = if ($env:STAGING_CLIENT_E2E_ACCOUNT_ID) { $env:STAGING_CLIENT_E2E_ACCOUNT_ID } else { "staging-client-e2e-windows-account" }
 $VerifyCode = if ($env:STAGING_CLIENT_E2E_CODE) { $env:STAGING_CLIENT_E2E_CODE } else { "424242" }
 
@@ -34,7 +36,7 @@ $ApiUrl = "https://app.$Domain/api"
 $EdgeUrl = "wss://edge.$Domain/tunnel"
 $AuthUrl = "$ApiUrl/auth/verify"
 $SeedUrl = "$ApiUrl/auth/test-seed-login"
-$TunnelDomain = "client-e2e-windows.$Username.tunnel.$Domain"
+$TunnelDomain = "$Username.tunnel.$Domain"
 $ExpectedBody = "portzero-client-e2e-ok"
 $PortzeroExe = "C:\Program Files\Port Zero\portzero.exe"
 $AuthDir = Join-Path $env:USERPROFILE ".portzero"
@@ -159,6 +161,12 @@ function Wait-ForRoute {
     throw "Route did not register: $TunnelDomain"
 }
 
+function Approve-Route {
+    $authJson = Get-Content (Join-Path $AuthDir "auth.json") -Raw | ConvertFrom-Json
+    $headers = @{ Authorization = "Bearer $($authJson.token)" }
+    Invoke-RestMethod -Method Post -Uri "$ApiUrl/routes/$TunnelDomain/approve" -Headers $headers -ContentType "application/json" -Body "{}" | Out-Null
+}
+
 function Test-PublicTunnel {
     for ($i = 1; $i -le 30; $i++) {
         try {
@@ -190,6 +198,7 @@ try {
     Start-LocalService
     Start-Portzero
     Wait-ForRoute
+    Approve-Route
     Test-PublicTunnel
 }
 finally {

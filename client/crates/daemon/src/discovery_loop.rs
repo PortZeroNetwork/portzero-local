@@ -170,6 +170,12 @@ impl DaemonConfig {
         self.state_dir.join("overlay.json")
     }
 
+    /// Path to the observed runtime-truth file (observed edges + exercised
+    /// routes), read by `portzero inspect` and the MCP server.
+    pub fn observations_path(&self) -> PathBuf {
+        self.state_dir.join("observations.json")
+    }
+
     /// Path to the diagnostics report file.
     pub fn diagnostics_path(&self) -> PathBuf {
         self.state_dir.join("diagnostics.json")
@@ -374,10 +380,18 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     let mut auth_failed = false;
     let mut cloud: Option<CloudConnector> = None;
 
+    // Records observed edges + exercised routes from forwarded cloud traffic
+    // (task-63), persisted to observations.json for `portzero inspect` and the
+    // MCP server. Shared with every cloud connector we create.
+    let observations = Arc::new(crate::observations::ObservationStore::new(
+        &config.state_dir,
+    ));
+
     if let Some(ref token) = current_token {
         tracing::info!("Auth token found, connecting to cloud edge");
         let mut connector = CloudConnector::new(token.clone());
         connector.set_status_path(config.cloud_route_status_path());
+        connector.set_observations(observations.clone());
         match connector.connect(domain_router.clone()).await {
             Ok(()) => {
                 let p = connector.plan();
@@ -681,6 +695,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                         substitutions: route.substitutions.clone(),
                         port: route.port,
                         extra_ports: route.extra_ports.clone(),
+                        health_path: route.health_path.clone(),
                         pid: route.pid,
                         source: route.source.clone(),
                     });
@@ -936,6 +951,7 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                         );
                         let mut connector = CloudConnector::new(token);
                         connector.set_status_path(config.cloud_route_status_path());
+                        connector.set_observations(observations.clone());
                         match connector.connect(domain_router.clone()).await {
                             Ok(()) => {
                                 reconnect_backoff.on_success();
@@ -1027,6 +1043,10 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
         }
     }
 
+    // Persist any observed edges / exercised routes that were buffered since the
+    // last throttled flush, so the final snapshot on disk is complete.
+    observations.flush();
+
     remove_pid_file(&config);
     tracing::info!("Discovery daemon stopped");
 
@@ -1069,6 +1089,7 @@ fn write_overlay_state(
             substitutions: s.substitutions.clone(),
             service_port: s.service_port,
             real_addr: s.real_addr.to_string(),
+            health_path: s.health_path.clone(),
             pid: s.pid,
             source: s.source.clone(),
         })
@@ -1824,6 +1845,7 @@ mod tests {
                 host: "127.0.0.1".to_string(),
                 port: 8080,
                 extra_ports: vec![],
+                health_path: None,
                 source: ServiceSource::Process { cwd: None },
                 pid: 1,
                 discovered_at: chrono::Utc::now(),
@@ -1851,6 +1873,7 @@ mod tests {
                 backend_protocol: None,
                 pid: 100,
                 source: ServiceSource::Process { cwd: None },
+                health_path: None,
             },
             DiscoveredNetworkService {
                 name: "my-api".to_string(),
@@ -1861,6 +1884,7 @@ mod tests {
                 backend_protocol: None,
                 pid: 101,
                 source: ServiceSource::Process { cwd: None },
+                health_path: None,
             },
         ];
 
@@ -1893,6 +1917,7 @@ mod tests {
                 backend_protocol: None,
                 pid: 100,
                 source: ServiceSource::Process { cwd: None },
+                health_path: None,
             },
             DiscoveredNetworkService {
                 name: "staging".to_string(),
@@ -1903,6 +1928,7 @@ mod tests {
                 backend_protocol: None,
                 pid: 101,
                 source: ServiceSource::Process { cwd: None },
+                health_path: None,
             },
         ];
 
@@ -1929,6 +1955,7 @@ mod tests {
             backend_protocol: None,
             pid: 100,
             source: ServiceSource::Process { cwd: None },
+            health_path: None,
         }];
 
         write_overlay_state(&config, &services, true);

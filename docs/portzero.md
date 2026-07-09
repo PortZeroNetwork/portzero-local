@@ -67,11 +67,52 @@ git context:
 |--------------|-----------------------------------------------------|
 | `{branch}`   | the current git branch (e.g. `feature-x`)           |
 | `{worktree}` | the basename of the git worktree / repo root        |
+| `{project}`  | the git repository / project name                   |
+| `{user}`     | your OS login username (same as `{local-username}`) |
+| `{pr}`       | pull-request number, from the CI environment        |
+| `{run-id}`   | GitHub Actions run id (`GITHUB_RUN_ID`)             |
 
 ```
 PZ_TUNNEL=web-{branch}.portzero.local
 PZ_TUNNEL=api-{worktree}.{cloud-username}.tunnel.portzero.cloud
+PZ_TUNNEL=pr-{pr}--myapp.{cloud-username}.tunnel.portzero.cloud   # review app per PR
 ```
+
+### CI tokens: `{pr}` and `{run-id}`
+
+`{pr}` and `{run-id}` are resolved from the CI environment:
+
+- `{pr}` — the pull-request number. In GitHub Actions it is read from
+  `GITHUB_REF` (`refs/pull/<n>/merge`); other CI systems can set `PZ_PR_NUMBER`
+  explicitly.
+- `{run-id}` — the GitHub Actions run id, from `GITHUB_RUN_ID`.
+
+If a template uses one of these **outside** the context that supplies it (e.g.
+`{pr}` when not running against a pull request), the daemon does **not** guess or
+drop the token. Discovery for that one tunnel is skipped with a clear diagnostic
+(surfaced in `portzero status` and the dashboard) rather than registering a
+garbled name such as `web-.example.com`. Other tunnels are unaffected.
+
+### Single-label names and the `--` hierarchy convention
+
+On the shared cloud domain a tunnel name stays a **single DNS label**. Express
+hierarchy with a double hyphen `--` inside that label, not with extra dots:
+
+```
+PZ_TUNNEL=pr-{pr}--myapp.{cloud-username}.tunnel.portzero.cloud   # "pr-<n>" under "myapp"
+```
+
+- `_` is not usable — it is invalid in hostnames and banned in certificate SANs.
+- Dots are reserved for the username scope and (cloud-side) wildcard custom
+  domains, so they are not used for per-name hierarchy here.
+- A label must not contain an **ambiguous internal `--`**: each `--`-separated
+  segment must be a clean sub-label (non-empty, no leading/trailing hyphen). So
+  `feat--myapp` and `my-api--web` are fine, but `feat--`, `--myapp`, `a----b`,
+  and `a---b` are rejected so the hierarchy stays unambiguous.
+
+Server-side validation of resolved names against team naming policies happens on
+the cloud edge; the rules above are what the local daemon enforces at discovery
+time.
 
 The daemon resolves these itself from the host (for native processes from the
 process context; for Docker containers by inspecting bind mounts and compose
@@ -125,3 +166,39 @@ PZ_TUNNEL=db-{cloud-username}.portzero.local                        # ok if logg
 Always bind your listener to port 0 so the OS assigns an ephemeral port. The
 daemon discovers the real port; you never hardcode it. The VIP exposes a stable
 tunnel port (e.g. `:5432`, `:80`) regardless of the random backend port.
+
+## Companion environment variables
+
+These optional variables are read from the same process/container environment as
+`PZ_TUNNEL`, and like `PZ_TUNNEL` they must be set **before launch**.
+
+| Variable              | Purpose                                                                 |
+|-----------------------|-------------------------------------------------------------------------|
+| `PZ_TUNNEL_HTTP_PORT` | Choose which HTTP port to forward: an explicit port, or `CHOOSE_LOWEST` (default) / `CHOOSE_HIGHEST`. |
+| `PZ_TUNNEL_PORTS`     | Extra raw port mappings for non-HTTP forwarding: `local:tunnel[;local:tunnel...]` (e.g. `9222:9222`). |
+| `PZ_HEALTH_PATH`      | HTTP path that signals the endpoint is ready (e.g. `/health`).          |
+
+### `PZ_HEALTH_PATH`
+
+`PZ_HEALTH_PATH` declares the HTTP path that returns `2xx` once the tunneled
+endpoint is ready to serve traffic. It is **entirely optional** — omitting it
+changes nothing.
+
+```bash
+export PZ_TUNNEL=web-{branch}.portzero.local
+export PZ_HEALTH_PATH=/health          # bare paths are rooted automatically → /health
+```
+
+- The value is normalized to a rooted path: `health`, `/health`, and ` health `
+  all become `/health`.
+- It is stored on the discovered route/tunnel record and shown in the `HEALTH`
+  column of `portzero status` (and in `portzero inspect`) for any tunnel that
+  declares it. Tunnels without it are unaffected and the column is hidden when
+  no tunnel declares one.
+- [`portzero wait <domain> --healthy`](portzero.md) polls this path until it
+  returns `2xx`, which is how CI and Playwright `webServer` blocks gate on real
+  readiness rather than mere port-up.
+- The path is a **portable fact**: it survives graduation to a production PaaS
+  (which will have its own health-check configuration) even though the `PZ_*`
+  variable itself does not. AI coding-agent skills carry the value into the
+  production config at graduation time.

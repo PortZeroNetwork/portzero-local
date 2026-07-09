@@ -83,6 +83,21 @@ pub enum Issue {
         /// one-click "Log in" button instead of just printing guidance text.
         requires_login: bool,
     },
+    /// A `PZ_TUNNEL` template resolved to a name that is still broken: it either
+    /// carries an unresolved `{token}` (e.g. `{pr}` used outside a pull request,
+    /// `{run-id}` outside a GitHub Actions run) or a dot-separated label with an
+    /// ambiguous internal `--`. Discovery is skipped for this tunnel rather than
+    /// registering a garbled name.
+    InvalidResolvedName {
+        /// The raw (pre-resolution) `PZ_TUNNEL` template.
+        template: String,
+        /// The resolved (post-template) value that failed validation.
+        resolved: String,
+        /// The specific validation failure from `validate_resolved_name`.
+        reason: String,
+        /// Best-effort description of the owning context (cwd / container).
+        context: String,
+    },
 }
 
 impl Issue {
@@ -115,6 +130,15 @@ impl Issue {
             } => format!(
                 "Invalid username placeholder in PZ_TUNNEL template \"{}\" ({})",
                 template, context
+            ),
+            Issue::InvalidResolvedName {
+                template,
+                resolved,
+                context,
+                ..
+            } => format!(
+                "PZ_TUNNEL template \"{}\" resolved to an invalid name \"{}\" ({})",
+                template, resolved, context
             ),
         }
     }
@@ -156,6 +180,10 @@ impl Issue {
             // already explains the fix (switch placeholders, or `portzero login`)
             // and, when relevant, that local tunnels stay free either way.
             Issue::InvalidUsernamePlaceholder { reason, .. } => reason.clone(),
+            // `reason` is the message from `validate_resolved_name`, which spells
+            // out which token could not resolve (and in which context it is
+            // available) or which label carried an ambiguous `--`.
+            Issue::InvalidResolvedName { reason, .. } => reason.clone(),
         }
     }
 }
@@ -408,6 +436,7 @@ mod tests {
             source: ServiceSource::Process {
                 cwd: cwd.map(PathBuf::from),
             },
+            health_path: None,
         }
     }
 
@@ -424,6 +453,7 @@ mod tests {
                 id: id.to_string(),
                 name: name.to_string(),
             },
+            health_path: None,
         }
     }
 

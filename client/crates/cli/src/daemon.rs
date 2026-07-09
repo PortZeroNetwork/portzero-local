@@ -264,7 +264,8 @@ fn print_routes(config: &DaemonConfig) {
 
     // Build the display rows. Conflicting overlay domains get a single [CONFLICT]
     // row rather than duplicates that would mislead the reader.
-    let mut rows: Vec<(String, String, String)> = Vec::new();
+    // Columns: (domain, port, health-path, source).
+    let mut rows: Vec<(String, String, String, String)> = Vec::new();
     let mut seen_conflict_domains: std::collections::HashSet<&str> =
         std::collections::HashSet::new();
 
@@ -272,6 +273,7 @@ fn print_routes(config: &DaemonConfig) {
         rows.push((
             route.domain.clone(),
             route.port.to_string(),
+            health_cell(route.health_path.as_deref()),
             format_source(&route.source, route.pid),
         ));
     }
@@ -280,12 +282,18 @@ fn print_routes(config: &DaemonConfig) {
         let count = overlay_counts[ov.domain.as_str()];
         if count > 1 {
             if seen_conflict_domains.insert(ov.domain.as_str()) {
-                rows.push((ov.domain.clone(), "----".into(), "[CONFLICT]".into()));
+                rows.push((
+                    ov.domain.clone(),
+                    "----".into(),
+                    "-".into(),
+                    "[CONFLICT]".into(),
+                ));
             }
         } else {
             rows.push((
                 ov.domain.clone(),
                 ov.service_port.to_string(),
+                health_cell(ov.health_path.as_deref()),
                 format_source(&ov.source, ov.pid),
             ));
         }
@@ -295,35 +303,67 @@ fn print_routes(config: &DaemonConfig) {
 
     let max_domain = rows
         .iter()
-        .map(|(d, _, _)| d.len())
+        .map(|(d, _, _, _)| d.len())
         .max()
         .unwrap_or(0)
         .max("DOMAIN".len());
     let max_port = rows
         .iter()
-        .map(|(_, p, _)| p.len())
+        .map(|(_, p, _, _)| p.len())
         .max()
         .unwrap_or(0)
         .max("PORT".len());
+    // Only show a HEALTH column when at least one route declares a health path,
+    // so the common (no PZ_HEALTH_PATH) case stays uncluttered.
+    let any_health = rows.iter().any(|(_, _, h, _)| h != "-");
+    let max_health = rows
+        .iter()
+        .map(|(_, _, h, _)| h.len())
+        .max()
+        .unwrap_or(0)
+        .max("HEALTH".len());
 
     println!();
-    println!(
-        "{:<domain_w$}  {:<port_w$}  SOURCE",
-        "DOMAIN",
-        "PORT",
-        domain_w = max_domain,
-        port_w = max_port,
-    );
-
-    for (domain, port, source) in &rows {
+    if any_health {
         println!(
-            "{:<domain_w$}  {:<port_w$}  {}",
-            domain,
-            port,
-            source,
+            "{:<domain_w$}  {:<port_w$}  {:<health_w$}  SOURCE",
+            "DOMAIN",
+            "PORT",
+            "HEALTH",
+            domain_w = max_domain,
+            port_w = max_port,
+            health_w = max_health,
+        );
+        for (domain, port, health, source) in &rows {
+            println!(
+                "{:<domain_w$}  {:<port_w$}  {:<health_w$}  {}",
+                domain,
+                port,
+                health,
+                source,
+                domain_w = max_domain,
+                port_w = max_port,
+                health_w = max_health,
+            );
+        }
+    } else {
+        println!(
+            "{:<domain_w$}  {:<port_w$}  SOURCE",
+            "DOMAIN",
+            "PORT",
             domain_w = max_domain,
             port_w = max_port,
         );
+        for (domain, port, _health, source) in &rows {
+            println!(
+                "{:<domain_w$}  {:<port_w$}  {}",
+                domain,
+                port,
+                source,
+                domain_w = max_domain,
+                port_w = max_port,
+            );
+        }
     }
 
     // Print conflict detail blocks after the table.
@@ -379,6 +419,12 @@ fn overlay_inactive_hint() -> &'static str {
         "Note: .portzero.local tunnels are not reachable — the overlay network requires\n\
          platform-specific privileges to create a TUN device and configure DNS."
     }
+}
+
+/// Render the HEALTH column cell for a route: its health path, or `-` when the
+/// endpoint declared no `PZ_HEALTH_PATH`.
+fn health_cell(health_path: Option<&str>) -> String {
+    health_path.unwrap_or("-").to_string()
 }
 
 fn format_source(source: &portzero_daemon::discovery::ServiceSource, pid: u32) -> String {

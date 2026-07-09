@@ -9,10 +9,15 @@ mod auth;
 mod autostart;
 mod browser;
 mod daemon;
+mod export;
+mod inspect;
+mod mcp;
 mod setup;
+mod skill;
 mod team;
 mod trust;
 mod update;
+mod wait;
 
 #[derive(Parser)]
 #[command(
@@ -43,6 +48,39 @@ enum Command {
     Restart,
     /// Show daemon and tunnel status.
     Status,
+
+    /// Print the resolved URL for a tunnel domain (script-safe: only the URL
+    /// is written to stdout).
+    Url {
+        /// The tunnel domain, e.g. `web.myapp.portzero.local` or
+        /// `api.alice.tunnel.portzero.cloud`.
+        domain: String,
+    },
+    /// Print `export NAME="URL"` lines for every discovered tunnel.
+    Env {
+        /// Append `NAME=URL` lines to `$GITHUB_ENV` instead of printing export
+        /// lines (for use inside a GitHub Actions job).
+        #[arg(long)]
+        github: bool,
+    },
+    /// Block until a tunnel is up (readiness gate for CI and test runs).
+    Wait {
+        /// The tunnel domain, e.g. `web.myapp.portzero.local`.
+        domain: String,
+        /// Also poll the tunnel's health path until it returns 2xx. Health is
+        /// polled automatically when the endpoint declares PZ_HEALTH_PATH.
+        #[arg(long)]
+        healthy: bool,
+        /// Maximum seconds to wait before failing (default: 60).
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Show the daemon's observed runtime truth as human-friendly text
+    /// (discovered services, tunnels, observed edges, exercised routes).
+    Inspect,
+    /// Run the Model Context Protocol server (JSON-RPC over stdio) exposing the
+    /// same runtime truth to AI coding agents.
+    Mcp,
 
     /// Run privileged first-run setup after package installation.
     #[command(alias = "post-install")]
@@ -79,6 +117,28 @@ enum Command {
     /// Manage the local CA certificate and OS trust store.
     #[command(subcommand)]
     Trust(TrustCommand),
+
+    /// Install AI coding-agent skills into your project.
+    #[command(subcommand)]
+    Skill(SkillCommand),
+}
+
+#[derive(Subcommand)]
+enum SkillCommand {
+    /// Install the PaaS-agnostic "extract production config" skill into this
+    /// project (default: .claude/skills/). Use --print to emit it to stdout for
+    /// another agent tool, or --dir to choose the location.
+    Install {
+        /// Directory to install into (defaults to `.claude/skills`).
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
+        /// Overwrite an existing SKILL.md.
+        #[arg(long)]
+        force: bool,
+        /// Print the skill to stdout instead of writing a file.
+        #[arg(long)]
+        print: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -145,6 +205,15 @@ async fn main() -> anyhow::Result<()> {
         Command::Stop => daemon::stop()?,
         Command::Restart => daemon::restart()?,
         Command::Status => daemon::status().await?,
+        Command::Url { domain } => export::url(&domain)?,
+        Command::Env { github } => export::env(github)?,
+        Command::Wait {
+            domain,
+            healthy,
+            timeout,
+        } => wait::wait(&domain, healthy, timeout).await?,
+        Command::Inspect => inspect::inspect()?,
+        Command::Mcp => mcp::serve()?,
         Command::Setup => setup::run().await?,
 
         Command::Login {
@@ -172,6 +241,9 @@ async fn main() -> anyhow::Result<()> {
             TrustCommand::Generate => trust::generate()?,
             TrustCommand::Install => trust::install()?,
             TrustCommand::Uninstall => trust::uninstall()?,
+        },
+        Command::Skill(cmd) => match cmd {
+            SkillCommand::Install { dir, force, print } => skill::install(dir, force, print)?,
         },
     }
 

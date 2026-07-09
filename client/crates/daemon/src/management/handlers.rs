@@ -1300,6 +1300,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
                 "alerts": substitution_alerts(domain_template, &r.substitutions),
                 "real_addr": r.real_addr,
                 "service_port": r.service_port,
+                "health_path": r.health_path,
                 "link_url": local_service_link_url(&r.domain, r.service_port),
                 "pid": r.pid,
             })
@@ -1328,6 +1329,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
                 "substitutions": display_substitutions(&r.substitutions, &r.source),
                 "alerts": substitution_alerts(domain_template, &r.substitutions),
                 "port": r.port,
+                "health_path": r.health_path,
                 "pid": r.pid,
                 "status": status,
             })

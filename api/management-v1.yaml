@@ -22,7 +22,7 @@ info:
 
     When the daemon detects that a registered PID has exited, it automatically removes all mappings for that PID. Processes may also call `DELETE /v1/register` to deregister explicitly (e.g., on graceful shutdown).
   license:
-    name: GNU General Public License v3.0 or later
+    name: GPL-3.0-or-later
     identifier: GPL-3.0-or-later
   version: 1.0.0
 servers:
@@ -73,9 +73,9 @@ paths:
               $ref: '#/components/schemas/RegisterRequest'
             example:
               ports:
-              - domain: api.alice.portzero.cloud
+              - domain: api.alice.tunnel.portzero.cloud
                 local_port: 8080
-              - domain: metrics.alice.portzero.cloud
+              - domain: metrics.alice.tunnel.portzero.cloud
                 local_port: 9090
         required: true
       responses:
@@ -159,9 +159,9 @@ paths:
               example:
                 pid: 12345
                 ports:
-                - domain: api.alice.portzero.cloud
+                - domain: api.alice.tunnel.portzero.cloud
                   local_port: 8080
-                - domain: metrics.alice.portzero.cloud
+                - domain: metrics.alice.tunnel.portzero.cloud
                   local_port: 9090
         '404':
           description: No registrations found for this process
@@ -302,9 +302,9 @@ components:
           description: |-
             Full domain name to map to this port. Accepted patterns:
             `*.portzero.local` for local overlay-only resolution, or
-            `*.<username>.portzero.cloud` for a cloud-proxied tunnel domain.
+            `*.<cloud-username>.tunnel.portzero.cloud` for a cloud-proxied tunnel domain.
           examples:
-          - api.alice.portzero.cloud
+          - api.alice.tunnel.portzero.cloud
           - myservice.portzero.local
         local_port:
           type: integer

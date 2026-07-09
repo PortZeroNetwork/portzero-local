@@ -35,6 +35,22 @@ All documents in this directory are written for **developers using Port Zero Loc
 
 - [PZ_TUNNEL semantics](portzero.md) — the full-domain rule, how the suffix selects cloud vs. local, `{branch}` / `{worktree}` templates, and when the variable must be set.
 - [Examples](examples.md) — checked-in instructions generated from the latest adjacent `portzero-examples` checkout.
+- [Dev-to-production flow](dev-to-production.md) — `portzero url` / `portzero env` / `portzero wait` for exporting tunnel URLs and gating CI and test runs on tunnel readiness.
+- [MCP server & `portzero inspect`](mcp.md) — the daemon's observed runtime truth (discovered services, tunnel domains, health paths, observed edges, exercised routes) for humans and AI coding agents, plus the observability caveat.
+
+### Patterns
+
+- [Running portzero in CI](../tunnel-action/README.md) — a GitHub Action
+  (`tunnel-action/`) that installs the daemon on a hosted runner, waits for
+  your `PZ_TUNNEL`-tagged process/container to become reachable, and exposes
+  its URL as a step output. For ephemeral, single-job tunnels (a test suite
+  that needs a real HTTPS URL for the duration of one CI run) — see
+  [Review apps](review-apps.md) below instead for long-lived preview
+  environments.
+- [Review apps (per-PR preview environments)](review-apps.md) — an orchestrator-neutral
+  pattern for per-PR preview URLs using only tunnel naming, with a plain `docker compose`
+  + GitHub Actions example. Documents that a deploy agent is explicitly out of scope for
+  the product.
 
 ### How it works
 
@@ -51,6 +67,9 @@ All documents in this directory are written for **developers using Port Zero Loc
 ### Troubleshooting
 
 - [Troubleshooting](troubleshooting.md) — common failure modes and fixes for day-to-day usage.
+- [Known limitations: local CA trust](known-limitations.md) — specific browser/engine CA-trust
+  gaps with an identified cause and documented workaround (Snap browsers, Playwright's bundled
+  Firefox).
 - [FAQ](FAQ.md) — answers to recurring questions.
 
 ## For contributors

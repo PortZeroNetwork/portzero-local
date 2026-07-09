@@ -10,6 +10,7 @@ pub mod legacy_monitor;
 pub mod management;
 pub mod net;
 pub mod notify;
+pub mod observations;
 pub mod protocol_detect;
 pub mod route_table;
 pub mod tls;

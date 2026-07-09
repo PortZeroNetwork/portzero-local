@@ -161,6 +161,25 @@ fn inspect_container(
         return Ok(None);
     }
 
+    // Fail cleanly on unresolved tokens ({pr}/{run-id} outside CI) or an
+    // ambiguous internal `--` in a label, rather than registering a garbled name.
+    if let Err(e) = portzero_domain::validate_resolved_name(&domain) {
+        tracing::warn!(
+            container = name,
+            template = raw_domain,
+            domain,
+            error = %e,
+            "PZ_TUNNEL template resolved to an invalid name"
+        );
+        issues.push(crate::notify::Issue::InvalidResolvedName {
+            template: raw_domain.to_string(),
+            resolved: domain.clone(),
+            reason: e,
+            context: format!("container {name}"),
+        });
+        return Ok(None);
+    }
+
     if let Err(e) = validate_tunnel_domain(&domain) {
         tracing::warn!(
             container = name,
@@ -189,6 +208,11 @@ fn inspect_container(
         .map(parse_extra_ports)
         .unwrap_or_default();
 
+    let health_path = env_vars
+        .iter()
+        .find_map(|e| e.strip_prefix("PZ_HEALTH_PATH="))
+        .and_then(normalize_health_path);
+
     let port = match http_selection {
         HttpPortSelection::Explicit(p) => p,
         _ => parse_docker_ports(ports_json, &http_selection),
@@ -200,6 +224,7 @@ fn inspect_container(
         substitutions,
         port,
         extra_ports,
+        health_path,
         pid: container_pid,
         source: ServiceSource::Container {
             id: container_id.to_string(),
@@ -410,6 +435,20 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
             continue;
         }
 
+        // Skip local overlay tunnels whose resolved name still carries an
+        // unresolved token ({pr}/{run-id} outside CI) or an ambiguous internal
+        // `--`, rather than registering a garbled overlay name.
+        if let Err(e) = portzero_domain::validate_resolved_name(&resolved_name) {
+            tracing::warn!(
+                container = _name,
+                template = raw_domain,
+                resolved_name,
+                error = %e,
+                "PZ_TUNNEL .local template resolved to an invalid name; skipping"
+            );
+            continue;
+        }
+
         let label = extract_local_label(&resolved_name);
         if label.is_empty() {
             continue;
@@ -432,6 +471,11 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
             host_port
         });
 
+        let health_path = envs
+            .iter()
+            .find_map(|e| e.strip_prefix("PZ_HEALTH_PATH="))
+            .and_then(normalize_health_path);
+
         let container_name = label.clone();
         out.push(DiscoveredNetworkService {
             name: label,
@@ -445,6 +489,7 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
                 id: id.to_string(),
                 name: container_name,
             },
+            health_path,
         });
     }
 

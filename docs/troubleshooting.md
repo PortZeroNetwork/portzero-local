@@ -62,7 +62,9 @@ If this only happens in the Snap package of Brave, use the native Brave package
 instead. PortZero installs its local CA into the Linux system trust store and
 browser NSS stores, but some Snap Brave/Chromium builds still ignore those local
 trust anchors and report the PortZero CA as an unknown issuer. Non-Snap Brave
-uses the installed CA correctly.
+uses the installed CA correctly. See
+[known-limitations.md](known-limitations.md) for the full writeup (and other
+browser/engine CA-trust gaps, e.g. Playwright's bundled Firefox).
 
 ## Seeing the daemon's own logs
 

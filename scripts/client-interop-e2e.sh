@@ -10,7 +10,12 @@ DOMAIN="${STAGING_DOMAIN:?Set STAGING_DOMAIN to the staging base domain}"
 SEED_TOKEN="${TEST_LOGIN_SEED_TOKEN:?Set TEST_LOGIN_SEED_TOKEN to the staging test-seed-login bearer token}"
 BINARY_PATH="${PORTZERO_PREBUILT_BINARY_PATH:?Set PORTZERO_PREBUILT_BINARY_PATH to the just-built portzero binary}"
 EMAIL="${STAGING_CLIENT_E2E_EMAIL:-staging-client-e2e-macos@example.com}"
-USERNAME="${STAGING_CLIENT_E2E_USERNAME:-tunnel-e2e}"
+# Unique per platform/repo so concurrent E2E runs against shared staging
+# (this job, the sibling Windows job below, and portzero-cloud's own E2E
+# job) don't register the same tunnel domain. Kept as a single label:
+# Caddy's TLS cert for tunnel domains is a single-level wildcard
+# (*.tunnel.<domain>) and does not cover multi-label subdomains.
+USERNAME="${STAGING_CLIENT_E2E_USERNAME:-tunnel-e2e-macos}"
 ACCOUNT_ID="${STAGING_CLIENT_E2E_ACCOUNT_ID:-staging-client-e2e-macos-account}"
 VERIFY_CODE="${STAGING_CLIENT_E2E_CODE:-424242}"
 
@@ -18,7 +23,7 @@ API_URL="https://app.${DOMAIN}/api"
 EDGE_URL="wss://edge.${DOMAIN}/tunnel"
 AUTH_URL="${API_URL}/auth/verify"
 SEED_URL="${API_URL}/auth/test-seed-login"
-TUNNEL_DOMAIN="client-e2e-macos.${USERNAME}.tunnel.${DOMAIN}"
+TUNNEL_DOMAIN="${USERNAME}.tunnel.${DOMAIN}"
 EXPECTED_BODY="portzero-client-e2e-ok"
 
 WORK_DIR="$(mktemp -d)"
@@ -90,7 +95,7 @@ start_local_service() {
   printf '%s\n' "${EXPECTED_BODY}" > "${HTTP_DIR}/index.html"
   (
     cd "${HTTP_DIR}"
-    PZ_TUNNEL="${TUNNEL_DOMAIN}:80" python3 -m http.server 0 --bind 127.0.0.1
+    PZ_TUNNEL="${TUNNEL_DOMAIN}:80" python3 -u -m http.server 0 --bind 127.0.0.1
   ) > "${WORK_DIR}/http.log" 2>&1 &
   HTTP_PID="$!"
 
@@ -131,6 +136,15 @@ wait_for_route() {
   exit 1
 }
 
+approve_route() {
+  curl -fsS \
+    -X POST \
+    -H "Authorization: Bearer $(jq -r .token "${HOME_DIR}/.portzero/auth.json")" \
+    -H 'Content-Type: application/json' \
+    -d '{}' \
+    "${API_URL}/routes/${TUNNEL_DOMAIN}/approve" >/dev/null
+}
+
 curl_public_tunnel() {
   for i in $(seq 1 30); do
     body="$(curl -fsS --connect-timeout 5 --max-time 10 "https://${TUNNEL_DOMAIN}/" || true)"
@@ -155,4 +169,5 @@ HOME="${HOME_DIR}" PZ_TUNNEL_API_URL="${API_URL}" "${BIN_DIR}/portzero" whoami
 start_local_service
 start_portzero
 wait_for_route
+approve_route
 curl_public_tunnel
