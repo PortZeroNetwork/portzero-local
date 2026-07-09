@@ -7,7 +7,7 @@ overlay is running**, which requires the daemon to be started with **root /
 `CAP_NET_ADMIN`**. Start it with `sudo`:
 
 ```bash
-sudo -E port-zero start --foreground
+sudo -E portzero start --foreground
 ```
 
 If you started the daemon unprivileged it logged `continuing in
@@ -53,7 +53,7 @@ Ensure `/dev/net/tun` exists and the `tun` module is loaded
 
 The name resolved to a `10.254.x.y` VIP but the proxy could not reach the
 backend. Check that the backend process or Docker container is still listening
-on its ephemeral port and that `port-zero status` shows the expected real
+on its ephemeral port and that `portzero status` shows the expected real
 address. Restarting it re-registers the same stable VIP.
 
 ## Brave shows `ERR_CERT_AUTHORITY_INVALID` for `https://portzero.local`
@@ -70,6 +70,6 @@ browser/engine CA-trust gaps, e.g. Playwright's bundled Firefox).
 
 - `~/.portzero/daemon/daemon.log` (background mode).
 - Or run `--foreground` to see logs on the console.
-- `port-zero status` shows the current discovered Local tunnels and routes.
+- `portzero status` shows the current discovered Local tunnels and routes.
 
 For development workflow, tests, hooks, and contributor instructions see [dev/development.md](dev/development.md).

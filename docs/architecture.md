@@ -49,7 +49,7 @@ process/container (port 0)  daemon                          client (curl)
 ### 1–2. Discovery
 
 A process or Docker container sets `PZ_TUNNEL` to a **full domain** and binds **port 0**. The
-long-running daemon (`port-zero start [--foreground]`) reads each process's
+long-running daemon (`portzero start [--foreground]`) reads each process's
 environment from the outside: `/proc/<pid>/environ` on Linux,
 `sysctl KERN_PROCARGS2` on macOS. Both are **frozen at `execve()` time**, which
 is why the variable must be set before launch. The `.portzero.local` suffix routes

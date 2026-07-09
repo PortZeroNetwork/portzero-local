@@ -23,7 +23,7 @@ mod wait;
 #[command(
     name = "portzero",
     version,
-    about = "Expose local services via portzero.cloud tunnels"
+    about = "Eliminate port conflicts: stable *.portzero.local and cloud tunnel names for your dev services"
 )]
 struct Cli {
     #[command(subcommand)]

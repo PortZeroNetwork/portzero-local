@@ -33,3 +33,32 @@ If you actually need a service to be reachable beyond the local machine —
 from another device, a teammate, or the internet — that's what
 [Cloud tunnels](portzero.md) are for, and they're simpler than making mDNS do
 this job.
+
+## Doesn't `.local` belong to mDNS? Does Port Zero break Bonjour/AirPrint/Avahi?
+
+No. Port Zero claims only the `portzero.local` subtree, not `.local` itself,
+and it does so with a *scoped* resolver entry — on macOS,
+`/etc/resolver/portzero.local` sends queries for `portzero.local` and its
+subdomains (and nothing else) to Port Zero's embedded DNS server. Every other
+`.local` name — `printer.local`, `my-mac.local`, your teammate's AirDrop —
+still goes to mDNSResponder/Avahi exactly as before. Port Zero never answers,
+probes, or announces on multicast at all.
+
+RFC 6762 does reserve `.local` for mDNS, so the honest description is: Port
+Zero carves one name (`portzero.local`) out of that space on your machine
+only. The only theoretical conflict is a real mDNS device on your network that
+advertises the hostname `portzero` — in that case your machine resolves the
+name to Port Zero's dashboard instead of that device. Nothing else on the
+network is affected, because the override is local resolver configuration, not
+network traffic.
+
+Two platform quirks are worth knowing (both handled by `portzero setup`):
+
+- **macOS** intercepts all `.local` lookups with mDNSResponder before other
+  resolvers are consulted, which is why the scoped `/etc/resolver` entry (and
+  an `/etc/hosts` pin for the bare dashboard name) is part of setup.
+- **Linux** desktops commonly ship `mdns4_minimal [NOTFOUND=return]` in
+  `nsswitch.conf`, which claims two-label `.local` names; see
+  [privileges.md](privileges.md) for how the bare `portzero.local` dashboard
+  name is handled there. Subdomain names like `myapp.portzero.local` have
+  three labels and are not claimed by `mdns4_minimal`.
