@@ -20,21 +20,28 @@ alone. This verifies it empirically instead of assuming.
 
 ## Result (see `docs/known-limitations.md` for the up-to-date version)
 
-- **Chromium**: expected trusted — reads the shared `~/.pki/nssdb` NSS store,
-  which `portzero trust install` seeds proactively.
-- **WebKit**: expected trusted — WebKitGTK on Linux verifies against the
-  system trust store (GnuTLS + p11-kit), which `portzero trust install` also
-  updates.
+All three engines currently need `ignoreHTTPSErrors: true` on this runner —
+none trust the PortZero local CA out of the box yet, contrary to the original
+expectation for Chromium/WebKit below. See `docs/known-limitations.md` for
+what's understood about why and what a real fix would involve.
+
+- **Chromium**: *expected* trusted (reads the shared `~/.pki/nssdb` NSS
+  store, which `portzero trust install` seeds proactively) — but the first
+  real CI run showed it untrusted here too, for an as-yet-unidentified
+  reason.
+- **WebKit**: *expected* trusted (WebKitGTK on Linux verifies against the
+  system trust store via GnuTLS + p11-kit, which `portzero trust install`
+  also updates) — but untrusted in practice, plausibly because `trust
+  extract-compat` fails on this runner image (see `docs/known-limitations.md`).
 - **Firefox**: expected **not** trusted by default. Playwright launches its
   bundled Firefox against a fresh, ephemeral profile per run; NSS databases
   are per-profile, and `portzero trust install` only seeds *existing*
-  profiles under `~/.mozilla/firefox/*`. `playwright.config.ts` sets
-  `ignoreHTTPSErrors: true` for the `firefox` project as the documented
-  fallback.
+  profiles under `~/.mozilla/firefox/*`.
 
-These are documented expectations based on reading `trust.rs`, encoded as
-per-project config in `playwright.config.ts` — the actual CI run is the
-source of truth; see the workflow's run history for the current result.
+These were originally documented expectations based on reading `trust.rs`;
+the actual CI run is the source of truth, and for Chromium/WebKit it
+disagreed with the theory — see the workflow's run history for the current
+result.
 
 ## Running locally
 
