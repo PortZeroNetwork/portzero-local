@@ -138,6 +138,14 @@ function Start-LocalService {
 }
 
 function Start-Portzero {
+    # PZ_TUNNEL was set session-wide so the python http.server child inherited
+    # it. It must NOT leak into the portzero daemon's own environment: the
+    # daemon has listening ports of its own (management API), so on Windows it
+    # would discover itself as the service for the tunnel domain and register
+    # the wrong local port. The bash sibling scopes PZ_TUNNEL to the python
+    # subshell; do the equivalent here by clearing it before starting portzero.
+    Remove-Item Env:\PZ_TUNNEL -ErrorAction SilentlyContinue
+
     $env:PZ_TUNNEL_API_URL = $ApiUrl
     $env:PZ_TUNNEL_EDGE_URL = $EdgeUrl
     $env:PZ_TUNNEL_BASE_DOMAIN = $Domain
