@@ -21,26 +21,14 @@ pub(super) fn scan_processes(
         let mut services = Vec::new();
         let mut issues = Vec::new();
 
-        // (pid, PZ_TUNNEL) candidates. On macOS this MUST be one batched `ps`
-        // call: the previous per-pid `ps` (one subprocess for every process on
-        // the system, every scan cycle) made scan cycles take tens of seconds
-        // under CI load, so services were not discovered within test windows
-        // and healthy routes flapped. Mirrors the identical fix in
-        // scan_network_processes_sync_macos. Linux reads /proc/<pid>/environ
-        // directly, which is cheap enough per-pid.
+        // (pid, PZ_TUNNEL) candidates. macOS reads each process's env via
+        // sysctl(KERN_PROCARGS2) rather than `ps -E`, which stopped exposing
+        // process environments on macOS 15.7+ (task-74; see
+        // scan_process_env_macos). KERN_PROCARGS2 is a syscall with no
+        // subprocess, so the per-pid scan is cheap — like Linux reading
+        // /proc/<pid>/environ. Mirrors scan_network_processes_sync_macos.
         #[cfg(target_os = "macos")]
-        let candidates: Vec<(u32, String)> = {
-            use std::process::Command;
-            match Command::new("ps")
-                .args(["-axo", "pid=,command=", "-wwwE"])
-                .output()
-            {
-                Ok(o) if o.status.success() => {
-                    parse_macos_ps_env_candidates(&String::from_utf8_lossy(&o.stdout), ENV_VAR_NAME)
-                }
-                _ => Vec::new(),
-            }
-        };
+        let candidates: Vec<(u32, String)> = scan_macos_env_candidates(&sys);
         #[cfg(not(target_os = "macos"))]
         let candidates: Vec<(u32, String)> = sys
             .processes()
@@ -1154,8 +1142,146 @@ fn scan_process_env_linux(pid: u32, var_name: &str) -> Option<String> {
     None
 }
 
+// There are two ways to read another process's environment on macOS:
+//
+//   1. `ps -wwwE` (scan_process_env_macos_ps): shell out to `ps` and let it
+//      print argv + env. Simple and needs no unsafe code — but on macOS 15.7+
+//      (Sequoia) Apple stopped exposing process environments through `ps -E`
+//      even for root, so it returns argv only and PZ_TUNNEL discovery finds
+//      nothing (task-74).
+//
+//   2. sysctl(KERN_PROCARGS2) (scan_process_env_macos_procargs2): read the
+//      kernel's own copy of the process's argv + env buffer directly. This is
+//      the same source `ps` itself used to read; it still works on 15.7+ for
+//      same-user/root callers and needs no subprocess. This is the active path.
+//
+// To fall back to the old behavior, swap the active call below for the
+// commented one (and likewise in scan_macos_env_candidates for the batched
+// scans).
 #[cfg(target_os = "macos")]
 fn scan_process_env_macos(pid: u32, var_name: &str) -> Option<String> {
+    scan_process_env_macos_procargs2(pid, var_name)
+    // scan_process_env_macos_ps(pid, var_name)
+}
+
+/// Read `var_name` from `pid`'s environment via sysctl(KERN_PROCARGS2). Returns
+/// `None` if the process is gone, unreadable (different user, no privilege), or
+/// does not set the variable. See scan_process_env_macos for the rationale.
+#[cfg(target_os = "macos")]
+fn scan_process_env_macos_procargs2(pid: u32, var_name: &str) -> Option<String> {
+    let prefix = format!("{var_name}=");
+    read_process_env_macos(pid)?
+        .into_iter()
+        .find_map(|entry| entry.strip_prefix(&prefix).map(str::to_string))
+}
+
+/// Return the full environment of `pid` as `KEY=VALUE` strings by reading the
+/// kernel's KERN_PROCARGS2 buffer. `None` on any sysctl failure.
+///
+/// The KERN_PROCARGS2 buffer is laid out as:
+///
+/// ```text
+///   [ argc: i32 ][ exec_path\0 ][ \0 padding ][ argv[0]\0 .. argv[argc-1]\0 ]
+///   [ env[0]\0 .. env[n]\0 ][ apple[0]\0 .. ]
+/// ```
+///
+/// We skip `argc`, the executable path, its zero padding, and the `argc` argv
+/// strings; everything remaining is the environment (trailed by the harmless
+/// `apple[]` strings, which also look like `KEY=VALUE`).
+#[cfg(target_os = "macos")]
+fn read_process_env_macos(pid: u32) -> Option<Vec<String>> {
+    // Size the buffer from KERN_ARGMAX (the KERN_PROCARGS2 null-sizing call is
+    // unreliable, so allocate the documented maximum up front).
+    let mut argmax: libc::c_int = 0;
+    let mut argmax_len = std::mem::size_of::<libc::c_int>();
+    let mut argmax_mib = [libc::CTL_KERN, libc::KERN_ARGMAX];
+    let rc = unsafe {
+        libc::sysctl(
+            argmax_mib.as_mut_ptr(),
+            argmax_mib.len() as libc::c_uint,
+            &mut argmax as *mut _ as *mut libc::c_void,
+            &mut argmax_len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || argmax <= 0 {
+        return None;
+    }
+
+    let mut buf = vec![0u8; argmax as usize];
+    let mut buf_len = buf.len();
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as libc::c_int];
+    let rc = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            &mut buf_len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    buf.truncate(buf_len);
+
+    parse_procargs2_env(&buf)
+}
+
+/// Extract the environment strings from a raw KERN_PROCARGS2 buffer. Split out
+/// from the sysctl call so it can be unit-tested with synthetic buffers.
+#[cfg(target_os = "macos")]
+pub(super) fn parse_procargs2_env(buf: &[u8]) -> Option<Vec<String>> {
+    if buf.len() < std::mem::size_of::<libc::c_int>() {
+        return None;
+    }
+    let argc = i32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    let mut pos = std::mem::size_of::<libc::c_int>();
+
+    // Skip the executable path string and its trailing zero padding.
+    while pos < buf.len() && buf[pos] != 0 {
+        pos += 1;
+    }
+    while pos < buf.len() && buf[pos] == 0 {
+        pos += 1;
+    }
+
+    // Skip the argc argv strings.
+    let mut skipped = 0i32;
+    while skipped < argc && pos < buf.len() {
+        while pos < buf.len() && buf[pos] != 0 {
+            pos += 1;
+        }
+        pos += 1; // step past the null terminator
+        skipped += 1;
+    }
+
+    // Everything left is the environment (plus the apple[] strings).
+    let mut env = Vec::new();
+    while pos < buf.len() {
+        let start = pos;
+        while pos < buf.len() && buf[pos] != 0 {
+            pos += 1;
+        }
+        if pos > start {
+            if let Ok(s) = std::str::from_utf8(&buf[start..pos]) {
+                env.push(s.to_string());
+            }
+        }
+        pos += 1; // step past the null terminator
+    }
+
+    Some(env)
+}
+
+/// Old macOS env read via `ps -wwwE`. Broken on macOS 15.7+ (see
+/// scan_process_env_macos); kept as the documented fallback and for parity with
+/// how `ps` sourced the data historically.
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+fn scan_process_env_macos_ps(pid: u32, var_name: &str) -> Option<String> {
     use std::process::Command;
 
     let output = Command::new("ps")
@@ -1510,24 +1636,14 @@ fn scan_network_processes_sync() -> Vec<NetProcessCandidate> {
 #[cfg(target_os = "macos")]
 fn scan_network_processes_sync_macos() -> Vec<NetProcessCandidate> {
     use std::net::{IpAddr, SocketAddr};
-    use std::process::Command;
 
     let mut sys = System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
-    let output = match Command::new("ps")
-        .args(["-axo", "pid=,command=", "-wwwE"])
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return Vec::new(),
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
     let daemon_no_probe = std::env::var(ENV_NO_PROBE_VAR).ok();
     let mut candidates = Vec::new();
 
-    for (pid_u32, raw) in parse_macos_ps_env_candidates(&stdout, ENV_VAR_NAME) {
+    for (pid_u32, raw) in scan_macos_env_candidates(&sys) {
         if pid_u32 <= 1 {
             continue;
         }
@@ -1632,7 +1748,50 @@ fn scan_network_processes_sync_macos() -> Vec<NetProcessCandidate> {
     candidates
 }
 
+/// Collect `(pid, PZ_TUNNEL)` candidates for every process on the system.
+///
+/// This reads each process's env via sysctl(KERN_PROCARGS2) (see
+/// scan_process_env_macos for why, not `ps -E`). Because KERN_PROCARGS2 is a
+/// syscall with no subprocess, reading env per-pid is cheap — the single
+/// batched `ps` call that this used to require for speed is no longer needed.
+/// The old batched `ps -E` path is preserved in scan_macos_env_candidates_ps;
+/// swap the active line below for the commented one to fall back to it.
 #[cfg(target_os = "macos")]
+fn scan_macos_env_candidates(sys: &System) -> Vec<(u32, String)> {
+    sys.processes()
+        .keys()
+        .filter_map(|pid| {
+            let pid_u32 = pid.as_u32();
+            match scan_process_env(pid_u32, ENV_VAR_NAME) {
+                Some(v) if !v.is_empty() => Some((pid_u32, v)),
+                _ => None,
+            }
+        })
+        .collect()
+    // scan_macos_env_candidates_ps()
+}
+
+/// Old batched candidate collection via a single `ps -axo pid=,command= -wwwE`.
+/// Broken on macOS 15.7+ (see scan_process_env_macos); kept as the documented
+/// fallback that pairs with parse_macos_ps_env_candidates.
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+fn scan_macos_env_candidates_ps() -> Vec<(u32, String)> {
+    use std::process::Command;
+
+    match Command::new("ps")
+        .args(["-axo", "pid=,command=", "-wwwE"])
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            parse_macos_ps_env_candidates(&String::from_utf8_lossy(&o.stdout), ENV_VAR_NAME)
+        }
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
 pub(super) fn parse_macos_ps_env_candidates(stdout: &str, var_name: &str) -> Vec<(u32, String)> {
     stdout
         .lines()
@@ -1641,6 +1800,7 @@ pub(super) fn parse_macos_ps_env_candidates(stdout: &str, var_name: &str) -> Vec
 }
 
 #[cfg(target_os = "macos")]
+#[allow(dead_code)]
 pub(super) fn parse_macos_ps_env_candidate(line: &str, var_name: &str) -> Option<(u32, String)> {
     let trimmed = line.trim_start();
     let (pid, rest) = trimmed.split_once(char::is_whitespace)?;

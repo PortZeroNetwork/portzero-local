@@ -50,7 +50,7 @@ use process::{parse_lsof_line, parse_lsof_stdout};
 
 #[cfg(target_os = "macos")]
 #[allow(unused_imports)]
-use process::{parse_macos_ps_env_candidate, parse_macos_ps_env_candidates};
+use process::{parse_macos_ps_env_candidate, parse_macos_ps_env_candidates, parse_procargs2_env};
 
 #[cfg(target_os = "linux")]
 #[allow(unused_imports)]
@@ -611,6 +611,29 @@ mod tests {
     fn test_parse_macos_ps_env_candidate_ignores_missing_var() {
         let line = "70462 /Users/loumtech/.cargo/bin/portzero start --foreground";
         assert_eq!(parse_macos_ps_env_candidate(line, ENV_VAR_NAME), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_parse_procargs2_env() {
+        // Synthesize a KERN_PROCARGS2 buffer: argc, exec_path, zero padding,
+        // argc argv strings, then the environment (and a trailing apple[]).
+        let mut buf = Vec::new();
+        let argc: i32 = 2;
+        buf.extend_from_slice(&argc.to_ne_bytes());
+        buf.extend_from_slice(b"/usr/bin/demo\0");
+        buf.extend_from_slice(b"\0\0"); // padding between exec_path and argv[0]
+        buf.extend_from_slice(b"demo\0"); // argv[0]
+        buf.extend_from_slice(b"--serve\0"); // argv[1]
+        buf.extend_from_slice(b"PWD=/tmp/project\0");
+        buf.extend_from_slice(b"PZ_TUNNEL=rust-demo.portzero.local:80\0");
+        buf.extend_from_slice(b"executable_path=/usr/bin/demo\0"); // apple[]
+
+        let env = parse_procargs2_env(&buf).expect("env parsed");
+        assert!(env.contains(&"PWD=/tmp/project".to_string()));
+        assert!(env.contains(&"PZ_TUNNEL=rust-demo.portzero.local:80".to_string()));
+        // argv strings must not leak into the environment.
+        assert!(!env.iter().any(|e| e == "demo" || e == "--serve"));
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

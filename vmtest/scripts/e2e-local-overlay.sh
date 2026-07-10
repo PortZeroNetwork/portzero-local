@@ -35,9 +35,21 @@ echo "PHASE=preflight exe=$([ -x "$EXE" ] && echo true || echo false) perl=$(com
 for d in "$HOME/.portzero" "$RH/.portzero"; do $SUDO rm -f "$d/auth.json" 2>/dev/null; done
 
 # --- tagged service (its env carries PZ_TUNNEL so the daemon discovers it).
-# Run it as ROOT (same uid as the daemon): macOS `ps -E` won't reveal another
-# user's env, so the root daemon can only read PZ_TUNNEL from a root process.
-$SUDO env PZ_TUNNEL="$DOMAIN" perl "$LIB" "$BODY" "$PORT" >"$WORK/svc.out" 2>&1 &
+# Run it as ROOT (same uid as the daemon) so discovery reads its env.
+#
+# macOS caveat (task-74): a SIP-protected system binary like /usr/bin/perl has
+# its environment hidden from *every* other process — neither `ps -E` nor
+# sysctl(KERN_PROCARGS2) can read it, at any privilege. So the daemon could
+# never see PZ_TUNNEL when the tagged service ran as system perl. Run it from a
+# *copy* of perl at an unrestricted path, which is not SIP-protected and whose
+# env is readable. On Linux /proc/<pid>/environ is exposed regardless, so use
+# perl as-is.
+PERL="perl"
+if [ "$(uname)" = "Darwin" ]; then
+    PERL="$WORK/perl"
+    cp "$(command -v perl)" "$PERL" && chmod +x "$PERL"
+fi
+$SUDO env PZ_TUNNEL="$DOMAIN" "$PERL" "$LIB" "$BODY" "$PORT" >"$WORK/svc.out" 2>&1 &
 svc_pid=$!
 up=0
 for _ in $(seq 1 30); do curl -sf "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && { up=1; break; }; sleep 0.5; done

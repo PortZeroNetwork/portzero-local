@@ -26,6 +26,31 @@ reads the frozen `execve()` environment (`/proc/<pid>/environ` on Linux,
 - Confirm the value is a **full domain** with a recognized suffix
   (`.portzero.local` or `*.<username>.tunnel.portzero.cloud`); nothing is appended implicitly.
 
+### macOS: a process run under a system interpreter is never discovered
+
+On macOS 15.7+ the kernel **hides the environment of SIP-protected system
+binaries** from every other process — including the daemon, and including root.
+This is not specific to how the daemon reads env: neither `sysctl
+KERN_PROCARGS2` nor `ps -E` can see it. So if you tag a process whose executable
+is a **system-shipped interpreter**, its `PZ_TUNNEL` is invisible and the
+process is silently not discovered. Affected executables include:
+
+- `/usr/bin/python3` (the Xcode/Command-Line-Tools python)
+- system `/usr/bin/perl`, `/usr/bin/ruby`
+- `/bin/sh`, `/bin/bash` (the system copies)
+
+Run the tagged process under a **non-system runtime** instead — anything not
+under `/usr/bin` or `/bin`/`/sbin` is fine:
+
+- Homebrew (`/opt/homebrew/bin/...`, `/usr/local/bin/...`), `nvm`, `pyenv`,
+  `rbenv`, `asdf`, or a user-compiled binary.
+- Quick check: `PZ_TUNNEL` is readable iff
+  `ps -p <pid> -wwwE -o command= | tr ' ' '\n' | grep PZ_TUNNEL` prints it.
+  If that shows nothing, the process is under a SIP binary — switch runtimes.
+
+Linux (`/proc/<pid>/environ`) and Windows (`ReadProcessMemory`) have no such
+restriction, so system interpreters are discovered there normally.
+
 ## The literal `{branch}` appears in `status`
 
 Template resolution failed. For native processes ensure you are on a real git

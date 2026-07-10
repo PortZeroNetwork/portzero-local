@@ -61,8 +61,18 @@ $SUDO mkdir -p "$RH/.portzero"
 printf '%s' "$VER" | $SUDO tee "$RH/.portzero/auth.json" >/dev/null
 
 # --- tagged service (:80 canonical external port; daemon finds the real port).
-# Run as ROOT (same uid as the daemon) — macOS `ps -E` hides other users' env. ---
-$SUDO env PZ_TUNNEL="${TUNNEL}:80" perl "$LIB" "$BODY" "$PORT" >"$WORK/svc.out" 2>&1 &
+# Run as ROOT (same uid as the daemon) so discovery reads its env.
+#
+# macOS caveat (task-74): a SIP-protected system binary like /usr/bin/perl has
+# its env hidden from every other process (neither `ps -E` nor KERN_PROCARGS2
+# can read it, at any privilege), so run it from a *copy* of perl at an
+# unrestricted path. Linux exposes /proc/<pid>/environ regardless. ---
+PERL="perl"
+if [ "$(uname)" = "Darwin" ]; then
+    PERL="$WORK/perl"
+    cp "$(command -v perl)" "$PERL" && chmod +x "$PERL"
+fi
+$SUDO env PZ_TUNNEL="${TUNNEL}:80" "$PERL" "$LIB" "$BODY" "$PORT" >"$WORK/svc.out" 2>&1 &
 svc_pid=$!
 up=0; for _ in $(seq 1 30); do curl -sf "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && { up=1; break; }; sleep 0.5; done
 [ "$up" = 1 ] || { echo "RESULT=FAIL service not listening"; exit 1; }
