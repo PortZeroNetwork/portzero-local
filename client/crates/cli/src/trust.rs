@@ -5,9 +5,20 @@ use portzero_daemon::tls::{trust, LocalCa};
 /// Generate the local CA certificate and key, persisting them to the platform
 /// data directory.  Safe to call multiple times — existing certs are kept.
 /// Does not require elevated privileges.
+///
+/// If a legacy CA generated before name constraints were added is found, it is
+/// regenerated in place (atomically) so it is scoped to `*.portzero.local`. The
+/// user is then told to re-run `trust install`, because the OS trust store
+/// still holds the old, unconstrained anchor until they do.
 pub fn generate() -> anyhow::Result<()> {
-    let _ca = LocalCa::load_or_create()?;
+    let regenerated = LocalCa::ensure_name_constrained()?;
     let path = LocalCa::ca_cert_path()?;
+    if regenerated {
+        println!("Replaced the local CA with a name-constrained one (scoped to *.portzero.local).");
+        println!(
+            "Re-run `sudo portzero trust install` to trust the new CA; the old one is no longer used."
+        );
+    }
     println!("CA certificate ready: {}", path.display());
     Ok(())
 }
