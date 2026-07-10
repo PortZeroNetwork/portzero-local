@@ -11,3 +11,9 @@ devenv-tunnel.db
 .DS_Store
 # Ticketry ticket management state (index.db, hooks state, etc.) is never committed
 /.ticketry/index.db
+
+# Parallels VM test harness: downloaded installers cached Mac-side (never commit)
+/vmtest/cache/
+
+# VM benchmark telemetry (host-specific)
+/vmtest/bench/

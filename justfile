@@ -1,4 +1,5 @@
 set windows-shell := ["powershell.exe", "-NoProfile", "-Command"]
+import? 'vmtest/justfile'
 
 default:
     @just --list
