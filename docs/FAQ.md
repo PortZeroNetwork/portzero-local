@@ -63,39 +63,40 @@ Two platform quirks are worth knowing (both handled by `portzero setup`):
   name is handled there. Subdomain names like `myapp.portzero.local` have
   three labels and are not claimed by `mdns4_minimal`.
 
-## Does Port Zero work inside a Claude Code (claude.ai/code) cloud/browser session?
+## How do I set up Port Zero inside a Claude Code (claude.ai/code) cloud/browser session?
 
-Partially, automatically — the overlay itself works, but scoped OS-level DNS
-usually needs a manual step. What actually happens depends on how that
-specific session's sandbox is put together, which varies by provider, but the
-common shape observed running `portzero start --foreground` in one:
+It works, with one extra step beyond a normal machine: add a hosts entry by
+hand instead of relying on automatic OS-level DNS, because these sandboxes
+commonly don't run the services Linux resolver integration depends on. (Why,
+exactly, is sandbox-specific and documented in
+[troubleshooting.md](troubleshooting.md#portzerolocal-names-dont-resolve-in-a-cloud-sandbox-or-container)
+— this answer is just the steps.)
 
-- **The overlay comes up fine.** These sessions run as root with
-  `CAP_NET_ADMIN` and a working `/dev/net/tun`, so the TUN device
-  (`deven0`), the embedded DNS server (`10.254.0.1:53`), and the CA
-  generation/install all start normally — the same startup log you'd see on a
-  bare-metal Linux box.
-- **The scoped `*.portzero.local` resolver usually does not wire up
-  automatically.** Port Zero's Linux resolver integration needs either
-  systemd-resolved or a `dnsmasq` fallback (see
-  [architecture.md](architecture.md) and `net/resolver_config.rs`). Cloud
-  sandboxes frequently have neither — no systemd as PID 1 at all, and no
-  `dnsmasq` installed — so this step logs a warning and does nothing further.
-  It's the same best-effort, non-fatal path a minimal Docker image without
-  systemd would hit; the overlay isn't affected.
-- **Don't trust `/.dockerenv` or `systemd-detect-virt` alone to guess what
-  will work.** A sandbox can report itself as `docker` (or lack
-  `/.dockerenv`) without actually shaping `/etc/hosts` the way a real
-  container does. `portzero doctor` and `portzero setup` check the concrete
-  thing that matters instead — e.g. whether `/etc/hosts` is actually
-  bind-mounted at that exact path (the real container-runtime signature),
-  immutable, or a generated symlink — and say so plainly rather than assuming
-  based on environment fingerprinting.
-- **Workaround:** with no scoped resolver, `getaddrinfo("foo.portzero.local")`
-  won't resolve on its own. Either add the hosts entries by hand (`portzero
-  setup`/`portzero doctor` will tell you if `/etc/hosts` is actually safe to
-  edit in that sandbox first), or skip name resolution entirely and use
-  `portzero url` / `portzero env` / `portzero wait` to get the concrete
-  tunnel URL for scripts, CI steps, or a headless browser test — the same
-  pattern the [`tunnel-action`](../tunnel-action/README.md) GitHub Action
-  uses, since CI runners have the identical no-systemd shape.
+1. **Install Port Zero** the same way you would anywhere else — see the
+   [README](../README.md) for the current install command per platform.
+2. **Start the daemon as root**, since the overlay needs `CAP_NET_ADMIN`:
+   ```bash
+   sudo -E portzero start --foreground
+   ```
+   (or run `sudo portzero setup` once, then `portzero start` — see
+   [privileges.md](privileges.md)). Leave it running in the background for
+   the rest of the session (e.g. launch it from a
+   [`SessionStart` hook](https://code.claude.com/docs/en/claude-code-on-the-web)
+   so it's already up before you start working).
+3. **Tag your dev process or container** with `PZ_TUNNEL` as usual, e.g.
+   `PZ_TUNNEL=myapp.portzero.local:80 npm start` — see
+   [portzero.md](portzero.md).
+4. **Check it actually worked:**
+   ```bash
+   portzero doctor
+   ```
+   If the hosts pin check warns, add the entry it suggests. `portzero doctor`
+   and `portzero setup` both check first whether `/etc/hosts` is actually
+   safe to edit in that specific sandbox, and tell you plainly if it isn't
+   (rather than silently failing or writing something that won't persist).
+5. **Don't assume `foo.portzero.local` resolves in scripts/tests.** Once the
+   hosts pin from step 4 is in place it will, but for CI-style steps that
+   can't add hosts entries, skip name resolution entirely: use `portzero url`
+   / `portzero env` / `portzero wait` to get the concrete tunnel URL instead
+   — the same pattern the [`tunnel-action`](../tunnel-action/README.md)
+   GitHub Action uses.
