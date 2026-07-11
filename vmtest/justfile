@@ -118,6 +118,21 @@ vm-test-staging platform="":
 vm-test-lifecycle platform="":
     just _vm-test-series lifecycle "{{platform}}"
 
+# Upgrade coverage: install a PRIOR released version, then the NEW one over the
+# top, and assert the in-place upgrade DUPLICATED nothing — one /etc/hosts pin +
+# one autostart unit (Linux .deb), one product/task/NRPT/Wintun-adapter via WiX
+# <MajorUpgrade> (Windows MSI), one LaunchDaemon/resolver/keychain-CA/hosts pin
+# (macOS setup). The prior artifact is fetched from the latest published release
+# via `gh`, or pinned with PORTZERO_DEB_OLD / PORTZERO_MSI_OLD / PORTZERO_EXE_OLD;
+# each script SKIPs cleanly (never a false fail) when no prior artifact is
+# available — e.g. the network-pristine guest with no gh, or before the first
+# release. Linux upgrade also runs on hosted CI (ci.yml: lifecycle-upgrade-linux).
+#   just vm-test-upgrade            # all three, in series
+#   just vm-test-upgrade linux
+[macos]
+vm-test-upgrade platform="":
+    just _vm-test-series upgrade "{{platform}}"
+
 # Reset to a checkpoint, then run an arbitrary repo script in the guest.
 # Advanced/ad-hoc form — `vm-test <platform>` covers the common case.
 #   just vm-test-script "Windows 11 Pro" vmtest/scripts/e2e-staging-tunnel.ps1 built

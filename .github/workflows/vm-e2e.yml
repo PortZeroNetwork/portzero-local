@@ -222,8 +222,23 @@ jobs:
         # The audit's highest-priority gap: proves uninstall removes the trusted
         # CA, the .portzero.local DNS resolver/pin, the autostart service, and
         # the TUN interface — no residue. Linux installs the real .deb, Windows
-        # the real MSI, macOS runs the privileged setup/teardown flow.
+        # the real MSI, macOS runs the privileged setup/teardown flow. macOS
+        # additionally exercises a real offline `brew install` of a formula
+        # generated from the host-built tarball (SKIPs if Homebrew isn't in the
+        # golden snapshot).
         run: just vm-test-lifecycle
+
+      - name: vm-test-upgrade (prior version -> new version, assert no duplication)
+        # Prior-version upgrade dup-checks on all three guests: one hosts pin +
+        # unit (Linux), WiX <MajorUpgrade> single product/task/NRPT/adapter
+        # (Windows), single LaunchDaemon/resolver/keychain-CA/hosts pin (macOS).
+        # The prior artifact is fetched via gh, or the script SKIPs cleanly
+        # (never a false fail) when none is available (e.g. before the first
+        # release, or a pristine guest without gh). Linux upgrade is also
+        # covered on hosted CI (ci.yml: lifecycle-upgrade-linux).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: just vm-test-upgrade
 
       - name: vm-test-staging (real cloud tunnel against staging — windows, linux, macos in series)
         # Runs by default on every trigger (inputs.staging is unset — not
