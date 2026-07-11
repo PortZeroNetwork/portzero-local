@@ -4,18 +4,27 @@ name: VM E2E (Parallels)
 # installers, real trust stores, real TUN/wintun adapters, driven end to end
 # on genuine Windows/Linux/macOS guests. See vmtest/README.md.
 #
-# Manual trigger only, for now:
-#   - Runs on the org's one self-hosted macOS runner, which also hosts the
-#     Parallels VMs under test. It isn't yet installed as a persistent
-#     service (see vmtest/README.md's runner notes), so wiring this to
-#     pull_request/push could silently stop running if that runner drops
-#     off between sessions. Promote to an automatic trigger once the runner
-#     is durable.
-#   - vm-test also stops any other running VM on the host (one-VM-at-a-time
-#     enforcement) and reuses this one Mac's Parallels install, so running
-#     it unattended on every push isn't free of side effects on a machine
-#     also used interactively.
+# windows/linux binaries are built on hosted runners (build-windows,
+# build-linux below) and pushed into the guests, so vm-test always exercises
+# the commit under test — not whatever was last baked into a VM's "built"
+# snapshot by hand. macOS builds directly on the self-hosted runner (which
+# already runs macOS) and pushes its own binary in; see vmtest/scripts/vm.sh.
+#
+# Runs on the org's one self-hosted macOS runner, which also hosts the
+# Parallels VMs under test. vm-test stops any other running VM on the host
+# (one-VM-at-a-time enforcement) and reuses this one Mac's Parallels
+# install, so it isn't free of side effects on a machine also used
+# interactively — acceptable for this org's workflow, worth knowing if that
+# changes.
 on:
+  pull_request:
+    branches:
+      - develop
+      - release/current
+  push:
+    branches:
+      - develop
+      - release/current
   workflow_dispatch:
     inputs:
       staging:
@@ -30,9 +39,43 @@ concurrency:
   group: vm-e2e
   cancel-in-progress: false
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
+  build-windows:
+    name: Build windows binary
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p portzero-cli --bin portzero
+      - uses: actions/upload-artifact@v5
+        with:
+          name: portzero-windows
+          path: target/release/portzero.exe
+          retention-days: 1
+
+  build-linux:
+    name: Build linux binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p portzero-cli --bin portzero
+      - uses: actions/upload-artifact@v5
+        with:
+          name: portzero-linux
+          path: target/release/portzero
+          retention-days: 1
+
   vm-test:
     name: vm-test + vm-test-staging (windows, linux, macos)
+    needs: [build-windows, build-linux]
     runs-on: [self-hosted, macOS]
     timeout-minutes: 45
     steps:
@@ -44,16 +87,35 @@ jobs:
 
       - name: Build macOS binary
         # macOS guest testing is host-built-artifact-only (no toolchain in
-        # that guest); vm.sh pushes this into the guest itself. Windows/Linux
-        # build inside their own guests off the shared folder, so they don't
-        # need this.
+        # that guest); vm.sh pushes this into the guest itself.
         run: cargo build --release -p portzero-cli --bin portzero
+
+      - name: Download windows binary
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-windows
+          path: vmtest/.downloaded-artifacts/windows
+
+      - name: Download linux binary
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-linux
+          path: vmtest/.downloaded-artifacts/linux
+
+      - name: Restore exec bit on the linux binary
+        # vm.sh looks for .downloaded-artifacts/<os>/portzero[.exe] (see
+        # downloaded_artifact_host_path); download-artifact doesn't preserve
+        # the exec bit.
+        run: chmod +x vmtest/.downloaded-artifacts/linux/portzero
 
       - name: vm-test (local overlay, no cloud/secrets — windows, linux, macos in series)
         run: just vm-test
 
       - name: vm-test-staging (real cloud tunnel against staging — windows, linux, macos in series)
-        if: ${{ inputs.staging }}
+        # Runs by default on every trigger (inputs.staging is unset — not
+        # false — for pull_request/push, so this still evaluates true); a
+        # manual dispatch can pass staging=false to skip it.
+        if: ${{ inputs.staging != false }}
         # Rotated seed token: read from the same host-side file the
         # interactive scripts already default to (this runner IS the host
         # that owns that file — no GitHub secret needed). See

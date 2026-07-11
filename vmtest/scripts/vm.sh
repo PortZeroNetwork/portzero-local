@@ -354,12 +354,48 @@ push_secrets_macos() { # <vm> <host-path-to-secrets-file>
     printf '%s' "$guest_file"
 }
 
+# CI-downloaded (or manually dropped) pre-built binary for windows/linux,
+# placed under the repo checkout so the existing (working) shared folder
+# already exposes it to the guest — no push-over-exec needed there, unlike
+# macOS. Without this, the guest's "built" snapshot binary — baked in
+# whenever someone last ran the provisioning scripts by hand — is whatever it
+# was, not necessarily the commit under test. Prints nothing if absent.
+downloaded_artifact_host_path() { # <os: windows|linux>
+    case "$1" in
+        windows) echo "$REPO_HOST/vmtest/.downloaded-artifacts/windows/portzero.exe" ;;
+        linux)   echo "$REPO_HOST/vmtest/.downloaded-artifacts/linux/portzero" ;;
+    esac
+}
+
+# Guest-side path for anything under REPO_HOST (which windows/linux's shared
+# folder exposes in full), given its position relative to REPO_HOST.
+guest_path_under_repo() { # <vm> <host-path-under-REPO_HOST>
+    local vm="$1" host_path="$2"
+    local rel="${host_path#"$REPO_HOST"/}"
+    if [ "$(vm_os "$vm")" = windows ]; then
+        printf '%s\\%s' "$(guest_repo "$vm")" "${rel//\//\\}"
+    else
+        printf '%s/%s' "$(guest_repo "$vm")" "$rel"
+    fi
+}
+
 cmd_run() { # <vm> <repo-relative-script> [args...]
     local vm="$1" script="$2"; shift 2
-    if [ "$(vm_os "$vm")" = windows ]; then
+    local os; os="$(vm_os "$vm")"
+    if [ "$os" = windows ]; then
         local base; base="$(guest_repo "$vm")"
         local win="${base}\\${script//\//\\}"
-        run_guarded "$vm" prlctl exec "$vm" powershell -NoProfile -ExecutionPolicy Bypass -File "$win" "$@"
+        local exe_override=""
+        if [ -z "${PORTZERO_EXE:-}" ]; then
+            local artifact; artifact="$(downloaded_artifact_host_path windows)"
+            [ -f "$artifact" ] && exe_override="$(guest_path_under_repo "$vm" "$artifact")"
+        fi
+        if [ -n "$exe_override" ]; then
+            echo ">> using downloaded artifact as PORTZERO_EXE: $exe_override" >&2
+            run_guarded "$vm" prlctl exec "$vm" cmd /c "set \"PORTZERO_EXE=$exe_override\"&& powershell -NoProfile -ExecutionPolicy Bypass -File \"$win\""
+        else
+            run_guarded "$vm" prlctl exec "$vm" powershell -NoProfile -ExecutionPolicy Bypass -File "$win" "$@"
+        fi
     else
         # Forward selected host env into the guest (macOS uses a host-built
         # binary + a different secrets path). `env` with no assignments is a
@@ -368,7 +404,7 @@ cmd_run() { # <vm> <repo-relative-script> [args...]
         [ -n "${PORTZERO_EXE:-}" ] && envargs+=("PORTZERO_EXE=$PORTZERO_EXE")
         [ -n "${STAGING_SECRETS:-}" ] && envargs+=("STAGING_SECRETS=$STAGING_SECRETS")
         local target
-        if [ "$(vm_os "$vm")" = macos ]; then
+        if [ "$os" = macos ]; then
             target="$(push_script_macos "$vm" "$script")"
             if [ -z "${PORTZERO_EXE:-}" ] && [ -x "$REPO_HOST/target/release/portzero" ]; then
                 echo ">> pushing host-built macOS binary into the guest (no toolchain there, shared folder unavailable)..." >&2
@@ -381,6 +417,13 @@ cmd_run() { # <vm> <repo-relative-script> [args...]
             fi
         else
             target="$(guest_repo "$vm")/${script}"
+            if [ -z "${PORTZERO_EXE:-}" ]; then
+                local artifact; artifact="$(downloaded_artifact_host_path linux)"
+                if [ -f "$artifact" ]; then
+                    echo ">> using downloaded artifact as PORTZERO_EXE" >&2
+                    envargs+=("PORTZERO_EXE=$(guest_path_under_repo "$vm" "$artifact")")
+                fi
+            fi
         fi
         run_guarded "$vm" prlctl exec "$vm" env "${envargs[@]}" bash "$target" "$@"
     fi
