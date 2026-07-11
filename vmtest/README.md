@@ -11,10 +11,12 @@ end on a genuine OS.
 > *smoke* (TUN + DNS + proxy) against the **raw binary** pushed into the guest —
 > it does NOT install a package and says nothing about install/uninstall.
 > `vm-test-lifecycle` installs the **real package** (Linux `.deb` via `dpkg`,
-> Windows signed MSI via `msiexec`, macOS the privileged `setup` flow the
-> Homebrew formula runs), verifies the CA / DNS / autostart / TUN artifacts
-> landed, then runs the real uninstaller and asserts every one is GONE. If you
-> want installer/uninstaller coverage, that is the recipe — see below.
+> Windows signed MSI via `msiexec`, macOS an offline `brew install` of a
+> locally-generated formula **plus** the privileged `setup` flow the Homebrew
+> formula's `post_install` + caveats run), verifies the CA / DNS / autostart /
+> TUN artifacts landed, then runs the real uninstaller and asserts every one is
+> GONE. `vm-test-upgrade` layers on prior-version→new-version upgrade dup-checks.
+> If you want installer/uninstaller coverage, those are the recipes — see below.
 
 ## Why this exists (and its one hard limit)
 
@@ -92,7 +94,7 @@ landed, run the real uninstaller, then assert the artifacts are removed:
 |----------|-------------------------------|-----------------------------------------------------------------------------|
 | Linux    | `dpkg -i` the built `.deb`    | binary, `setcap` caps, `/etc/hosts` pin, systemd unit; CA in system trust store + `/etc/ssl` + `ca-certificates.conf`; `~/.config` autostart unit |
 | Windows  | `msiexec /i` the signed MSI   | binary, scheduled task, CA in `LocalMachine\Root`, `.portzero.local` NRPT rule, Wintun adapter |
-| macOS    | privileged `portzero setup`   | CA in System keychain, root LaunchDaemon, `/etc/resolver/portzero.local`, `/etc/hosts` pin |
+| macOS    | **offline `brew install`** of a generated local formula, **then** privileged `portzero setup` | brew phase: binary linked onto PATH under the brew prefix + `post_install` CA generated + caveats surface `sudo portzero setup`, then `brew uninstall` removes it; setup phase: CA in System keychain, root LaunchDaemon, `/etc/resolver/portzero.local`, `/etc/hosts` pin — **then GONE** |
 
 Each prints greppable `PHASE=<name> ok=<true|false>` lines and a final
 `RESULT=PASS|FAIL`; a leftover artifact yields `ok=false` and fails the run. The
@@ -104,34 +106,69 @@ just vm-test-lifecycle            # all three, in series
 just vm-test-lifecycle linux
 ```
 
-**macOS delivery caveat (honest scope).** macOS ships via Homebrew (a release
-`.tar.gz` + tap formula), *not* a `.pkg`, and the Parallels macOS guest is a
-network-pristine, artifact-only end-user machine — so the harness cannot
-`brew install` the real release tarball in-VM (that needs GitHub Releases + a
-real formula sha256). `lifecycle-macos.sh` therefore exercises the exact
-privileged lifecycle the formula's `post_install` + `sudo portzero setup`
-perform (CA-trust / LaunchDaemon / resolver / hosts), driven by the host-built
-binary — i.e. the *residue* the audit cares about. The brew *download* step
-itself is covered by `release.yml`'s macOS interop job, not here. There is no
-macOS `.pkg` build to test because none is shipped.
+**macOS delivery — what's real, what's not (honest scope).** macOS ships via
+Homebrew (a release `.tar.gz` + tap formula), *not* a `.pkg`. `lifecycle-macos.sh`
+now exercises the real install **mechanism** fully offline: it tars the host-built
+binary into a `portzero-darwin-<arch>.tar.gz`, generates a formula whose `url` is
+a `file://` path to it and whose `sha256` is computed from it — mirroring the
+shipped formula's `install` / `post_install` / `caveats` blocks — then runs
+`brew install --formula <generated.rb>` with all Homebrew network access disabled,
+asserting the binary lands on PATH, `post_install` generated the CA, and the
+caveats surface `sudo portzero setup`, then `brew uninstall` removes it. After
+that it runs the privileged `sudo portzero setup` residue lifecycle (CA-trust /
+LaunchDaemon / resolver / hosts) and asserts every artifact is removed.
+
+Two honest caveats remain:
+- **Homebrew-in-snapshot prerequisite.** The brew phase needs `brew` present in
+  the golden macOS snapshot. If it is absent the phase SKIPs cleanly
+  (`PHASE=brew-install ok=SKIP reason="Homebrew not installed in golden
+  snapshot"`) and the privileged residue lifecycle still runs — the run never
+  falsely fails.
+- **Published tarball, not exercised here.** We install from a *local* file, so
+  the *real published* GitHub URL + its formula `sha256` are **not** verified in
+  the VM. That check lives in `release.yml` as a post-publish smoke (see below) —
+  the one thing a network-pristine guest genuinely can't cover. There is no macOS
+  `.pkg` build to test because none is shipped.
 
 **Where each piece actually runs.** The Linux `.deb` package lifecycle
-(postinst/prerm, hosts pin, `setcap`, unit) and the upgrade dup-checks are
+(postinst/prerm, hosts pin, `setcap`, unit) and the Linux upgrade dup-checks are
 validated on hosted CI too (`ci.yml`: `lifecycle-upgrade-linux`, and the
 `real_tun_overlay_trust_lifecycle` Rust e2e that install/verify/uninstalls the CA
-on Linux). Windows MSI and macOS setup lifecycles run only on this Parallels
-runner (`vm-e2e.yml`), which is the only place with a real MSI-capable Windows
-guest and a real macOS keychain/LaunchDaemon.
+on Linux). Windows MSI + macOS `brew`/setup lifecycles and the Windows/macOS
+**upgrade** dup-checks run only on this Parallels runner (`vm-e2e.yml`), the only
+place with a real MSI-capable Windows guest and a real macOS keychain/LaunchDaemon.
+The **published** Homebrew formula's URL + sha256 are verified post-publish in
+`release.yml` (`verify-homebrew-artifacts`) — see the upgrade/release notes below.
 
-## Upgrade test: prior version → new version
+## Upgrade test: prior version → new version (all three platforms)
 
-`vmtest/scripts/upgrade-linux.sh` installs a **prior** released `.deb`, then the
-new one over the top, and asserts the upgrade did not DUPLICATE anything (exactly
-one `/etc/hosts` pin, one systemd unit — a postinst that appends instead of
-replacing is how you get two). It fetches the latest published release `.deb` as
-the "prior" version via `gh`, or `SKIP`s cleanly (never a false pass) when no
-prior release / network is available; set `PORTZERO_DEB_OLD` to pin one. Wired
-into `ci.yml` (`lifecycle-upgrade-linux`).
+`upgrade-{linux,windows,macos}.{sh,ps1}` install a **prior** released version,
+then the new one over the top, and assert the in-place upgrade DUPLICATED nothing:
+
+| Platform | Prior install → new install | Asserts (exactly one of each; no side-by-side) |
+|----------|-----------------------------|------------------------------------------------|
+| Linux    | prior `.deb` → new `.deb` via `dpkg -i` | one `/etc/hosts` pin, one systemd unit (a postinst that appends instead of replacing is how you get two) |
+| Windows  | prior MSI → new MSI via `msiexec /i`    | WiX `<MajorUpgrade>` replaced in place: one installed product with the `UpgradeCode`, one scheduled task, one `.portzero.local` NRPT rule, one Wintun adapter; installed binary is the new `ProductVersion` |
+| macOS    | prior `setup` → new `setup`             | one `cloud.portzero.*` LaunchDaemon, one `/etc/resolver/portzero.local`, one System-keychain CA, one `/etc/hosts` pin; LaunchDaemon references the new binary |
+
+The prior artifact is fetched from the **latest published release** via `gh`, or
+pinned with `PORTZERO_DEB_OLD` / `PORTZERO_MSI_OLD` / `PORTZERO_EXE_OLD`. Each
+script `SKIP`s cleanly (never a false pass) when no prior artifact is available —
+before the first release, or a network-pristine guest without `gh`. The Windows
+upgrade additionally SKIPs when the prior and new MSI carry the **same**
+`ProductVersion` (`<MajorUpgrade>` needs a version bump). Run all three with
+`just vm-test-upgrade` (wired into `vm-e2e.yml`); Linux also runs on hosted CI
+(`ci.yml`: `lifecycle-upgrade-linux`).
+
+## Release-time smoke: published Homebrew formula (url + sha256)
+
+The one check a VM can't do offline lives in `release.yml`
+(`verify-homebrew-artifacts`, post-publish): it checks out the pushed tap formula
+(`PortZeroNetwork/homebrew-portzero`), and for each arch confirms the formula's
+**real published** GitHub `url` actually resolves *and* its declared `sha256`
+matches the downloaded tarball — catching the `0000…` placeholder `sha256` never
+getting filled in, a formula whose version didn't get bumped, or a broken release
+asset URL.
 
 ## Offline provisioning (metered-connection friendly)
 
@@ -173,7 +210,7 @@ Tiers:
 |---------------|--------------|--------------------------------------------|
 | `Windows Pro` | Windows 11   | real MSI install/uninstall, trust store, wintun, tunnels |
 | `Ubuntu Linux`| Linux        | real `.deb` install/uninstall, CAP_NET_ADMIN, /dev/net/tun |
-| `macOS 15.7.7`| macOS        | privileged `setup`/teardown (CA keychain, LaunchDaemon, resolver), utun — no `.pkg` is shipped, so none is tested; see the macOS delivery caveat above |
+| `macOS 15.7.7`| macOS        | offline `brew install` of a generated local formula + privileged `setup`/teardown (CA keychain, LaunchDaemon, resolver), utun, upgrade dup-checks — no `.pkg` is shipped, so none is tested; see the macOS delivery scope above |
 
 Snapshot convention is the same for all three: a golden powered-off baseline
 plus a `"<vm>-ready"` running snapshot as the reset point.
