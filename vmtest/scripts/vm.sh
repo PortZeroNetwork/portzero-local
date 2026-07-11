@@ -21,8 +21,10 @@ set -euo pipefail
 # $HOME — the interactive daily-driver clone, or a CI runner's own workspace.
 REPO_HOST="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# The 4TB drive holding the archival copy of every VM. Never booted directly
-# except when a user explicitly opts into it (see resolve_effective_vm).
+# The 4TB drive holding the archival copy of every VM. A clone SOURCE only —
+# never a boot target. VMs run on the internal disk exclusively; the archive is
+# cloned back to internal when needed, never booted in place (see
+# resolve_effective_vm).
 EXTERNAL_DRIVE="/Volumes/MBP-Sidecar"
 
 # Host-side location of the staging-tunnel test's rotated seed token, mirroring
@@ -35,8 +37,8 @@ STAGING_SECRETS_HOST_DEFAULT="$EXTERNAL_DRIVE/loumtech/vm-toolchain-cache/common
 # Orthogonal per platform: "<name>" is the internal working copy (~/Parallels)
 # — the only thing vm-up/vm-test ever boots. "<name> archive" is the dormant
 # 4TB copy, registered only so it's prlctl-clonable, never started on its own.
-# If the internal copy is missing, resolve_effective_vm() recovers from the
-# archive (clone to internal, or run this session straight off the archive).
+# If the internal copy is missing, resolve_effective_vm() recovers by cloning
+# the archive back to internal and booting that — it never boots off the 4TB.
 vm_os() { case "$1" in
     "Windows 11 Pro"|"Windows 11 Pro archive") echo windows ;;
     "Ubuntu Linux"|"Ubuntu Linux archive")     echo linux ;;
@@ -174,8 +176,8 @@ ensure_only() { # <vm> — stop every OTHER running VM
 # Make sure SOME bootable registration of <working-vm-name> exists locally
 # before vm-test tries to reset/run it. If the internal working copy was
 # deleted (e.g. to reclaim disk space), walk back to the 4TB archive: wait for
-# the drive to be mounted, then let the user choose to clone it to internal
-# (slow, one-time) or run this session directly off the external drive.
+# the drive to be mounted, then clone it to internal (slow, one-time) and boot
+# that. VMs run on the internal disk only — the archive is never booted in place.
 # Prints the vm name to actually operate on to stdout; everything else (status,
 # prompts) goes to stderr so the caller's command substitution stays clean.
 resolve_effective_vm() { # <working-vm-name>
@@ -209,18 +211,27 @@ resolve_effective_vm() { # <working-vm-name>
     local perf_note=""
     [ "$(vm_os "$vm")" = macos ] && perf_note=" (macOS runs poorly off external storage — expect flakiness/slowness)"
 
+    # POLICY: VMs run only from the internal disk. The archive on the external
+    # 4TB drive is a clone SOURCE, never a boot target — booting a guest off
+    # external storage is slow, flaky (esp. macOS), and wears the drive. So the
+    # only recovery is "clone the archive back to internal, then boot that";
+    # running in place off the archive is never offered.
     if [ ! -t 0 ]; then
-        # No one to ask — don't hang, degrade to the always-available option.
-        echo ">> non-interactive session: running '$vm' directly off '$archive' this time.$perf_note" >&2
-        echo "$archive"; return 0
+        # No one to ask, and cloning ~100GB is not something to kick off silently
+        # inside a CI job. Fail loudly with guidance rather than boot off the 4TB.
+        echo "!! '$vm' is missing from the internal disk and this is a non-interactive session." >&2
+        echo "   Refusing to boot '$archive' in place off the external drive ($EXTERNAL_DRIVE):" >&2
+        echo "   VMs must run on the internal disk only. Restore the internal working copy first, e.g.:" >&2
+        echo "       just vm-copy-internal        # or: prlctl clone \"$archive\" --name \"$vm\" --dst \"\$HOME/Parallels\"" >&2
+        return 1
     fi
 
     echo "   found archive '$archive' on the external drive.$perf_note" >&2
+    echo "   VMs run on the internal disk only, so the archive is cloned in — never booted in place." >&2
     echo "   [1] clone to internal now (one-time, slow: tens of minutes, ~100GB)" >&2
-    echo "   [2] run directly off the external drive this session (no copy)" >&2
-    echo "   [3] abort" >&2
+    echo "   [2] abort" >&2
     local choice
-    read -r -p "   choice [1/2/3]: " choice < /dev/tty
+    read -r -p "   choice [1/2]: " choice < /dev/tty
     case "$choice" in
         1)
             echo ">> cloning '$archive' -> '$vm' on internal disk (this will take a while)..." >&2
@@ -228,12 +239,8 @@ resolve_effective_vm() { # <working-vm-name>
             echo ">> clone complete: '$vm' now available locally." >&2
             echo "$vm"
             ;;
-        2)
-            echo ">> running this session directly off the external archive '$archive'." >&2
-            echo "$archive"
-            ;;
         *)
-            echo "aborted: '$vm' not available" >&2
+            echo "aborted: '$vm' not available (internal-only policy; did not boot off the external drive)" >&2
             return 1
             ;;
     esac

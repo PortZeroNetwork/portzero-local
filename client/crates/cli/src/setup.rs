@@ -14,6 +14,13 @@ const DASHBOARD_IP: &str = "10.254.0.2";
 /// Run the privileged setup steps that package managers should not execute
 /// automatically: trust install, autostart install/start, and the dashboard
 /// hosts pin needed for macOS `.local` behavior.
+///
+/// The steps are independent, so setup is **best-effort**: a failure in one step
+/// (e.g. the OS trust store declining to add the CA without an interactive
+/// authorization prompt) must not skip the others and leave the machine
+/// half-configured with no daemon, resolver, or hosts pin. Every step runs; any
+/// failures are collected, reported at the end with their actionable messages,
+/// and surfaced as a non-zero exit so callers/packagers still see the problem.
 pub async fn run() -> Result<()> {
     println!("PortZero setup will make these system changes:");
     println!("  - generate the local CA if it does not already exist");
@@ -23,24 +30,49 @@ pub async fn run() -> Result<()> {
     println!("  - ensure /etc/hosts contains: {DASHBOARD_HOSTS_LINE}");
     println!();
 
+    let mut failures: Vec<(&str, anyhow::Error)> = Vec::new();
+
     println!("Generating local CA...");
-    trust::generate()?;
+    if let Err(err) = trust::generate() {
+        failures.push(("generate the local CA", err));
+    }
 
     println!("Installing local CA trust...");
-    trust::install()?;
+    if let Err(err) = trust::install() {
+        failures.push(("install the local CA into OS/browser trust stores", err));
+    }
 
     println!("Installing and starting autostart daemon...");
-    autostart::enable()?;
+    if let Err(err) = autostart::enable() {
+        failures.push(("install and start the autostart daemon", err));
+    }
 
     println!("Ensuring scoped .portzero.local DNS resolver...");
-    ensure_scoped_resolver().await?;
+    if let Err(err) = ensure_scoped_resolver().await {
+        failures.push(("install the scoped .portzero.local resolver", err));
+    }
 
     println!("Ensuring dashboard hosts entry...");
-    ensure_dashboard_hosts_entry(HOSTS_PATH)?;
+    if let Err(err) = ensure_dashboard_hosts_entry(HOSTS_PATH) {
+        failures.push(("pin the dashboard /etc/hosts entry", err));
+    }
 
-    println!();
-    println!("Setup complete. Open http://portzero.local in your browser.");
-    Ok(())
+    if failures.is_empty() {
+        println!();
+        println!("Setup complete. Open http://portzero.local in your browser.");
+        return Ok(());
+    }
+
+    eprintln!();
+    eprintln!("Setup finished with {} problem(s):", failures.len());
+    for (step, err) in &failures {
+        eprintln!("  - could not {step}: {err:#}");
+    }
+    anyhow::bail!(
+        "setup finished with {} failed step(s); re-run with administrator privileges \
+         or address the problems listed above",
+        failures.len()
+    )
 }
 
 /// Install the scoped `*.portzero.local` OS resolver as part of setup so name
