@@ -14,7 +14,10 @@
 #   vm.sh list                    VMs + snapshots
 set -euo pipefail
 
-REPO_HOST="/Users/loumtech/Documents/src/PortZeroNetwork/portzero-local"
+# Derived, not hardcoded: the Parallels shared folders are configured at the
+# VM level to share the host's $HOME, so this works from any checkout under
+# $HOME — the interactive daily-driver clone, or a CI runner's own workspace.
+REPO_HOST="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # The 4TB drive holding the archival copy of every VM. Never booted directly
 # except when a user explicitly opts into it (see resolve_effective_vm).
@@ -68,14 +71,24 @@ default_test_script() { # <vm>
 resolve_snap() { echo "portzero-$2"; } # <vm> <logical>
 
 # Repo path AS SEEN FROM THE GUEST (via the Parallels share). Windows/Linux
-# read the repo live off the shared folder. macOS does NOT use this: its
-# Parallels shared folder is SMB-backed and requires an authenticated GUI
+# read the repo live off the shared folder, which maps the whole host $HOME
+# — so this is REPO_HOST's path relative to $HOME, computed rather than
+# hardcoded, so it's correct whether REPO_HOST is the interactive daily-driver
+# clone or a CI runner's own workspace under $HOME. macOS does NOT use this:
+# its Parallels shared folder is SMB-backed and requires an authenticated GUI
 # login the guest never has after a snapshot revert, so cmd_run pushes the
 # script over `prlctl exec` instead (see cmd_run).
-guest_repo() { case "$(vm_os "$1")" in
-    windows) printf '%s' '\\Mac\Home\Documents\src\PortZeroNetwork\portzero-local' ;;
-    linux)   printf '%s' '/media/psf/Home/Documents/src/PortZeroNetwork/portzero-local' ;;
-esac; }
+guest_repo() {
+    case "$REPO_HOST" in
+        "$HOME"/*) ;;
+        *) echo "REPO_HOST ($REPO_HOST) is not under \$HOME ($HOME) — the guest shared folder can't reach it" >&2; return 1 ;;
+    esac
+    local rel="${REPO_HOST#"$HOME"/}"
+    case "$(vm_os "$1")" in
+        windows) printf '\\\\Mac\\Home\\%s' "${rel//\//\\}" ;;
+        linux)   printf '/media/psf/Home/%s' "$rel" ;;
+    esac
+}
 
 # --- snapshot helpers -------------------------------------------------------
 snap_id_by_name() { # <vm> <snapshot-name>

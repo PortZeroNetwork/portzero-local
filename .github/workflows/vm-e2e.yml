@@ -1,0 +1,48 @@
+name: VM E2E (Parallels)
+
+# Hardware-in-the-loop coverage that CI's hosted runners can't give: real
+# installers, real trust stores, real TUN/wintun adapters, driven end to end
+# on genuine Windows/Linux/macOS guests. See vmtest/README.md.
+#
+# Manual trigger only, for now:
+#   - Runs on the org's one self-hosted macOS runner, which also hosts the
+#     Parallels VMs under test. It isn't yet installed as a persistent
+#     service (see vmtest/README.md's runner notes), so wiring this to
+#     pull_request/push could silently stop running if that runner drops
+#     off between sessions. Promote to an automatic trigger once the runner
+#     is durable.
+#   - vm-test also stops any other running VM on the host (one-VM-at-a-time
+#     enforcement) and reuses this one Mac's Parallels install, so running
+#     it unattended on every push isn't free of side effects on a machine
+#     also used interactively.
+on:
+  workflow_dispatch:
+
+concurrency:
+  # Only one vm-test can meaningfully run at a time (single physical Mac,
+  # single set of VMs) — queue rather than cancel, so a cancellation can't
+  # land mid-test and leave a guest daemon wedged.
+  group: vm-e2e
+  cancel-in-progress: false
+
+jobs:
+  vm-test:
+    name: vm-test (windows, linux, macos)
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build macOS binary
+        # macOS guest testing is host-built-artifact-only (no toolchain in
+        # that guest); vm.sh pushes this into the guest itself. Windows/Linux
+        # build inside their own guests off the shared folder, so they don't
+        # need this.
+        run: cargo build --release -p portzero-cli --bin portzero
+
+      - name: vm-test (windows, linux, macos in series)
+        run: just vm-test
