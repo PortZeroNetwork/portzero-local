@@ -115,6 +115,25 @@ a sandbox can report itself as `docker` (or omit `/.dockerenv`) without
 actually bind-mounting `/etc/hosts` the way a real container does. The
 precise check is whether `/proc/mounts` shows a mount at that exact path.
 
+## `portzero login` hangs or times out in a remote Claude Code session
+
+`portzero login`'s default flow binds a local TCP listener, opens a browser to
+a dashboard auth page, and waits for that page's JavaScript to `POST` the
+resulting credentials back to `http://127.0.0.1:<port>/callback` — see
+`login_browser` in `client/crates/cli/src/auth.rs`. In a remote/headless
+session there is no local browser to open in the first place. Opening the
+printed URL from your *own* laptop's browser doesn't help either: the
+dashboard page runs in your laptop's browser, so its `127.0.0.1` is your
+laptop's loopback, not the sandbox's — it can never reach the listener the CLI
+bound inside the remote container. The command just waits out its 2-minute
+timeout and fails.
+
+**Fix**: use `portzero login --interactive` instead. It emails a one-time
+verification code and reads it back from stdin — plain HTTPS API calls only
+(`app.portzero.cloud`), no browser and no local port. See
+[FAQ.md](FAQ.md#how-do-i-expose-a-public-tunnelportzerocloud-url-from-a-remote-claude-code-session)
+for the full cloud-tunnel setup.
+
 ## Brave shows `ERR_CERT_AUTHORITY_INVALID` for `https://portzero.local`
 
 If this only happens in the Snap package of Brave, use the native Brave package

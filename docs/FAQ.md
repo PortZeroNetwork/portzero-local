@@ -100,3 +100,54 @@ exactly, is sandbox-specific and documented in
    / `portzero env` / `portzero wait` to get the concrete tunnel URL instead
    — the same pattern the [`tunnel-action`](../tunnel-action/README.md)
    GitHub Action uses.
+
+## How do I expose a public `*.tunnel.portzero.cloud` URL from a remote Claude Code session?
+
+This is [Cloud tunnels](portzero.md), not the local overlay above — and it's
+actually simpler in a sandbox: **no root, no `sudo`, no TUN device, no hosts
+pin.** The cloud connector runs fully unprivileged and only needs outbound
+HTTPS; it's the local overlay that needs `CAP_NET_ADMIN`.
+
+1. **Check the environment's network policy allows outbound HTTPS** to
+   `app.portzero.cloud` (the API) and `edge.portzero.cloud` (the tunnel
+   connection). This is configured per Claude Code environment; see
+   [the docs](https://code.claude.com/docs/en/claude-code-on-the-web). If
+   either is blocked, cloud tunnels can't work from that environment —
+   `portzero doctor` will show the cloud connection as failed rather than
+   hanging.
+2. **Log in with `portzero login --interactive`, not plain `portzero
+   login`.** The default flow opens a local browser and waits for it to post
+   back to a `127.0.0.1` port on the same machine — in a remote session
+   there's no local browser to open, and even a browser on your own laptop
+   can't reach that loopback port on the sandbox. `--interactive` instead
+   emails you a one-time code you type back at the prompt; no browser or
+   local port involved. (See
+   [troubleshooting.md](troubleshooting.md#portzero-login-hangs-or-times-out-in-a-remote-claude-code-session)
+   if you're curious why the default flow can't work here.)
+3. **Persist the login across sessions**, since each session is a fresh
+   container: after logging in, save `~/.portzero/auth.json` (an
+   email/token/account id, `chmod 600`) as a secret on the Claude Code
+   environment, then write it back out at the start of every session, e.g.
+   from a `SessionStart` hook:
+   ```bash
+   mkdir -p ~/.portzero
+   printf '%s' "$PORTZERO_AUTH_JSON" > ~/.portzero/auth.json
+   chmod 600 ~/.portzero/auth.json
+   ```
+   The token doesn't expire on its own; revoke it from the dashboard or
+   `portzero logout` if it's ever compromised.
+4. **Start the daemon** (no `sudo` needed for cloud-only use):
+   ```bash
+   portzero start
+   ```
+5. **Tag your process with a cloud domain** instead of `.portzero.local`:
+   ```bash
+   PZ_TUNNEL=myapp.{cloud-username}.tunnel.portzero.cloud:80 npm start
+   ```
+   (bind to port 0 as usual — see [portzero.md](portzero.md)).
+6. **Get the public URL**:
+   ```bash
+   portzero url myapp.<cloud-username>.tunnel.portzero.cloud
+   ```
+   or `portzero wait <domain> --healthy` to block until it's actually
+   serving. `portzero doctor` reports cloud connection state either way.
