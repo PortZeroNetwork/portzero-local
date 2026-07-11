@@ -98,9 +98,15 @@ pub fn lookup_tunnel(config: &DaemonConfig, domain: &str) -> Option<TunnelUrl> {
 /// stderr and the process exits non-zero.
 pub fn url(domain: &str) -> Result<()> {
     let config = DaemonConfig::load();
+    url_with_config(&config, domain)
+}
+
+/// Core of `url()`, parameterized over the `DaemonConfig` so tests can point
+/// it at a throwaway state directory instead of the real `~/.portzero`.
+fn url_with_config(config: &DaemonConfig, domain: &str) -> Result<()> {
     let target = domain.trim();
 
-    let tunnels = discovered_tunnels(&config);
+    let tunnels = discovered_tunnels(config);
     if let Some(t) = tunnels
         .iter()
         .find(|t| t.domain.eq_ignore_ascii_case(target))
@@ -133,7 +139,13 @@ pub fn url(domain: &str) -> Result<()> {
 /// of a GitHub Actions job.
 pub fn env(github: bool) -> Result<()> {
     let config = DaemonConfig::load();
-    let tunnels = discovered_tunnels(&config);
+    env_with_config(&config, github)
+}
+
+/// Core of `env()`, parameterized over the `DaemonConfig` so tests can point
+/// it at a throwaway state directory instead of the real `~/.portzero`.
+fn env_with_config(config: &DaemonConfig, github: bool) -> Result<()> {
+    let tunnels = discovered_tunnels(config);
 
     if github {
         let github_env = std::env::var("GITHUB_ENV").context(
@@ -210,5 +222,257 @@ mod tests {
             env_var_name("api-x.alice.tunnel.portzero.cloud"),
             "PZ_URL_API_X_ALICE_TUNNEL_PORTZERO_CLOUD"
         );
+    }
+
+    #[test]
+    fn test_env_var_name_sanitizes_special_chars() {
+        // '=' and newlines can't appear in a real domain, but the sanitizer
+        // should still turn any non-alphanumeric byte into '_' rather than
+        // letting it leak into the emitted KEY=VALUE line.
+        assert_eq!(env_var_name("a=b"), "PZ_URL_A_B");
+        assert_eq!(env_var_name("a\nb"), "PZ_URL_A_B");
+    }
+
+    // --- discovered_tunnels() / lookup_tunnel() ---
+
+    use portzero_daemon::discovery::ServiceSource;
+    use portzero_daemon::discovery_loop::DaemonConfig;
+    use portzero_daemon::route_table::OverlayRoute;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Build a `DaemonConfig` pointed at a fresh, uniquely-named temp
+    /// directory so tests never collide or touch a real `~/.portzero`.
+    fn temp_config(tag: &str) -> DaemonConfig {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "portzero-export-test-{tag}-{}-{n}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp state dir");
+        DaemonConfig {
+            state_dir: dir,
+            ..DaemonConfig::default()
+        }
+    }
+
+    fn cleanup(config: &DaemonConfig) {
+        let _ = std::fs::remove_dir_all(&config.state_dir);
+    }
+
+    fn overlay_route(domain: &str, service_port: u16) -> OverlayRoute {
+        OverlayRoute {
+            domain: domain.to_string(),
+            domain_template: domain.to_string(),
+            substitutions: Default::default(),
+            service_port,
+            real_addr: "127.0.0.1:0".to_string(),
+            health_path: None,
+            pid: 1,
+            source: ServiceSource::Process { cwd: None },
+        }
+    }
+
+    #[test]
+    fn discovered_tunnels_empty_when_no_state() {
+        let config = temp_config("empty");
+        assert!(discovered_tunnels(&config).is_empty());
+        cleanup(&config);
+    }
+
+    #[test]
+    fn discovered_tunnels_are_sorted_by_domain() {
+        let config = temp_config("sort");
+        let state = portzero_daemon::route_table::OverlayState {
+            overlay_active: true,
+            routes: vec![
+                overlay_route("zeta.portzero.local", 8080),
+                overlay_route("alpha.portzero.local", 3000),
+                overlay_route("mid.portzero.local", 3001),
+            ],
+        };
+        state.save(&config.overlay_path()).unwrap();
+
+        let tunnels = discovered_tunnels(&config);
+        let domains: Vec<&str> = tunnels.iter().map(|t| t.domain.as_str()).collect();
+        assert_eq!(
+            domains,
+            vec![
+                "alpha.portzero.local",
+                "mid.portzero.local",
+                "zeta.portzero.local"
+            ]
+        );
+        cleanup(&config);
+    }
+
+    #[test]
+    fn discovered_tunnels_dedup_removes_exact_duplicate_domain() {
+        // A domain could in principle show up twice within the same overlay
+        // snapshot (e.g. a stale write raced a fresh scan); `discovered_tunnels`
+        // should collapse exact (same-case, adjacent-after-sort) duplicates
+        // rather than listing the domain twice.
+        let config = temp_config("dedup-exact");
+        let state = portzero_daemon::route_table::OverlayState {
+            overlay_active: true,
+            routes: vec![
+                overlay_route("web.portzero.local", 8080),
+                overlay_route("web.portzero.local", 8080),
+            ],
+        };
+        state.save(&config.overlay_path()).unwrap();
+
+        let tunnels = discovered_tunnels(&config);
+        let count = tunnels
+            .iter()
+            .filter(|t| t.domain == "web.portzero.local")
+            .count();
+        assert_eq!(count, 1);
+        cleanup(&config);
+    }
+
+    #[test]
+    fn lookup_tunnel_is_case_insensitive_and_trims() {
+        let config = temp_config("lookup");
+        let state = portzero_daemon::route_table::OverlayState {
+            overlay_active: true,
+            routes: vec![overlay_route("web.portzero.local", 8080)],
+        };
+        state.save(&config.overlay_path()).unwrap();
+
+        let found = lookup_tunnel(&config, "  WEB.PORTZERO.LOCAL  ");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().domain, "web.portzero.local");
+
+        assert!(lookup_tunnel(&config, "missing.portzero.local").is_none());
+        cleanup(&config);
+    }
+
+    // --- url() ---
+
+    #[test]
+    fn url_errs_when_no_tunnels_discovered() {
+        let config = temp_config("url-empty");
+        let err = url_with_config(&config, "web.portzero.local").unwrap_err();
+        assert!(err.to_string().contains("no tunnels are currently"));
+        cleanup(&config);
+    }
+
+    #[test]
+    fn url_errs_and_lists_known_domains_when_not_found() {
+        let config = temp_config("url-notfound");
+        let state = portzero_daemon::route_table::OverlayState {
+            overlay_active: true,
+            routes: vec![overlay_route("web.portzero.local", 8080)],
+        };
+        state.save(&config.overlay_path()).unwrap();
+
+        let err = url_with_config(&config, "missing.portzero.local").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("missing.portzero.local"));
+        assert!(msg.contains("web.portzero.local"));
+        cleanup(&config);
+    }
+
+    #[test]
+    fn url_ok_when_tunnel_found() {
+        let config = temp_config("url-found");
+        let state = portzero_daemon::route_table::OverlayState {
+            overlay_active: true,
+            routes: vec![overlay_route("web.portzero.local", 8080)],
+        };
+        state.save(&config.overlay_path()).unwrap();
+
+        assert!(url_with_config(&config, "web.portzero.local").is_ok());
+        cleanup(&config);
+    }
+
+    // --- env(--github) file-writing ---
+
+    // GITHUB_ENV is a process-global env var, so serialize every test that
+    // touches it to avoid cross-test interference when the suite runs tests
+    // in parallel threads.
+    static ENV_VAR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_github_env<F: FnOnce(&std::path::Path)>(tag: &str, f: F) {
+        let _guard = ENV_VAR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "portzero-export-test-github-env-{tag}-{}-{n}",
+            std::process::id()
+        ));
+        std::env::set_var("GITHUB_ENV", &path);
+        f(&path);
+        std::env::remove_var("GITHUB_ENV");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn env_github_writes_key_value_lines_for_each_tunnel() {
+        with_github_env("basic", |github_env_path| {
+            let config = temp_config("env-github-basic");
+            let state = portzero_daemon::route_table::OverlayState {
+                overlay_active: true,
+                routes: vec![
+                    overlay_route("web.portzero.local", 8080),
+                    overlay_route("db.portzero.local", 443),
+                ],
+            };
+            state.save(&config.overlay_path()).unwrap();
+
+            env_with_config(&config, true).expect("env --github should succeed");
+
+            let content = std::fs::read_to_string(github_env_path).unwrap();
+            assert!(content.contains("PZ_URL_DB_PORTZERO_LOCAL=https://db.portzero.local\n"));
+            assert!(content.contains("PZ_URL_WEB_PORTZERO_LOCAL=http://web.portzero.local:8080\n"));
+            cleanup(&config);
+        });
+    }
+
+    #[test]
+    fn env_github_appends_and_preserves_existing_content() {
+        with_github_env("append", |github_env_path| {
+            std::fs::write(github_env_path, "EXISTING_VAR=1\n").unwrap();
+
+            let config = temp_config("env-github-append");
+            let state = portzero_daemon::route_table::OverlayState {
+                overlay_active: true,
+                routes: vec![overlay_route("web.portzero.local", 8080)],
+            };
+            state.save(&config.overlay_path()).unwrap();
+
+            env_with_config(&config, true).expect("env --github should succeed");
+
+            let content = std::fs::read_to_string(github_env_path).unwrap();
+            assert!(content.starts_with("EXISTING_VAR=1\n"));
+            assert!(content.contains("PZ_URL_WEB_PORTZERO_LOCAL=http://web.portzero.local:8080\n"));
+            cleanup(&config);
+        });
+    }
+
+    #[test]
+    fn env_github_writes_nothing_when_no_tunnels() {
+        with_github_env("no-tunnels", |github_env_path| {
+            let config = temp_config("env-github-empty");
+            env_with_config(&config, true).expect("env --github should succeed even if empty");
+
+            let content = std::fs::read_to_string(github_env_path).unwrap();
+            assert!(content.is_empty());
+            cleanup(&config);
+        });
+    }
+
+    #[test]
+    fn env_errs_without_github_flag_when_github_env_unset() {
+        // env(false) never touches $GITHUB_ENV, so it must succeed even when
+        // the var is completely unset (the common non-CI case). Run this
+        // under the same lock as the other GITHUB_ENV tests to avoid a data
+        // race on the process environment.
+        let _guard = ENV_VAR_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("GITHUB_ENV");
+        let config = temp_config("env-no-github");
+        assert!(env_with_config(&config, false).is_ok());
+        cleanup(&config);
     }
 }

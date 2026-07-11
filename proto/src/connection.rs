@@ -362,4 +362,186 @@ mod tests {
         };
         assert!(sm.validate_receive(&welcome).is_err());
     }
+
+    // -----------------------------------------------------------------
+    // Dropped connection / reconnect state transitions.
+    //
+    // `ConnectionStateMachine` has no socket I/O of its own (the actual
+    // transport lives elsewhere), so a "dropped connection" is modeled
+    // here as a call to `on_disconnect()` at some point in the lifecycle,
+    // and a "reconnect attempt" is modeled as constructing a fresh state
+    // machine (as the real client would do when redialing) and driving it
+    // through the handshake again.
+    // -----------------------------------------------------------------
+
+    fn hello_msg() -> ClientMessage {
+        ClientMessage::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            auth_token: "tok".into(),
+            client_version: "0.1".into(),
+            machine_id: "m".into(),
+            os: "linux".into(),
+        }
+    }
+
+    fn welcome_msg() -> ServerMessage {
+        ServerMessage::Welcome {
+            session_id: "s".into(),
+            account_id: "a".into(),
+            plan: "free".into(),
+            can_use_cloud_tunnels: true,
+        }
+    }
+
+    #[test]
+    fn dropped_connection_before_handshake_transitions_to_disconnected() {
+        // Connection closes/drops immediately after connect, before any
+        // message was ever sent.
+        let mut sm = ConnectionStateMachine::new();
+        assert_eq!(*sm.state(), ConnectionState::Connecting);
+
+        sm.on_disconnect();
+
+        assert_eq!(*sm.state(), ConnectionState::Disconnected);
+        assert!(!sm.is_ready());
+        assert!(matches!(
+            sm.validate_send(&hello_msg()),
+            Err(StateError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn dropped_connection_mid_handshake_transitions_to_disconnected() {
+        // Hello was sent (mid-frame from the client's perspective -- the
+        // request is in flight) but the socket drops before a Welcome or
+        // Error ever arrives.
+        let mut sm = ConnectionStateMachine::new();
+        sm.on_hello_sent().unwrap();
+        assert_eq!(*sm.state(), ConnectionState::Authenticating);
+
+        sm.on_disconnect();
+
+        assert_eq!(*sm.state(), ConnectionState::Disconnected);
+        // Any message that arrives late, or is attempted afterwards, must
+        // report a clean Disconnected error rather than panicking.
+        assert!(matches!(
+            sm.validate_receive(&welcome_msg()),
+            Err(StateError::Disconnected)
+        ));
+        assert!(matches!(
+            sm.on_welcome_received(),
+            Err(StateError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn dropped_connection_mid_ready_session_transitions_to_disconnected() {
+        // Connection drops while fully established and mid-traffic (e.g.
+        // the writer half closed while a partial frame was in flight).
+        let mut sm = ConnectionStateMachine::new();
+        sm.on_hello_sent().unwrap();
+        sm.on_welcome_received().unwrap();
+        assert!(sm.is_ready());
+
+        sm.on_disconnect();
+
+        assert_eq!(*sm.state(), ConnectionState::Disconnected);
+        assert!(!sm.is_ready());
+
+        let reg = ClientMessage::RegisterRoute {
+            domain: "test.portzero.cloud".into(),
+            local_port: 3000,
+            protocol: RouteProtocol::Http,
+            metadata: None,
+        };
+        assert!(matches!(
+            sm.validate_send(&reg),
+            Err(StateError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn disconnect_is_idempotent_and_does_not_panic() {
+        let mut sm = ConnectionStateMachine::new();
+        sm.on_hello_sent().unwrap();
+        sm.on_disconnect();
+        // Calling disconnect again (e.g. duplicate EOF + explicit close)
+        // must not panic and must leave the state machine disconnected.
+        sm.on_disconnect();
+        sm.on_disconnect();
+        assert_eq!(*sm.state(), ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn reconnect_after_drop_succeeds_on_fresh_state_machine() {
+        // First connection attempt: fully authenticates, then the socket
+        // is dropped.
+        let mut first = ConnectionStateMachine::new();
+        first.on_hello_sent().unwrap();
+        first.on_welcome_received().unwrap();
+        first.on_disconnect();
+        assert_eq!(*first.state(), ConnectionState::Disconnected);
+        assert!(!first.is_ready());
+        // The old, disconnected state machine must never come back to
+        // life on its own.
+        assert!(matches!(
+            first.on_hello_sent(),
+            Err(StateError::Disconnected)
+        ));
+
+        // Reconnect attempt: a brand-new state machine (as the real
+        // client constructs on redial) drives through the handshake
+        // again and reaches Ready independently of the old one.
+        let mut reconnected = ConnectionStateMachine::new();
+        assert_eq!(*reconnected.state(), ConnectionState::Connecting);
+        reconnected.on_hello_sent().unwrap();
+        reconnected.on_welcome_received().unwrap();
+        assert!(reconnected.is_ready());
+
+        // The first (dropped) machine is unaffected by the second.
+        assert_eq!(*first.state(), ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn reconnect_loop_retries_after_auth_failures_then_succeeds() {
+        // Simulate a client retry loop: two failed auth attempts (bad
+        // token rejected by server), each on a fresh redial, followed by
+        // a third attempt that succeeds.
+        let mut attempts = Vec::new();
+
+        for i in 0..3 {
+            let mut sm = ConnectionStateMachine::new();
+            sm.on_hello_sent().unwrap();
+            if i < 2 {
+                let err = sm.on_auth_error(format!("bad token attempt {i}"));
+                assert_eq!(*sm.state(), ConnectionState::Disconnected);
+                assert!(err.to_string().contains("bad token"));
+            } else {
+                sm.on_welcome_received().unwrap();
+                assert!(sm.is_ready());
+            }
+            attempts.push(sm);
+        }
+
+        assert_eq!(*attempts[0].state(), ConnectionState::Disconnected);
+        assert_eq!(*attempts[1].state(), ConnectionState::Disconnected);
+        assert_eq!(*attempts[2].state(), ConnectionState::Ready);
+    }
+
+    #[test]
+    fn state_error_display_reports_states_cleanly() {
+        // Sanity check that error rendering for the reconnect/disconnect
+        // paths is well-formed and doesn't panic, since callers surface
+        // this text in logs/CLI output.
+        let mut sm = ConnectionStateMachine::new();
+        sm.on_disconnect();
+        let err = sm.validate_send(&hello_msg()).unwrap_err();
+        assert_eq!(err.to_string(), "connection is disconnected");
+
+        let mut sm2 = ConnectionStateMachine::new();
+        let err2 = sm2.on_welcome_received().unwrap_err();
+        let msg = err2.to_string();
+        assert!(msg.contains("Connecting"));
+        assert!(msg.contains("Authenticating"));
+    }
 }
