@@ -40,7 +40,8 @@ unit_count() {
 
 find_new_deb() {
     if [ -n "${PORTZERO_DEB_NEW:-}" ]; then printf '%s\n' "$PORTZERO_DEB_NEW"; return; fi
-    local here; here="$(cd "$(dirname "$0")/../.." && pwd)" d
+    local here d
+    here="$(cd "$(dirname "$0")/../.." && pwd)"
     for d in "$here"/vmtest/.downloaded-artifacts/linux/*.deb "$here"/target/debian/*.deb; do
         [ -f "$d" ] && { printf '%s\n' "$d"; return; }
     done

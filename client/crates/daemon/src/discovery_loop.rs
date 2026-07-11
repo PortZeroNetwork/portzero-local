@@ -1708,16 +1708,32 @@ pub fn remove_pid_file(config: &DaemonConfig) {
 
 /// Stop the discovery daemon by sending SIGTERM (Unix) or terminating (Windows).
 pub fn stop_daemon(config: &DaemonConfig) -> Result<()> {
-    let pid = read_daemon_pid(config).ok_or_else(|| {
-        anyhow::anyhow!(
+    let pid = read_daemon_pid(config);
+
+    if let Some(pid) = pid {
+        signal_pid(pid, false)?;
+        remove_pid_file(config);
+    }
+
+    // Windows only gets `taskkill /F` (see signal_pid), so the daemon's
+    // graceful overlay teardown — which removes the .portzero.local NRPT rule —
+    // never runs. Remove the rule here, best-effort, AFTER the daemon is gone
+    // (its resolver-repair loop would otherwise recreate it). Run it even when
+    // no daemon was found so `stop` (and the MSI uninstall custom action that
+    // invokes it) always clears leftover DNS residue.
+    #[cfg(windows)]
+    if let Err(e) = crate::net::resolver_config::remove_nrpt_rule_sync() {
+        tracing::warn!(
+            "could not remove the .portzero.local NRPT rule (may need administrator): {e:#}"
+        );
+    }
+
+    if pid.is_none() {
+        anyhow::bail!(
             "Discovery daemon is not running.\n\n\
              Start it with: portzero start"
-        )
-    })?;
-
-    signal_pid(pid, false)?;
-
-    remove_pid_file(config);
+        );
+    }
 
     Ok(())
 }

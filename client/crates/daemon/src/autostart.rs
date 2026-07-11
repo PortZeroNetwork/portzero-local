@@ -490,31 +490,56 @@ fn uninstall_systemd() -> Result<()> {
 // Windows: scheduled task
 // ---------------------------------------------------------------------------
 
+/// Whether this process runs as LocalSystem (SID S-1-5-18), e.g. as an MSI
+/// deferred custom action. Checked via `whoami /user` because the SID is
+/// locale-independent, unlike the "NT AUTHORITY\SYSTEM" account name.
+#[cfg(target_os = "windows")]
+fn running_as_local_system() -> bool {
+    std::process::Command::new("whoami")
+        .args(["/user", "/fo", "csv", "/nh"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("\"S-1-5-18\""))
+        .unwrap_or(false)
+}
+
 #[cfg(target_os = "windows")]
 fn install_windows_task(binary: &Path) -> Result<()> {
     use std::process::Command;
 
-    let result = Command::new("schtasks")
-        .args([
-            "/Create",
-            "/SC",
-            "ONLOGON",
-            "/TN",
-            SERVICE_NAME,
-            "/TR",
-            &format!("\"{}\" start --foreground", binary.display()),
-            "/RL",
-            "HIGHEST",
-            "/F",
-        ])
-        .status()
+    let tr = format!("\"{}\" start --foreground", binary.display());
+    let mut args = vec![
+        "/Create",
+        "/SC",
+        "ONLOGON",
+        "/TN",
+        SERVICE_NAME,
+        "/TR",
+        &tr,
+        "/RL",
+        "HIGHEST",
+        "/F",
+    ];
+    // Under LocalSystem (the MSI custom-action context) schtasks cannot map the
+    // implicit invoking account into the ONLOGON trigger's UserId — it fails
+    // with "No mapping between account names and security IDs was done". An
+    // explicit /RU SYSTEM creates the task to run as SYSTEM (which the daemon
+    // needs anyway for the TUN device). User-invoked installs keep the default:
+    // the task runs as the invoking user at their logon.
+    if running_as_local_system() {
+        args.extend_from_slice(&["/RU", "SYSTEM"]);
+    }
+
+    let output = Command::new("schtasks")
+        .args(&args)
+        .output()
         .context("Failed to create scheduled task")?;
 
-    if !result.success() {
+    if !output.status.success() {
         anyhow::bail!(
-            "Failed to create Windows scheduled task.\n\n\
+            "Failed to create Windows scheduled task: {}\n\n\
              Try running as administrator, or create a shortcut in your \
-             Startup folder manually."
+             Startup folder manually.",
+            String::from_utf8_lossy(&output.stderr).trim()
         );
     }
 

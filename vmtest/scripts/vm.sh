@@ -160,6 +160,20 @@ wait_ready() { # <vm>  — block until the guest answers, per OS. Prints a
     echo "guest '$vm' did not become ready after 180s" >&2; return 1
 }
 
+# Make sure <vm> is actually running and answering, starting it if needed.
+# Guards against the revert-collapse race: a snapshot-switch to a RUNNING
+# snapshot occasionally leaves the guest powered off moments later (seen on
+# macOS and Linux), so the next `prlctl exec` dies with "not started"
+# (exit 255). Called right before running anything in the guest.
+ensure_running() { # <vm>
+    local vm="$1"
+    if ! is_running "$vm"; then
+        echo ">> guest '$vm' is not running (revert-collapse?); starting it..." >&2
+        prlctl start "$vm" >/dev/null 2>&1 || true
+    fi
+    wait_ready "$vm"
+}
+
 # --- one-VM-at-a-time -------------------------------------------------------
 ensure_only() { # <vm> — stop every OTHER running VM
     local keep="$1" line name
@@ -410,6 +424,7 @@ guest_path_under_repo() { # <vm> <host-path-under-REPO_HOST>
 
 cmd_run() { # <vm> <repo-relative-script> [args...]
     local vm="$1" script="$2"; shift 2
+    ensure_running "$vm" || return 1
     local os; os="$(vm_os "$vm")"
     if [ "$os" = windows ]; then
         local base; base="$(guest_repo "$vm")"
