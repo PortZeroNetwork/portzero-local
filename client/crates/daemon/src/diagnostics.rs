@@ -1238,9 +1238,10 @@ async fn lookup_tunnel_domain(domain: &str) -> TunnelLookupResult {
 /// domains, and stays quiet for tunnels that resolve healthily to avoid
 /// per-tunnel Info spam.
 ///
-/// Probes run sequentially — the domain count is capped at
-/// [`TUNNEL_DNS_PROBE_CAP`] per list and each lookup has a short timeout, so
-/// bounded concurrency isn't worth the added complexity here.
+/// Probes run concurrently. `run_diagnostics` is awaited inline on the daemon's
+/// discovery loop every ~30s, so bounding this to a single timeout (rather than
+/// the sum of every tunnel's timeout) keeps a batch of slow/absent tunnel DNS
+/// from stalling discovery. Each list is still capped at [`TUNNEL_DNS_PROBE_CAP`].
 async fn probe_tunnel_dns(state_dir: &Path) -> Vec<Diagnostic> {
     let overlay =
         crate::route_table::OverlayState::load(&state_dir.join("overlay.json")).unwrap_or_default();
@@ -1249,21 +1250,19 @@ async fn probe_tunnel_dns(state_dir: &Path) -> Vec<Diagnostic> {
 
     let (overlay_domains, cloud_domains) = collect_tunnel_probe_domains(&overlay, &routes);
 
-    let mut issues = Vec::new();
+    let overlay_probes = overlay_domains.iter().map(|domain| async move {
+        classify_overlay_tunnel_dns(domain, &lookup_tunnel_domain(domain).await)
+    });
+    let cloud_probes = cloud_domains.iter().map(|domain| async move {
+        classify_cloud_tunnel_dns(domain, &lookup_tunnel_domain(domain).await)
+    });
 
-    for domain in &overlay_domains {
-        let result = lookup_tunnel_domain(domain).await;
-        if let Some(diag) = classify_overlay_tunnel_dns(domain, &result) {
-            issues.push(diag);
-        }
-    }
-
-    for domain in &cloud_domains {
-        let result = lookup_tunnel_domain(domain).await;
-        if let Some(diag) = classify_cloud_tunnel_dns(domain, &result) {
-            issues.push(diag);
-        }
-    }
+    let mut issues: Vec<Diagnostic> = futures_util::future::join_all(overlay_probes)
+        .await
+        .into_iter()
+        .chain(futures_util::future::join_all(cloud_probes).await)
+        .flatten()
+        .collect();
 
     issues.sort_by(|a, b| {
         a.severity
