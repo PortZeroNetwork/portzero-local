@@ -10,45 +10,71 @@
 #   vm.sh exec <vm> <cmd...>      raw command in the guest
 #   vm.sh stop <vm>               power off
 #   vm.sh ensure-only <vm>        stop every OTHER running VM (one-at-a-time rule)
+#   vm.sh test <platform>         windows|linux|macos: recover-if-missing, reset to "built", run the default e2e script
 #   vm.sh list                    VMs + snapshots
 set -euo pipefail
 
 REPO_HOST="/Users/loumtech/Documents/src/PortZeroNetwork/portzero-local"
 
+# The 4TB drive holding the archival copy of every VM. Never booted directly
+# except when a user explicitly opts into it (see resolve_effective_vm).
+EXTERNAL_DRIVE="/Volumes/MBP-Sidecar"
+
 # --- per-VM facts -----------------------------------------------------------
-# "Windows 11 Pro" is the canonical VM on the external drive; "Windows 11 Pro
-# verify" is a throwaway copy on the internal SSD (fast) that gets deleted when
-# space is tight and re-copied from external later. Both share OS/golden/built.
+# Orthogonal per platform: "<name>" is the internal working copy (~/Parallels)
+# — the only thing vm-up/vm-test ever boots. "<name> archive" is the dormant
+# 4TB copy, registered only so it's prlctl-clonable, never started on its own.
+# If the internal copy is missing, resolve_effective_vm() recovers from the
+# archive (clone to internal, or run this session straight off the archive).
 vm_os() { case "$1" in
-    "Windows 11 Pro"|"Windows 11 Pro verify") echo windows ;;
-    "Ubuntu Linux") echo linux ;;
-    "macOS 15.7.7") echo macos ;;
+    "Windows 11 Pro"|"Windows 11 Pro archive") echo windows ;;
+    "Ubuntu Linux"|"Ubuntu Linux archive")     echo linux ;;
+    "macOS 15.7.7"|"macOS 15.7.7 archive")     echo macos ;;
     *) echo "unknown VM: $1" >&2; return 1 ;;
 esac; }
 
-vm_golden() { case "$1" in
-    "Windows 11 Pro"|"Windows 11 Pro verify") echo "Windows 11 Pro" ;;
-    "Ubuntu Linux") echo "Ubuntu 26.04 LTS" ;;
-    "macOS 15.7.7") echo "MacOS 15.7.7" ;;
+# Internal working-copy name -> its 4TB archive name.
+archive_vm() { case "$1" in
+    "Windows 11 Pro") echo "Windows 11 Pro archive" ;;
+    "Ubuntu Linux")   echo "Ubuntu Linux archive" ;;
+    "macOS 15.7.7")   echo "macOS 15.7.7 archive" ;;
+    *) echo "no archive mapping for '$1'" >&2; return 1 ;;
 esac; }
 
-# Resolve a logical checkpoint name (e.g. "built") to the ACTUAL snapshot name.
-# The Windows working VM was renamed to "Windows 11 Pro" but its built snapshot
-# kept its original name "Windows Pro-built", so map it rather than rename the
-# snapshot (Parallels has no snapshot-rename, and the user refers to it by name).
-resolve_snap() { # <vm> <logical>
-    case "$1" in
-        "Windows 11 Pro"|"Windows 11 Pro verify") echo "Windows Pro-$2" ;;
-        *) echo "$1-$2" ;;
-    esac
+# Platform shorthand ("windows"/"linux"/"macos", as typed by `just vm-test
+# <platform>`) -> the internal working-copy name. Keep in sync with vm_os().
+platform_vm() { case "$1" in
+    windows) echo "Windows 11 Pro" ;;
+    linux)   echo "Ubuntu Linux" ;;
+    macos)   echo "macOS 15.7.7" ;;
+    *) echo "unknown platform: '$1' (expected windows|linux|macos)" >&2; return 1 ;;
+esac; }
+
+# The default smoke-test script for `vm.sh test`, per guest OS: the full local
+# overlay E2E (no cloud, no secrets). e2e-local-overlay.sh is shared by
+# Linux/macOS; Windows needs the .ps1 twin.
+default_test_script() { # <vm>
+    if [ "$(vm_os "$1")" = windows ]; then
+        echo "vmtest/scripts/e2e-local-overlay.ps1"
+    else
+        echo "vmtest/scripts/e2e-local-overlay.sh"
+    fi
 }
 
-# Repo path AS SEEN FROM THE GUEST (via the Parallels share). Verified/adjusted
-# per VM; the guest must be able to read the repo to run scripts & build.
+# Every VM/alias uses one uniform "portzero-<logical>" snapshot naming
+# convention (golden/ready/built), so this needs no per-VM special-casing.
+# Cloning an archive to internal carries its snapshot tree along, so a fresh
+# internal working copy inherits these names for free.
+resolve_snap() { echo "portzero-$2"; } # <vm> <logical>
+
+# Repo path AS SEEN FROM THE GUEST (via the Parallels share). Windows/Linux
+# read the repo live off the shared folder. macOS does NOT use this: its
+# Parallels shared folder is SMB-backed and requires an authenticated GUI
+# login the guest never has after a snapshot revert, so cmd_run pushes the
+# script over `prlctl exec` instead (see cmd_run).
 guest_repo() { case "$(vm_os "$1")" in
     windows) printf '%s' '\\Mac\Home\Documents\src\PortZeroNetwork\portzero-local' ;;
     linux)   printf '%s' '/media/psf/Home/Documents/src/PortZeroNetwork/portzero-local' ;;
-    macos)   printf '%s' '/Volumes/SharedFolders/Users/loumtech/Documents/src/PortZeroNetwork/portzero-local' ;;
 esac; }
 
 # --- snapshot helpers -------------------------------------------------------
@@ -64,17 +90,25 @@ snap_id_by_name() { # <vm> <snapshot-name>
 
 is_running() { prlctl status "$1" 2>/dev/null | grep -q running; }
 
-wait_ready() { # <vm>  — block until the guest answers, per OS
-    local vm="$1" i
+wait_ready() { # <vm>  — block until the guest answers, per OS. Prints a
+    # heartbeat every ~10s so a slow boot/revert never looks hung.
+    local vm="$1" i elapsed
+    echo ">> waiting for guest '$vm' to become ready..."
     for i in $(seq 1 90); do
+        elapsed=$(( (i - 1) * 2 ))
         if [ "$(vm_os "$vm")" = windows ]; then
-            prlctl exec "$vm" cmd /c "echo READY" 2>/dev/null | grep -q READY && return 0
+            prlctl exec "$vm" cmd /c "echo READY" 2>/dev/null | grep -q READY \
+                && { echo ">> guest '$vm' ready (${elapsed}s)"; return 0; }
         else
-            prlctl exec "$vm" echo READY 2>/dev/null | grep -q READY && return 0
+            prlctl exec "$vm" echo READY 2>/dev/null | grep -q READY \
+                && { echo ">> guest '$vm' ready (${elapsed}s)"; return 0; }
+        fi
+        if [ "$elapsed" -gt 0 ] && [ $(( elapsed % 10 )) -eq 0 ]; then
+            echo ">> still waiting for guest '$vm'... (${elapsed}s/180s)"
         fi
         sleep 2
     done
-    echo "guest '$vm' did not become ready" >&2; return 1
+    echo "guest '$vm' did not become ready after 180s" >&2; return 1
 }
 
 # --- one-VM-at-a-time -------------------------------------------------------
@@ -89,6 +123,75 @@ ensure_only() { # <vm> — stop every OTHER running VM
     done
 }
 
+# --- recover-if-missing preflight -------------------------------------------
+# Make sure SOME bootable registration of <working-vm-name> exists locally
+# before vm-test tries to reset/run it. If the internal working copy was
+# deleted (e.g. to reclaim disk space), walk back to the 4TB archive: wait for
+# the drive to be mounted, then let the user choose to clone it to internal
+# (slow, one-time) or run this session directly off the external drive.
+# Prints the vm name to actually operate on to stdout; everything else (status,
+# prompts) goes to stderr so the caller's command substitution stays clean.
+resolve_effective_vm() { # <working-vm-name>
+    local vm="$1"
+    if prlctl list -i "$vm" >/dev/null 2>&1; then
+        echo "$vm"; return 0
+    fi
+
+    echo "!! '$vm' not found on internal disk." >&2
+    local archive; archive="$(archive_vm "$vm")" || return 1
+
+    if [ ! -d "$EXTERNAL_DRIVE" ] && [ ! -t 0 ]; then
+        echo "external drive not mounted at $EXTERNAL_DRIVE and no terminal to prompt — aborting '$vm'" >&2
+        return 1
+    fi
+    while [ ! -d "$EXTERNAL_DRIVE" ]; do
+        echo "!! external drive not mounted at $EXTERNAL_DRIVE." >&2
+        read -r -p "   Plug it in, then press Enter to check again (Ctrl-C to abort)... " _ < /dev/tty
+    done
+
+    prlctl list -i "$archive" >/dev/null 2>&1 || {
+        echo "archive '$archive' not found on the external drive either — nothing to recover '$vm' from" >&2
+        return 1
+    }
+
+    if ! snap_id_by_name "$archive" "portzero-built" >/dev/null; then
+        echo "!! WARNING: archive '$archive' has no 'portzero-built' snapshot (stale/never-provisioned mirror)." >&2
+        echo "   Testing may fail until it's refreshed or re-provisioned." >&2
+    fi
+
+    local perf_note=""
+    [ "$(vm_os "$vm")" = macos ] && perf_note=" (macOS runs poorly off external storage — expect flakiness/slowness)"
+
+    if [ ! -t 0 ]; then
+        # No one to ask — don't hang, degrade to the always-available option.
+        echo ">> non-interactive session: running '$vm' directly off '$archive' this time.$perf_note" >&2
+        echo "$archive"; return 0
+    fi
+
+    echo "   found archive '$archive' on the external drive.$perf_note" >&2
+    echo "   [1] clone to internal now (one-time, slow: tens of minutes, ~100GB)" >&2
+    echo "   [2] run directly off the external drive this session (no copy)" >&2
+    echo "   [3] abort" >&2
+    local choice
+    read -r -p "   choice [1/2/3]: " choice < /dev/tty
+    case "$choice" in
+        1)
+            echo ">> cloning '$archive' -> '$vm' on internal disk (this will take a while)..." >&2
+            prlctl clone "$archive" --name "$vm" --dst "$HOME/Parallels" >&2
+            echo ">> clone complete: '$vm' now available locally." >&2
+            echo "$vm"
+            ;;
+        2)
+            echo ">> running this session directly off the external archive '$archive'." >&2
+            echo "$archive"
+            ;;
+        *)
+            echo "aborted: '$vm' not available" >&2
+            return 1
+            ;;
+    esac
+}
+
 # --- commands ---------------------------------------------------------------
 cmd_up() {
     local vm="$1"; local rsnap; rsnap="$(resolve_snap "$vm" ready)"
@@ -99,9 +202,9 @@ cmd_up() {
         prlctl snapshot-switch "$vm" -i "$ready" >/dev/null
         wait_ready "$vm"; echo "ready"; return 0
     fi
-    local gid; gid="$(snap_id_by_name "$vm" "$(vm_golden "$vm")")" \
-        || { echo "golden snapshot '$(vm_golden "$vm")' not found" >&2; return 1; }
-    echo ">> reverting to golden '$(vm_golden "$vm")' and booting"
+    local gid; gid="$(snap_id_by_name "$vm" "portzero-golden")" \
+        || { echo "golden snapshot 'portzero-golden' not found on '$vm'" >&2; return 1; }
+    echo ">> reverting to golden 'portzero-golden' and booting"
     prlctl snapshot-switch "$vm" -i "$gid" >/dev/null
     prlctl start "$vm" >/dev/null
     wait_ready "$vm"
@@ -123,6 +226,7 @@ cmd_reset() { # <vm> [name=ready]
     local vm="$1" name="${2:-ready}" id; local snap; snap="$(resolve_snap "$vm" "$name")"
     id="$(snap_id_by_name "$vm" "$snap")" \
         || { echo "no snapshot '$snap' (run: vm.sh up / checkpoint)" >&2; return 1; }
+    ensure_only "$vm"
     prlctl snapshot-switch "$vm" -i "$id" >/dev/null
     wait_ready "$vm"
     echo "reset to '$snap'"
@@ -150,11 +254,21 @@ run_guarded() { # <vm> <cmd...>
     local vm="$1"; shift
     local secs="${VM_RUN_TIMEOUT:-1800}"
     local marker; marker="$(mktemp)"
+    local start; start="$(date +%s)"
     "$@" &
     local pid=$!
     ( sleep "$secs"; echo 1 > "$marker"; kill -TERM "$pid" 2>/dev/null; sleep 3; kill -KILL "$pid" 2>/dev/null ) &
     local killer=$!
+    # Heartbeat on the host side so a guest script that goes quiet (e.g. mid
+    # MSI install, before it prints its next PHASE line) never looks hung.
+    ( while kill -0 "$pid" 2>/dev/null; do
+          sleep 30
+          kill -0 "$pid" 2>/dev/null \
+              && echo ">> still running on '$vm'... ($(( $(date +%s) - start ))s elapsed, ${secs}s budget)" >&2
+      done ) &
+    local heartbeat=$!
     wait "$pid" 2>/dev/null; local rc=$?
+    kill "$heartbeat" 2>/dev/null; wait "$heartbeat" 2>/dev/null
     if [ -s "$marker" ]; then                 # killer fired -> genuine timeout
         rm -f "$marker"; kill "$killer" 2>/dev/null; wait "$killer" 2>/dev/null
         echo "vm.sh: TIMEOUT after ${secs}s — killing guest stragglers" >&2
@@ -165,10 +279,45 @@ run_guarded() { # <vm> <cmd...>
     return "$rc"
 }
 
+# Push <script>'s containing directory (so sibling files like lib/http-echo.pl
+# resolve) into the macOS guest over `prlctl exec ... bash -s`, bypassing the
+# broken SharedFolders SMB mount (see guest_repo comment). Extracts under
+# /tmp/portzero-vmtest, mirroring the repo-relative path. Prints the guest-side
+# absolute path to the script on stdout.
+push_script_macos() { # <vm> <repo-relative-script>
+    local vm="$1" script="$2" script_dir; script_dir="$(dirname "$script")"
+    local guest_dir="/tmp/portzero-vmtest"
+    {
+        printf 'mkdir -p %q\n' "$guest_dir"
+        printf 'base64 -d > %q/payload.tar <<'"'"'PZEOF'"'"'\n' "$guest_dir"
+        ( cd "$REPO_HOST" && tar -cf - "$script_dir" ) | base64
+        printf 'PZEOF\n'
+        printf 'cd %q && tar -xf payload.tar && rm -f payload.tar\n' "$guest_dir"
+    } | prlctl exec "$vm" bash -s >&2
+    printf '%s/%s' "$guest_dir" "$script"
+}
+
+# macOS is host-built-artifact-only (no toolchain in the guest) and the
+# SharedFolders mount that would normally hand the guest a binary path is
+# broken (see guest_repo comment) — so push the host-built binary directly.
+# Prints the guest-side absolute path to the pushed binary on stdout.
+push_binary_macos() { # <vm> <host-path-to-binary>
+    local vm="$1" host_bin="$2"
+    local guest_bin="/tmp/portzero-vmtest/bin/portzero"
+    {
+        printf 'mkdir -p %q\n' "$(dirname "$guest_bin")"
+        printf 'base64 -d > %q <<'"'"'PZEOF'"'"'\n' "$guest_bin"
+        base64 -i "$host_bin"
+        printf 'PZEOF\n'
+        printf 'chmod +x %q\n' "$guest_bin"
+    } | prlctl exec "$vm" bash -s >&2
+    printf '%s' "$guest_bin"
+}
+
 cmd_run() { # <vm> <repo-relative-script> [args...]
     local vm="$1" script="$2"; shift 2
-    local base; base="$(guest_repo "$vm")"
     if [ "$(vm_os "$vm")" = windows ]; then
+        local base; base="$(guest_repo "$vm")"
         local win="${base}\\${script//\//\\}"
         run_guarded "$vm" prlctl exec "$vm" powershell -NoProfile -ExecutionPolicy Bypass -File "$win" "$@"
     else
@@ -178,13 +327,47 @@ cmd_run() { # <vm> <repo-relative-script> [args...]
         local envargs=()
         [ -n "${PORTZERO_EXE:-}" ] && envargs+=("PORTZERO_EXE=$PORTZERO_EXE")
         [ -n "${STAGING_SECRETS:-}" ] && envargs+=("STAGING_SECRETS=$STAGING_SECRETS")
-        run_guarded "$vm" prlctl exec "$vm" env "${envargs[@]}" bash "${base}/${script}" "$@"
+        local target
+        if [ "$(vm_os "$vm")" = macos ]; then
+            target="$(push_script_macos "$vm" "$script")"
+            if [ -z "${PORTZERO_EXE:-}" ] && [ -x "$REPO_HOST/target/release/portzero" ]; then
+                echo ">> pushing host-built macOS binary into the guest (no toolchain there, shared folder unavailable)..." >&2
+                envargs+=("PORTZERO_EXE=$(push_binary_macos "$vm" "$REPO_HOST/target/release/portzero")")
+            fi
+        else
+            target="$(guest_repo "$vm")/${script}"
+        fi
+        run_guarded "$vm" prlctl exec "$vm" env "${envargs[@]}" bash "$target" "$@"
     fi
+}
+
+cmd_test() { # <platform: windows|linux|macos>
+    local platform="$1"
+    local vm; vm="$(platform_vm "$platform")" || return 1
+    local start; start="$(date +%s)"
+    local rc=0
+    echo "=== $platform: starting ==="
+    local effective_vm
+    effective_vm="$(resolve_effective_vm "$vm")" || return 1
+    echo ">> using '$effective_vm'"
+    local script; script="$(default_test_script "$effective_vm")"
+    cmd_reset "$effective_vm" built || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        echo ">> running $script on '$effective_vm'..."
+        VM_RUN_TIMEOUT="${VM_RUN_TIMEOUT:-360}" cmd_run "$effective_vm" "$script" || rc=$?
+    fi
+    local elapsed=$(( $(date +%s) - start ))
+    if [ "$rc" -eq 0 ]; then
+        echo "=== $platform: PASS (${elapsed}s) ==="
+    else
+        echo "=== $platform: FAIL (exit $rc, ${elapsed}s) — see output above ===" >&2
+    fi
+    return "$rc"
 }
 
 cmd_exec() { local vm="$1"; shift; prlctl exec "$vm" "$@"; }
 cmd_stop() { prlctl stop "$1" --fast 2>&1 | tail -1; }
-cmd_list() { prlctl list --all; for v in "Windows 11 Pro" "Windows 10 Pro" "Ubuntu Linux" "macOS 15.7.7"; do echo "--- $v"; prlctl snapshot-list "$v" 2>/dev/null | grep -oE '\{[0-9a-f-]+\}|Name:.*' || true; done; }
+cmd_list() { prlctl list --all; for v in "Windows 11 Pro" "Windows 11 Pro archive" "Windows 10 Pro" "Ubuntu Linux" "Ubuntu Linux archive" "macOS 15.7.7" "macOS 15.7.7 archive"; do echo "--- $v"; prlctl snapshot-list "$v" 2>/dev/null | grep -oE '\{[0-9a-f-]+\}|Name:.*' || true; done; }
 
 case "${1:-}" in
     up)         cmd_up "$2" ;;
@@ -194,6 +377,7 @@ case "${1:-}" in
     exec)       shift; cmd_exec "$@" ;;
     stop)       cmd_stop "$2" ;;
     ensure-only) ensure_only "$2" ;;
+    test)       cmd_test "$2" ;;
     list)       cmd_list ;;
-    *) echo "usage: vm.sh {up|checkpoint|reset|run|exec|stop|ensure-only|list} ..." >&2; exit 2 ;;
+    *) echo "usage: vm.sh {up|checkpoint|reset|run|exec|stop|ensure-only|test|list} ..." >&2; exit 2 ;;
 esac

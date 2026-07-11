@@ -3,14 +3,22 @@
 # `prlctl` via vmtest/scripts/vm.sh, so they are macOS-only.
 #
 # Model:
-#   - Each VM has a hand-made "golden" powered-off snapshot (clean baseline).
-#   - `vm-up` enforces one-VM-at-a-time (stops any other running VM), reverts to
-#     golden, boots once, and captures a RUNNING snapshot "<vm>-ready" — a fully
-#     booted OS that reverting resumes from RAM in ~25s with no boot wait.
-#   - Provision once (install toolchain / build), then `vm-checkpoint <vm> built`
-#     to snapshot that running state. Every test does `vm-reset <vm> built` first,
-#     so many tests run in ONE session without ever rebooting from powered-off.
-#   - Scripts run by share path from the guest; nothing is copied in.
+#   - Every platform is orthogonal: "<name>" (~/Parallels, internal) is the
+#     working copy vm-up/vm-test actually boots; "<name> archive" (4TB drive)
+#     is a dormant, never-booted clone source. If the internal copy is missing,
+#     `vm-test` recovers from the archive (see resolve_effective_vm in vm.sh).
+#   - Snapshot names are uniform across every VM/alias: "portzero-golden"
+#     (hand-made, powered-off, clean baseline), "portzero-ready" (booted once,
+#     running-snapshot reset point), "portzero-built" (provisioned/built,
+#     running-snapshot). `vm-up` reverts to golden, boots once, captures ready.
+#     Provision once, then `vm-checkpoint <vm> built`; every test does
+#     `vm-reset <vm> built` first, so many tests run in ONE session without
+#     rebooting from powered-off.
+#   - Windows/Linux scripts run by shared-folder path from the guest; nothing
+#     is copied in. macOS's Parallels shared folder is SMB-backed and requires
+#     an authenticated GUI login the guest never has after a snapshot revert,
+#     so macOS instead gets the script (and, since it's artifact-only with no
+#     guest toolchain, the host-built binary) pushed in over `prlctl exec`.
 
 _vmtest-help:
     @just --list --list-heading $'VM system-test harness (macOS host):\n'
@@ -37,11 +45,47 @@ vm-checkpoint vm name:
 vm-reset vm="Windows 11 Pro" name="ready":
     bash vmtest/scripts/vm.sh reset "{{vm}}" "{{name}}"
 
-# Reset to a checkpoint, then run a repo test script in the guest. This is the
-# per-test entry point: pristine provisioned state every run.
-#   just vm-test "Windows Pro" vmtest/scripts/e2e-local-tunnel.ps1 built
+# Run the default e2e smoke test (local overlay tunnel) for one platform, or
+# with no argument run windows, then linux, then macos in series. Resets each
+# VM to its "built" checkpoint first; vm.sh enforces one VM running at a time,
+# so a bare `just vm-test` never has two guests up simultaneously.
+#   just vm-test            # all three, in series
+#   just vm-test windows
+#   just vm-test linux
+#   just vm-test macos
 [macos]
-vm-test vm script checkpoint="built" *ARGS:
+vm-test platform="":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if [ -n "{{platform}}" ]; then
+        bash vmtest/scripts/vm.sh test "{{platform}}"
+        exit $?
+    fi
+    # Series mode: run all three, but a failure on one shouldn't skip the
+    # others — collect results and report a summary at the end.
+    declare -A rc
+    for p in windows linux macos; do
+        bash vmtest/scripts/vm.sh test "$p"
+        rc[$p]=$?
+    done
+    echo ""
+    echo "=== vm-test summary ==="
+    overall=0
+    for p in windows linux macos; do
+        if [ "${rc[$p]}" -eq 0 ]; then
+            printf "  %-8s PASS\n" "$p"
+        else
+            printf "  %-8s FAIL (exit %s)\n" "$p" "${rc[$p]}"
+            overall=1
+        fi
+    done
+    exit "$overall"
+
+# Reset to a checkpoint, then run an arbitrary repo script in the guest.
+# Advanced/ad-hoc form — `vm-test <platform>` covers the common case.
+#   just vm-test-script "Windows 11 Pro" vmtest/scripts/e2e-staging-tunnel.ps1 built
+[macos]
+vm-test-script vm script checkpoint="built" *ARGS:
     bash vmtest/scripts/vm.sh reset "{{vm}}" "{{checkpoint}}"
     VM_RUN_TIMEOUT=${VM_RUN_TIMEOUT:-360} bash vmtest/scripts/vm.sh run "{{vm}}" "{{script}}" {{ARGS}}
 
@@ -81,9 +125,11 @@ vm-repro-trust vm="Windows 11 Pro":
 vm-sync-macos *ARGS:
     bash vmtest/scripts/sync-macos-to-4tb.sh {{ARGS}}
 
-# Copy the canonical "Windows 11 Pro" (external) to a fast throwaway
-# "Windows 11 Pro verify" on the internal SSD. Bench-measured. Idempotent:
-# removes an existing internal copy first. ~42 min, ~96 GB SSD write.
+# Copy the "Windows 11 Pro archive" (4TB) to a fast throwaway "Windows 11 Pro
+# verify" on the internal SSD, for benchmarking clone speed specifically (NOT
+# the same as the "Windows 11 Pro" working copy vm-test recovers automatically
+# — see resolve_effective_vm in vm.sh). Bench-measured. Idempotent: removes an
+# existing internal copy first. ~42 min, ~96 GB SSD write.
 [macos]
 vm-copy-internal:
     #!/usr/bin/env bash
@@ -91,8 +137,8 @@ vm-copy-internal:
     if prlctl list -i "Windows 11 Pro verify" >/dev/null 2>&1; then
         echo ">> removing existing internal copy first"; prlctl delete "Windows 11 Pro verify" >/dev/null 2>&1 || true
     fi
-    bash vmtest/scripts/bench.sh record copy-win11-to-internal "Windows 11 Pro" -- \
-        prlctl clone "Windows 11 Pro" --name "Windows 11 Pro verify" --dst "$HOME/Parallels"
+    bash vmtest/scripts/bench.sh record copy-win11-to-internal "Windows 11 Pro archive" -- \
+        prlctl clone "Windows 11 Pro archive" --name "Windows 11 Pro verify" --dst "$HOME/Parallels"
 
 # Delete the internal throwaway copy to reclaim SSD space (bench-measured).
 # The canonical VM stays safe on the 4 TB external drive; re-create with

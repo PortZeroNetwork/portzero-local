@@ -48,6 +48,24 @@ just vm-inventory "Windows Pro"      # what dev tooling the guest already has
 just vm-repro-trust "Windows Pro"    # the trust-install hang probe
 ```
 
+## Running the e2e smoke test
+
+`just vm-test <platform>` resets that VM to its `built` checkpoint and runs the
+default local-overlay E2E (`vmtest/scripts/e2e-local-overlay.ps1`/`.sh`).
+`just vm-test` with no argument runs windows, then linux, then macos in
+series — `vm.sh` stops any other running VM before each reset, so only one
+guest is ever up at a time.
+
+```
+just vm-test            # all three, in series
+just vm-test windows
+just vm-test linux
+just vm-test macos
+```
+
+For anything other than the default script/checkpoint, use
+`just vm-test-script "<vm>" vmtest/scripts/<name>.ps1 [checkpoint] [args...]`.
+
 ## Offline provisioning (metered-connection friendly)
 
 Installers are downloaded **once** to a cross-repo cache on the 4 TB drive,
