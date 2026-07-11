@@ -1,7 +1,7 @@
 ---
 id: c73967dd-9f09-49df-8408-07600fd4c0ad
 slug: task-59
-status: todo
+status: done
 title: Periodic regression detection + notifications for all post-setup steps
 created_at: 2026-07-04T22:30:56.977272Z
 updated_at: 2026-07-04T22:30:56.977272Z
