@@ -241,10 +241,12 @@ jobs:
         run: just vm-test-upgrade
 
       - name: vm-test-staging (real cloud tunnel against staging — windows, linux, macos in series)
-        # Runs by default on every trigger (inputs.staging is unset — not
-        # false — for pull_request/push, so this still evaluates true); a
-        # manual dispatch can pass staging=false to skip it.
-        if: ${{ inputs.staging != false }}
+        # Runs on every pull_request/push; a manual dispatch can pass
+        # staging=false to skip it. NOTE: on push/PR `inputs.staging` is null,
+        # and GitHub's loose comparison treats null == false as EQUAL, so the
+        # old `inputs.staging != false` silently skipped this leg on every
+        # push — gate on the event name instead.
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.staging }}
         # Rotated seed token: read from the same host-side file the
         # interactive scripts already default to (this runner IS the host
         # that owns that file — no GitHub secret needed). See
