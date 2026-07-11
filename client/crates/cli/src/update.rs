@@ -13,7 +13,7 @@ use anyhow::Result;
 use serde::Deserialize;
 use tokio::time::timeout;
 
-const RELEASES_BASE_URL: &str = "https://github.com/LoumTechnologies/port-zero/releases";
+const RELEASES_BASE_URL: &str = "https://github.com/PortZeroNetwork/portzero-local/releases";
 
 /// Minimum interval between remote checks.
 const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
@@ -196,4 +196,160 @@ async fn fetch_latest_version() -> Result<Option<String>> {
     }
     let manifest: VersionManifest = resp.json().await?;
     Ok(Some(manifest.version))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_releases_base_url_points_to_correct_repo() {
+        // Verify the URL points to the correct organization and repo, not the old one
+        assert!(
+            RELEASES_BASE_URL.contains("PortZeroNetwork/portzero-local"),
+            "RELEASES_BASE_URL must contain PortZeroNetwork/portzero-local, got: {}",
+            RELEASES_BASE_URL
+        );
+        assert!(
+            !RELEASES_BASE_URL.contains("LoumTechnologies"),
+            "RELEASES_BASE_URL must not contain LoumTechnologies (old org)"
+        );
+        assert!(
+            !RELEASES_BASE_URL.contains("port-zero"),
+            "RELEASES_BASE_URL must not contain 'port-zero' (old repo name)"
+        );
+    }
+
+    #[test]
+    fn test_version_url_format() {
+        let url = version_url();
+        assert_eq!(
+            url,
+            "https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/version.json"
+        );
+        assert!(url.contains("PortZeroNetwork/portzero-local"));
+        assert!(url.contains("/latest/download/version.json"));
+    }
+
+    #[test]
+    fn test_parse_semver_basic() {
+        let v = parse_semver("1.2.3").expect("should parse");
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 2);
+        assert_eq!(v.patch, 3);
+        assert_eq!(v.prerelease, None);
+    }
+
+    #[test]
+    fn test_parse_semver_with_v_prefix() {
+        let v = parse_semver("v1.2.3").expect("should parse");
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 2);
+        assert_eq!(v.patch, 3);
+        assert_eq!(v.prerelease, None);
+    }
+
+    #[test]
+    fn test_parse_semver_with_prerelease() {
+        let v = parse_semver("1.2.3-alpha").expect("should parse");
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 2);
+        assert_eq!(v.patch, 3);
+        assert_eq!(v.prerelease, Some("alpha".to_string()));
+    }
+
+    #[test]
+    fn test_parse_semver_with_prerelease_and_v_prefix() {
+        let v = parse_semver("v1.2.3-rc.1").expect("should parse");
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 2);
+        assert_eq!(v.patch, 3);
+        assert_eq!(v.prerelease, Some("rc.1".to_string()));
+    }
+
+    #[test]
+    fn test_parse_semver_invalid_formats() {
+        assert_eq!(parse_semver("1.2"), None);
+        assert_eq!(parse_semver("1"), None);
+        assert_eq!(parse_semver("1.2.3.4"), None);
+        assert_eq!(parse_semver(""), None);
+    }
+
+    #[test]
+    fn test_version_comparison_patch() {
+        let v1 = parse_semver("1.2.3").unwrap();
+        let v2 = parse_semver("1.2.4").unwrap();
+        assert!(v1 < v2);
+        assert!(v2 > v1);
+    }
+
+    #[test]
+    fn test_version_comparison_minor() {
+        let v1 = parse_semver("1.2.0").unwrap();
+        let v2 = parse_semver("1.3.0").unwrap();
+        assert!(v1 < v2);
+    }
+
+    #[test]
+    fn test_version_comparison_major() {
+        let v1 = parse_semver("1.0.0").unwrap();
+        let v2 = parse_semver("2.0.0").unwrap();
+        assert!(v1 < v2);
+    }
+
+    #[test]
+    fn test_version_comparison_prerelease_vs_release() {
+        let prerelease = parse_semver("1.2.3-alpha").unwrap();
+        let release = parse_semver("1.2.3").unwrap();
+        // Release is greater than prerelease with same version
+        assert!(prerelease < release);
+        assert!(release > prerelease);
+    }
+
+    #[test]
+    fn test_version_comparison_prerelease_numeric() {
+        let v1 = parse_semver("1.2.3-1").unwrap();
+        let v2 = parse_semver("1.2.3-2").unwrap();
+        assert!(v1 < v2);
+    }
+
+    #[test]
+    fn test_version_comparison_prerelease_string() {
+        let v1 = parse_semver("1.2.3-alpha").unwrap();
+        let v2 = parse_semver("1.2.3-beta").unwrap();
+        // Lexicographic comparison: "alpha" < "beta"
+        assert!(v1 < v2);
+    }
+
+    #[test]
+    fn test_version_comparison_prerelease_mixed() {
+        let v1 = parse_semver("1.2.3-1.alpha").unwrap();
+        let v2 = parse_semver("1.2.3-2.beta").unwrap();
+        // Numeric parts are compared numerically: 1 < 2
+        assert!(v1 < v2);
+    }
+
+    #[test]
+    fn test_version_comparison_equality() {
+        let v1 = parse_semver("1.2.3").unwrap();
+        let v2 = parse_semver("1.2.3").unwrap();
+        assert_eq!(v1, v2);
+        assert!(!(v1 < v2));
+        assert!(!(v1 > v2));
+    }
+
+    #[test]
+    fn test_should_check_env_var_disables() {
+        std::env::set_var("PZ_TUNNEL_NO_UPDATE_CHECK", "1");
+        assert!(!should_check());
+        std::env::remove_var("PZ_TUNNEL_NO_UPDATE_CHECK");
+    }
+
+    #[test]
+    fn test_should_check_missing_timestamp_file() {
+        std::env::remove_var("PZ_TUNNEL_NO_UPDATE_CHECK");
+        // When timestamp file doesn't exist, should_check returns true
+        // (we should check since we've never checked before)
+        assert!(should_check());
+    }
 }
