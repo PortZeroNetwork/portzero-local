@@ -536,15 +536,24 @@ fn check_dashboard_hosts_pin() -> Option<Diagnostic> {
     }
 
     tracing::debug!("check_dashboard_hosts_pin: expected dashboard pin is missing");
+    let safety = crate::hosts::check_hosts_write_safety(Path::new("/etc/hosts"));
+    let mut detail = format!(
+        "/etc/hosts no longer contains the expected `{PORTZERO_LOCAL_DASHBOARD_IP} portzero.local` \
+         entry, so the dashboard name may not resolve."
+    );
+    if !safety.is_safe() {
+        detail.push_str("\n`sudo portzero setup` is unlikely to restore it on its own:");
+        for blocker in &safety.blockers {
+            let (label, explanation) = blocker.describe();
+            detail.push_str(&format!("\n  - {label}: {explanation}"));
+        }
+    }
     Some(Diagnostic {
         id: "dashboard_hosts_pin_missing".into(),
         severity: Severity::Warning,
         category: "dns".into(),
         title: "The portzero.local dashboard hosts pin is missing".to_string(),
-        detail: format!(
-            "/etc/hosts no longer contains the expected `{PORTZERO_LOCAL_DASHBOARD_IP} portzero.local` \
-             entry, so the dashboard name may not resolve."
-        ),
+        detail,
         fix: Some(Fix {
             kind: FixKind::Confirm,
             description: "Re-run setup to restore the dashboard hosts pin.".to_string(),

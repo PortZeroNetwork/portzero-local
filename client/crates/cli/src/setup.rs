@@ -65,6 +65,19 @@ fn ensure_dashboard_hosts_entry(path: &str) -> Result<()> {
         return Ok(());
     }
 
+    let safety = portzero_daemon::hosts::check_hosts_write_safety(std::path::Path::new(path));
+    if !safety.is_safe() {
+        let mut detail = String::new();
+        for blocker in &safety.blockers {
+            let (label, explanation) = blocker.describe();
+            detail.push_str(&format!("\n  - {label}: {explanation}"));
+        }
+        anyhow::bail!(
+            "Refusing to edit {path}: an edit would likely fail or not persist.{detail}\n\
+             Add `{DASHBOARD_HOSTS_LINE}` yourself, in whatever way is appropriate for this system."
+        );
+    }
+
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

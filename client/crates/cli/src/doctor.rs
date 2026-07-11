@@ -406,15 +406,38 @@ fn check_hosts_pin() -> Check {
         }
         HostsPin::Conflicting(line) => Check::warn(
             "hosts pin",
-            format!("/etc/hosts maps portzero.local to an unexpected address: {line}"),
+            format!(
+                "/etc/hosts maps portzero.local to an unexpected address: {line}{}",
+                hosts_write_safety_detail()
+            ),
             "keep only `10.254.0.2 portzero.local`, or: sudo portzero setup",
         ),
         HostsPin::Missing => Check::warn(
             "hosts pin",
-            "the `10.254.0.2 portzero.local` pin is missing; the dashboard name may resolve unreliably",
+            format!(
+                "the `10.254.0.2 portzero.local` pin is missing; the dashboard name may resolve unreliably{}",
+                hosts_write_safety_detail()
+            ),
             "sudo portzero setup",
         ),
     }
+}
+
+/// Append a note to a hosts-pin warning when `sudo portzero setup`'s edit is
+/// expected to fail or not persist, so the fix hint isn't misleading.
+#[cfg(target_os = "macos")]
+fn hosts_write_safety_detail() -> String {
+    let safety =
+        portzero_daemon::hosts::check_hosts_write_safety(std::path::Path::new("/etc/hosts"));
+    if safety.is_safe() {
+        return String::new();
+    }
+    let mut detail = String::from("\n  `sudo portzero setup` is unlikely to fix this on its own:");
+    for blocker in &safety.blockers {
+        let (label, explanation) = blocker.describe();
+        detail.push_str(&format!("\n    - {label}: {explanation}"));
+    }
+    detail
 }
 
 /// For every discovered local tunnel: confirm its name resolves to a VIP and
