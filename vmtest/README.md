@@ -2,8 +2,19 @@
 
 Host-driven system tests for portzero against real Windows / Linux / macOS
 guests, run from the macOS host that owns the Parallels VMs. The point is
-coverage the unit/E2E suites can't give: real installers, real trust stores,
-real TUN/wintun adapters, real DNS, driven end to end on a genuine OS.
+coverage the unit/E2E suites can't give: real trust stores, real TUN/wintun
+adapters, real DNS, and — via `vm-test-lifecycle` — the real installer
+(install → use → **uninstall** → assert nothing is left behind), driven end to
+end on a genuine OS.
+
+> **Two different things, don't conflate them.** `vm-test` runs the overlay
+> *smoke* (TUN + DNS + proxy) against the **raw binary** pushed into the guest —
+> it does NOT install a package and says nothing about install/uninstall.
+> `vm-test-lifecycle` installs the **real package** (Linux `.deb` via `dpkg`,
+> Windows signed MSI via `msiexec`, macOS the privileged `setup` flow the
+> Homebrew formula runs), verifies the CA / DNS / autostart / TUN artifacts
+> landed, then runs the real uninstaller and asserts every one is GONE. If you
+> want installer/uninstaller coverage, that is the recipe — see below.
 
 ## Why this exists (and its one hard limit)
 
@@ -66,6 +77,62 @@ just vm-test macos
 For anything other than the default script/checkpoint, use
 `just vm-test-script "<vm>" vmtest/scripts/<name>.ps1 [checkpoint] [args...]`.
 
+## Lifecycle test: install → use → UNINSTALL → assert-clean
+
+`just vm-test-lifecycle [platform]` is the coverage a launch audit flagged as
+missing: the whole download→install→use→**uninstall**→(upgrade) path against the
+**real installer**, with every uninstall step *asserted*. Leftover trusted-CA or
+DNS-resolver residue after uninstall is the loud-complaint bug class, so it is
+proven gone, not assumed.
+
+Per platform, `lifecycle-<os>.{sh,ps1}` install the real artifact, verify it
+landed, run the real uninstaller, then assert the artifacts are removed:
+
+| Platform | Install (real)                | Asserts landed → **then GONE**                                              |
+|----------|-------------------------------|-----------------------------------------------------------------------------|
+| Linux    | `dpkg -i` the built `.deb`    | binary, `setcap` caps, `/etc/hosts` pin, systemd unit; CA in system trust store + `/etc/ssl` + `ca-certificates.conf`; `~/.config` autostart unit |
+| Windows  | `msiexec /i` the signed MSI   | binary, scheduled task, CA in `LocalMachine\Root`, `.portzero.local` NRPT rule, Wintun adapter |
+| macOS    | privileged `portzero setup`   | CA in System keychain, root LaunchDaemon, `/etc/resolver/portzero.local`, `/etc/hosts` pin |
+
+Each prints greppable `PHASE=<name> ok=<true|false>` lines and a final
+`RESULT=PASS|FAIL`; a leftover artifact yields `ok=false` and fails the run. The
+scripts read the artifact from where `vm-e2e.yml` stages it
+(`vmtest/.downloaded-artifacts/<os>/`), or from `PORTZERO_DEB` / `PORTZERO_MSI`.
+
+```
+just vm-test-lifecycle            # all three, in series
+just vm-test-lifecycle linux
+```
+
+**macOS delivery caveat (honest scope).** macOS ships via Homebrew (a release
+`.tar.gz` + tap formula), *not* a `.pkg`, and the Parallels macOS guest is a
+network-pristine, artifact-only end-user machine — so the harness cannot
+`brew install` the real release tarball in-VM (that needs GitHub Releases + a
+real formula sha256). `lifecycle-macos.sh` therefore exercises the exact
+privileged lifecycle the formula's `post_install` + `sudo portzero setup`
+perform (CA-trust / LaunchDaemon / resolver / hosts), driven by the host-built
+binary — i.e. the *residue* the audit cares about. The brew *download* step
+itself is covered by `release.yml`'s macOS interop job, not here. There is no
+macOS `.pkg` build to test because none is shipped.
+
+**Where each piece actually runs.** The Linux `.deb` package lifecycle
+(postinst/prerm, hosts pin, `setcap`, unit) and the upgrade dup-checks are
+validated on hosted CI too (`ci.yml`: `lifecycle-upgrade-linux`, and the
+`real_tun_overlay_trust_lifecycle` Rust e2e that install/verify/uninstalls the CA
+on Linux). Windows MSI and macOS setup lifecycles run only on this Parallels
+runner (`vm-e2e.yml`), which is the only place with a real MSI-capable Windows
+guest and a real macOS keychain/LaunchDaemon.
+
+## Upgrade test: prior version → new version
+
+`vmtest/scripts/upgrade-linux.sh` installs a **prior** released `.deb`, then the
+new one over the top, and asserts the upgrade did not DUPLICATE anything (exactly
+one `/etc/hosts` pin, one systemd unit — a postinst that appends instead of
+replacing is how you get two). It fetches the latest published release `.deb` as
+the "prior" version via `gh`, or `SKIP`s cleanly (never a false pass) when no
+prior release / network is available; set `PORTZERO_DEB_OLD` to pin one. Wired
+into `ci.yml` (`lifecycle-upgrade-linux`).
+
 ## Offline provisioning (metered-connection friendly)
 
 Installers are downloaded **once** to a cross-repo cache on the 4 TB drive,
@@ -104,9 +171,9 @@ Tiers:
 
 | VM            | Guest        | Use                                        |
 |---------------|--------------|--------------------------------------------|
-| `Windows Pro` | Windows 11   | MSI install, trust store, wintun, tunnels  |
-| `Ubuntu Linux`| Linux        | .deb/install.sh, CAP_NET_ADMIN, /dev/net/tun |
-| `macOS 15.7.7`| macOS        | pkg/brew, LaunchDaemon, utun               |
+| `Windows Pro` | Windows 11   | real MSI install/uninstall, trust store, wintun, tunnels |
+| `Ubuntu Linux`| Linux        | real `.deb` install/uninstall, CAP_NET_ADMIN, /dev/net/tun |
+| `macOS 15.7.7`| macOS        | privileged `setup`/teardown (CA keychain, LaunchDaemon, resolver), utun — no `.pkg` is shipped, so none is tested; see the macOS delivery caveat above |
 
 Snapshot convention is the same for all three: a golden powered-off baseline
 plus a `"<vm>-ready"` running snapshot as the reset point.
