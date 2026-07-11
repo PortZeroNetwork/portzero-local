@@ -32,6 +32,25 @@ depends on what GitHub's `windows-latest` image has on `PATH`. So use the VM for
 adapter, register a real tunnel), and treat "repro an env-specific CI hang" as a
 separate exercise that needs the CI image replicated, or a defensive fix instead.
 
+## Division of responsibility (where the human hands off to the repo)
+
+There is one clean boundary, and it is the **golden powered-off snapshot**:
+
+- **The human owns everything up to and including golden.** Installing the guest
+  OS, activating it, and setting up **Parallels Guest Tools** (so `prlctl exec`
+  works at all) is manual, one-time, per-VM work. The result is captured as the
+  hand-made `golden` snapshot. This is deliberately *not* automated — it needs a
+  human at the Parallels GUI, and it changes rarely.
+- **Everything after golden is the repo's job.** All provisioning (toolchains,
+  the offline caches, Homebrew), every running snapshot (`ready`/`built`/…), and
+  every test is scripted under `vmtest/` and checked into `portzero-local`. Given
+  a golden VM on the host, `just vm-…` recipes reproduce the entire rest of the
+  state — nothing downstream of golden should require manual GUI steps.
+
+Rule of thumb: if a step needs the Parallels GUI or an OS installer, it belongs
+to the human and stops at golden; if it can run over `prlctl exec` / `prlctl`
+from the host, it belongs in a script here.
+
 ## The reset model (fast, pristine, no boot wait)
 
 Each VM has a hand-made **golden** powered-off snapshot: a clean, configured
@@ -172,6 +191,28 @@ asset URL.
 
 ## Offline provisioning (metered-connection friendly)
 
+**Cache-first — the rule for every download.** This host is often on a *metered*
+connection, so **nothing may be downloaded twice.** Before adding or running any
+step that fetches from the network, check whether it is already cached and skip
+the download if so. There are two cache forms, by what the vendor allows:
+
+- **File-cacheable** (rustup, Rust toolchains, git, VS Build Tools, apt debs):
+  staged as files in `vm-toolchain-cache/` and installed from there offline. Every
+  fetch goes through `fetch-installers.sh`, which **skips anything already present**
+  — add new downloads there, never inline in a provisioning script.
+- **Not file-cacheable** (macOS **Xcode CLT** and **Homebrew** — Apple/Homebrew
+  only vend them as live installs, and the macOS guest can't read the shared cache
+  anyway; see the macOS notes): the cache form is the **VM snapshot** with them
+  already installed, plus its 4 TB `.pvm` mirror. They are installed **once** by
+  `just vm-macos-add-brew` and baked into `portzero-built`; the test path only
+  reverts to that snapshot and downloads nothing. The install scripts
+  (`macos-install-clt.sh`, `macos-install-homebrew.sh`) are idempotent — they
+  detect an existing install and skip — so that snapshot IS the cache check.
+
+If you find yourself about to `curl`/`softwareupdate`/`brew` from a script, first
+ask: is this cached (as a file, or in the snapshot)? If yes, restore/skip; if it's
+a genuinely new one-time download, route it through the cache so the next run is free.
+
 Installers are downloaded **once** to a cross-repo cache on the 4 TB drive,
 `/Volumes/MBP-Sidecar/loumtech/vm-toolchain-cache/` (shared into every guest; see
 that dir's `README.md` for the full layout and guest mount paths). The cache
@@ -192,7 +233,34 @@ Tiers:
 - `toolchain` — Rust + git + MSVC layout / Ubuntu debs, so the daemon builds
   **inside the VM** fully offline (no CI round-trip for platform-only iteration).
   macOS is intentionally artifact-only — the host builds macOS natively and the
-  macOS VM stays a pristine end-user machine for install/uninstall testing.
+  macOS VM stays close to a real end-user machine for install/uninstall testing.
+
+### Homebrew on the macOS guest (one-time, baked into the snapshot)
+
+The macOS guest ships with **Homebrew** (and its Command Line Tools dependency)
+baked into its `portzero-built` reset point, so `just vm-test macos` / the CI
+VM-E2E job can exercise the real `brew install portzero` path. It is installed
+**once** by `just vm-macos-add-brew` — a metered-connection concern, so the test
+path never touches it: `vm-test` only *reverts* to the snapshot, downloading
+nothing.
+
+Three snapshots make the one-time download permanent (nothing pristine is lost):
+
+| Snapshot             | State              | Role                                        |
+|----------------------|--------------------|---------------------------------------------|
+| `portzero-built`     | CLT + Homebrew     | reset point `vm-test`/CI revert to (churns) |
+| `portzero-toolchain` | CLT + Homebrew     | **permanent anchor** — the durable cache of the download; never auto-overwritten |
+| `portzero-pre-brew`  | pristine, no CLT   | clean pre-Homebrew baseline, preserved      |
+
+`portzero-built` is the working reset point, and a future re-provision
+(`vm-checkpoint built`) replaces it — so `portzero-toolchain` exists as a
+never-touched anchor holding the identical CLT+Homebrew state. **If `built` is
+ever clobbered, revert to `portzero-toolchain` and re-checkpoint `built` — no
+re-download, ever.** The golden powered-off `MacOS 15.7.7` snapshot is also
+untouched. After `vm-macos-add-brew`, power the VM off and `just vm-sync-macos`
+to mirror the image (all three snapshots) to the 4 TB drive as the off-machine
+backup of the cache. To rebuild Homebrew from scratch (rare), revert to
+`portzero-pre-brew` and re-run `just vm-macos-add-brew`.
 
 ## Adding a system test
 

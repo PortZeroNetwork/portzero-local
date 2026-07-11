@@ -171,6 +171,15 @@ vm-fetch:
 vm-repro-trust vm="Windows 11 Pro":
     bash vmtest/scripts/vm.sh run "{{vm}}" vmtest/scripts/repro-trust-install.ps1
 
+# One-time provisioning: bake Homebrew into the macOS VM's "portzero-built"
+# reset point (what vm-test/CI revert to), so both exercise the real
+# `brew install portzero` path. Preserves the pristine pre-Homebrew state as a
+# "portzero-pre-brew" snapshot first. Runs on the internal working copy; after
+# it finishes, power off + `just vm-sync-macos` to mirror the result to 4 TB.
+[macos]
+vm-macos-add-brew:
+    bash vmtest/scripts/macos-add-brew.sh
+
 # Mirror the macOS VM + its cache from the internal disk to the 4 TB drive.
 # VM must be powered off. Pass --dry-run / --delete through.
 [macos]

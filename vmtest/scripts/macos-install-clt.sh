@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 # Install Xcode Command Line Tools headlessly (no GUI, no Apple ID) via
-# softwareupdate. Unlike Windows/Linux toolchains, CLT cannot be staged as a
-# portable file in the shared cache — Apple only vends it through
-# softwareupdate — so the "cache" for macOS is the VM snapshot taken AFTER this
-# runs. Idempotent: exits early if CLT already compiles.
+# softwareupdate.
+#
+# CACHE-FIRST (this host is often on a METERED link — never download twice):
+# CLT cannot be staged as a portable file in the shared cache — Apple only vends
+# it through softwareupdate, and the macOS guest can't read the shared cache
+# (TCC) anyway — so the "cache" for CLT is the VM SNAPSHOT taken AFTER this runs
+# (baked into `portzero-built` by `just vm-macos-add-brew`, mirrored to the 4 TB
+# by `just vm-sync-macos`). This script only downloads when CLT is genuinely
+# absent; the guard below is the cache check. To get CLT back after a revert,
+# revert to a snapshot that has it (portzero-built) — do NOT re-run this on a
+# metered link. See vmtest/README.md "Cache-first".
+#
+# Idempotent: exits early if CLT already compiles.
 set -euo pipefail
 
 if clang -x c -o /tmp/_cltcheck - <<<'int main(){return 0;}' 2>/dev/null; then
-    echo "clt_already=yes"; exit 0
+    echo "clt_already=yes (cache hit — CLT already present, no download)"; exit 0
 fi
 
 # This sentinel makes softwareupdate list the on-demand CLT package.
