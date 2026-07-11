@@ -708,17 +708,119 @@ fn certutil_output_is_read_only(output: &str) -> bool {
         || output.to_ascii_lowercase().contains("read-only database")
 }
 
+/// Hard timeout applied to every external command the trust installer spawns.
+///
+/// The daemon runs trust installation inside a 30s overlay-startup budget (see
+/// `OverlayNetwork::start_with_progress`). On Windows a single wedged child —
+/// `certutil.exe -H` probing a hung NSS build, or an NSS `certutil` blocked on a
+/// locked `cert9.db` — historically consumed that entire budget and the overlay
+/// never came up (task-69). No individual command may block the daemon
+/// indefinitely, so each one is spawned with this watchdog and killed if it
+/// overruns.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const TRUST_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Spawn `command` and wait up to [`TRUST_COMMAND_TIMEOUT`] for it to exit,
+/// capturing stdout and stderr. If it overruns, the child is killed and an error
+/// naming `label` is returned so the wedge site is identifiable in logs.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn run_command_capture(
+    command: std::process::Command,
+    label: &str,
+) -> Result<std::process::Output> {
+    run_command_capture_with_timeout(command, TRUST_COMMAND_TIMEOUT, label)
+}
+
+/// Spawn `command`, drain its output on background threads, and wait up to
+/// `timeout` for it to exit. On timeout the child is killed and an error is
+/// returned that names `label` (the phase/command, matching the daemon's
+/// "overlay startup step: X" logging style) so a wedge is identifiable.
+///
+/// stdin is redirected to null so a tool that blocks waiting on console input
+/// fails immediately rather than hanging until the watchdog fires.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn run_command_capture_with_timeout(
+    mut command: std::process::Command,
+    timeout: std::time::Duration,
+    label: &str,
+) -> Result<std::process::Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn().with_context(|| format!("spawn {label}"))?;
+
+    // Drain stdout/stderr on background threads so a chatty child cannot deadlock
+    // against a full pipe buffer while we poll for exit, and so the reads unblock
+    // (the pipes close) the instant we kill a wedged child.
+    let stdout_reader = child.stdout.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    });
+    let stderr_reader = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = pipe.read_to_end(&mut buf);
+            buf
+        })
+    });
+
+    let start = std::time::Instant::now();
+    let status = loop {
+        match child
+            .try_wait()
+            .with_context(|| format!("wait for {label}"))?
+        {
+            Some(status) => break status,
+            None => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    tracing::warn!(
+                        "trust install step timed out after {}s and was killed: {label}",
+                        timeout.as_secs()
+                    );
+                    anyhow::bail!(
+                        "{label} did not complete within {}s and was killed",
+                        timeout.as_secs()
+                    );
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    };
+
+    let stdout = stdout_reader
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_reader
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn run_certutil(program: &str, args: &[String]) -> std::result::Result<(), CertutilError> {
-    let output = std::process::Command::new(program)
-        .args(args)
-        .output()
-        .map_err(|e| CertutilError {
-            program: program.to_string(),
-            status: None,
-            stdout: String::new(),
-            stderr: e.to_string(),
-        })?;
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    let output = run_command_capture(command, program).map_err(|e| CertutilError {
+        program: program.to_string(),
+        status: None,
+        stdout: String::new(),
+        stderr: e.to_string(),
+    })?;
     if output.status.success() {
         return Ok(());
     }
@@ -933,12 +1035,11 @@ fn command_exists(cmd: &str) -> bool {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_command(program: &str, args: &[impl AsRef<std::ffi::OsStr>]) -> Result<()> {
-    let status = std::process::Command::new(program)
-        .args(args)
-        .status()
-        .with_context(|| format!("spawn {program}"))?;
-    if !status.success() {
-        anyhow::bail!("{program} exited with {status}");
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    let output = run_command_capture(command, program)?;
+    if !output.status.success() {
+        anyhow::bail!("{program} exited with {}", output.status);
     }
     Ok(())
 }
@@ -1445,7 +1546,12 @@ fn is_mozilla_certutil_windows(path: &Path) -> bool {
     if is_windows_system_certutil(path) {
         return false;
     }
-    let Ok(output) = std::process::Command::new(path).arg("-H").output() else {
+    let mut command = std::process::Command::new(path);
+    command.arg("-H");
+    // A wedged certutil.exe on PATH must not hang detection; on timeout the
+    // watchdog kills it and we treat the candidate as "not usable" and skip it.
+    let Ok(output) = run_command_capture(command, &format!("certutil -H probe {}", path.display()))
+    else {
         return false;
     };
     let text = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase()
@@ -1467,12 +1573,11 @@ fn read_first_pem_cert_der(path: &Path) -> Result<Vec<u8>> {
 
 #[cfg(target_os = "windows")]
 fn run_command(program: &str, args: &[impl AsRef<std::ffi::OsStr>]) -> Result<()> {
-    let status = std::process::Command::new(program)
-        .args(args)
-        .status()
-        .with_context(|| format!("spawn {program}"))?;
-    if !status.success() {
-        anyhow::bail!("{program} exited with {status}");
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    let output = run_command_capture(command, program)?;
+    if !output.status.success() {
+        anyhow::bail!("{program} exited with {}", output.status);
     }
     Ok(())
 }
@@ -1627,11 +1732,9 @@ fn certutil_list_args(db_dir: &Path) -> Vec<String> {
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn run_certutil_output(program: &str, args: &[String]) -> Result<std::process::Output> {
-    let output = std::process::Command::new(program)
-        .args(args)
-        .output()
-        .with_context(|| format!("spawn {program}"))?;
-    Ok(output)
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    run_command_capture(command, program)
 }
 
 // ---------------------------------------------------------------------------
@@ -2033,5 +2136,61 @@ mod tests {
             Some(PathBuf::from(home))
         });
         assert_eq!(home, Some(PathBuf::from("/home/alice")));
+    }
+
+    // --- Command timeout watchdog (task-69) ---
+    //
+    // These exercise the cross-platform primitive that guarantees no external
+    // trust-install command can wedge the daemon. They run on Unix hosts using a
+    // real `sleep`; the same wrapper guards the Windows `certutil` calls, which
+    // cannot be exercised from this environment.
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_capture_kills_child_that_exceeds_timeout() {
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("30");
+        let start = std::time::Instant::now();
+        let result = run_command_capture_with_timeout(
+            cmd,
+            std::time::Duration::from_millis(300),
+            "sleep 30",
+        );
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "a child exceeding the timeout must error");
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            msg.contains("did not complete") && msg.contains("sleep 30"),
+            "error should name the wedged command: {msg}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "caller must return promptly after the timeout, took {elapsed:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_capture_returns_output_for_fast_command() {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "printf hello"]);
+        let output =
+            run_command_capture_with_timeout(cmd, std::time::Duration::from_secs(10), "printf")
+                .expect("fast command should complete within the timeout");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"hello");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_capture_reports_spawn_failure() {
+        let cmd = std::process::Command::new("/nonexistent/portzero-does-not-exist");
+        let result = run_command_capture_with_timeout(
+            cmd,
+            std::time::Duration::from_secs(10),
+            "missing binary",
+        );
+        assert!(result.is_err(), "spawning a missing binary must error");
     }
 }
