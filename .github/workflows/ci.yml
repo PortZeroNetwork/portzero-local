@@ -13,49 +13,20 @@ env:
 jobs:
   check:
     name: Check & Test (${{ matrix.os }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # macOS runs on a persistent self-hosted runner instead of GitHub's
-        # hosted macos-15 to avoid its ~10x Actions-minute multiplier. Linux
-        # and Windows stay on GitHub-hosted runners (cheap, and there's no
-        # local Windows box). The runner must be registered with the
-        # `portzero-macbook` label and NOT run with `--ephemeral`, or the
-        # caching below has nothing to persist against.
-        include:
-          - os: ubuntu-latest
-            runner: ubuntu-latest
-          - os: macos-self-hosted
-            runner: [self-hosted, macOS, portzero-macbook]
-          - os: windows-latest
-            runner: windows-latest
+        # Run the unprivileged suite on every supported desktop OS.
+        os: [ubuntu-latest, macos-15, windows-latest]
     steps:
       - uses: actions/checkout@v5
-        with:
-          # Self-hosted macOS is a persistent box: don't let checkout's
-          # default `git clean -ffdx` wipe the target dir / cargo cache
-          # between runs. GitHub-hosted runners are ephemeral anyway, so
-          # this has no effect there.
-          clean: ${{ runner.os != 'macOS' }}
-
-      - name: Point Cargo at a persistent cache dir (self-hosted macOS only)
-        if: runner.os == 'macOS'
-        run: |
-          mkdir -p "$HOME/ci-cache/portzero-local/cargo-home" "$HOME/ci-cache/portzero-local/target"
-          echo "CARGO_HOME=$HOME/ci-cache/portzero-local/cargo-home" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_DIR=$HOME/ci-cache/portzero-local/target" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy,rustfmt
 
-      - name: Cache cargo registry/target (GitHub-hosted runners only)
-        # Self-hosted macOS already persists its cargo home/target dir on
-        # local disk (set up above); routing it through actions/cache would
-        # just add a redundant upload/download over the metered connection.
-        if: runner.os != 'macOS'
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
 
       - name: Format
         if: runner.os == 'Linux'
