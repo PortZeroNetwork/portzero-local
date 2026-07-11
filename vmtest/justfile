@@ -98,6 +98,26 @@ vm-test platform="":
 vm-test-staging platform="":
     just _vm-test-series staging "{{platform}}"
 
+# Full download->install->use->UNINSTALL->assert-clean lifecycle against the REAL
+# installer (Linux .deb via dpkg, Windows signed MSI via msiexec, macOS the
+# privileged `setup` flow the brew formula runs), for one platform or all three
+# in series. This is the coverage the launch audit flagged as missing: it asserts
+# that uninstall takes the trusted CA out of the OS trust store, removes the
+# .portzero.local DNS resolver/pin, unloads the autostart service, tears down the
+# TUN interface, and cleans up files — no leftover trusted-CA / DNS residue.
+#
+# Needs the real artifact staged where the lifecycle scripts look:
+#   Linux   -> vmtest/.downloaded-artifacts/linux/*.deb   (find_deb)
+#   Windows -> vmtest/.downloaded-artifacts/windows/*.msi (Find-Msi)
+#   macOS   -> the host-built binary (pushed in automatically, like vm-test)
+# vm-e2e.yml stages these; locally, drop the artifact in or set PORTZERO_DEB /
+# PORTZERO_MSI in the guest.
+#   just vm-test-lifecycle            # all three, in series
+#   just vm-test-lifecycle linux
+[macos]
+vm-test-lifecycle platform="":
+    just _vm-test-series lifecycle "{{platform}}"
+
 # Reset to a checkpoint, then run an arbitrary repo script in the guest.
 # Advanced/ad-hoc form — `vm-test <platform>` covers the common case.
 #   just vm-test-script "Windows 11 Pro" vmtest/scripts/e2e-staging-tunnel.ps1 built

@@ -67,6 +67,17 @@ esac; }
 # handling in cmd_test/push_secrets_macos). Both scripts are shared by
 # Linux/macOS; Windows needs the .ps1 twin.
 default_test_script() { # <vm> [flavor=local]
+    # The lifecycle flavor uses per-OS script names (not a shared base with a
+    # .ps1/.sh twin): real installer install -> verify -> uninstall -> assert
+    # clean. See lifecycle-{linux,windows,macos}.{sh,ps1}.
+    if [ "${2:-local}" = lifecycle ]; then
+        case "$(vm_os "$1")" in
+            windows) echo "vmtest/scripts/lifecycle-windows.ps1" ;;
+            linux)   echo "vmtest/scripts/lifecycle-linux.sh" ;;
+            macos)   echo "vmtest/scripts/lifecycle-macos.sh" ;;
+        esac
+        return
+    fi
     local base="e2e-local-overlay"
     [ "${2:-local}" = staging ] && base="e2e-staging-tunnel"
     if [ "$(vm_os "$1")" = windows ]; then
@@ -442,7 +453,12 @@ cmd_test() { # <platform: windows|linux|macos> [flavor=local|staging]
     cmd_reset "$effective_vm" built || rc=$?
     if [ "$rc" -eq 0 ]; then
         echo ">> running $script on '$effective_vm'..."
-        VM_RUN_TIMEOUT="${VM_RUN_TIMEOUT:-360}" cmd_run "$effective_vm" "$script" || rc=$?
+        # The lifecycle flavor installs a real package (MSI/.deb), brings the
+        # overlay up, then uninstalls — slower than the plain overlay smoke, so
+        # give it a bigger default budget.
+        local default_to=360
+        [ "$flavor" = lifecycle ] && default_to=600
+        VM_RUN_TIMEOUT="${VM_RUN_TIMEOUT:-$default_to}" cmd_run "$effective_vm" "$script" || rc=$?
     fi
     local elapsed=$(( $(date +%s) - start ))
     if [ "$rc" -eq 0 ]; then
