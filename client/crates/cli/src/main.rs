@@ -15,7 +15,6 @@ mod inspect;
 mod mcp;
 mod setup;
 mod skill;
-mod team;
 mod trust;
 mod update;
 mod wait;
@@ -116,9 +115,8 @@ enum Command {
     /// Show the currently authenticated user.
     Whoami,
 
-    /// Manage teams.
-    #[command(subcommand)]
-    Team(TeamCommand),
+    /// Team management has moved to the dashboard.
+    Team,
 
     /// Manage starting the daemon automatically at boot.
     #[command(subcommand)]
@@ -170,19 +168,6 @@ enum AutostartCommand {
     Disable,
     /// Show whether autostart is installed.
     Status,
-}
-
-#[derive(Subcommand)]
-enum TeamCommand {
-    /// List teams you belong to.
-    List,
-    /// Invite a user to your team.
-    Invite {
-        /// Email address to invite.
-        email: String,
-    },
-    /// List members of the current team and their environments.
-    Members,
 }
 
 #[tokio::main]
@@ -238,11 +223,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Logout => auth::logout()?,
         Command::Whoami => auth::whoami().await?,
 
-        Command::Team(cmd) => match cmd {
-            TeamCommand::List => team::list().await?,
-            TeamCommand::Invite { email } => team::invite(&email).await?,
-            TeamCommand::Members => team::members().await?,
-        },
+        Command::Team => {
+            println!("Team management has moved to https://app.portzero.cloud/teams");
+        }
         Command::Autostart(cmd) => match cmd {
             AutostartCommand::Enable => autostart::enable()?,
             AutostartCommand::Disable => autostart::disable()?,

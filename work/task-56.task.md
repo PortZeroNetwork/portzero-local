@@ -1,7 +1,7 @@
 ---
 id: c480133e-58b7-483d-8950-e1a9dcc0d40b
 slug: task-56
-status: todo
+status: done
 title: Change default tunnel domain to the *.tunnel.portzero.cloud namespace
 created_at: 2026-07-03T19:11:53.693356Z
 updated_at: 2026-07-03T19:11:53.693356Z
