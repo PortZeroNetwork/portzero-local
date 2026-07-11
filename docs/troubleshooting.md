@@ -115,24 +115,37 @@ a sandbox can report itself as `docker` (or omit `/.dockerenv`) without
 actually bind-mounting `/etc/hosts` the way a real container does. The
 precise check is whether `/proc/mounts` shows a mount at that exact path.
 
-## `portzero login` hangs or times out in a remote Claude Code session
+## `portzero login` used to hang in a remote Claude Code session
 
-`portzero login`'s default flow binds a local TCP listener, opens a browser to
-a dashboard auth page, and waits for that page's JavaScript to `POST` the
-resulting credentials back to `http://127.0.0.1:<port>/callback` — see
-`login_browser` in `client/crates/cli/src/auth.rs`. In a remote/headless
-session there is no local browser to open in the first place. Opening the
-printed URL from your *own* laptop's browser doesn't help either: the
-dashboard page runs in your laptop's browser, so its `127.0.0.1` is your
-laptop's loopback, not the sandbox's — it can never reach the listener the CLI
-bound inside the remote container. The command just waits out its 2-minute
-timeout and fails.
+Older versions of `portzero login`'s default flow bound a local TCP listener,
+opened a browser to a dashboard auth page, and waited for that page's
+JavaScript to `POST` the resulting credentials back to
+`http://127.0.0.1:<port>/callback`. In a remote/headless session there was no
+local browser to open in the first place, and opening the printed URL from
+your *own* laptop's browser didn't help either: the dashboard page ran in
+your laptop's browser, so its `127.0.0.1` was your laptop's loopback, not the
+sandbox's — it could never reach the listener the CLI bound inside the remote
+container. The command just waited out its timeout and failed.
 
-**Fix**: use `portzero login --interactive` instead. It emails a one-time
-verification code and reads it back from stdin — plain HTTPS API calls only
-(`app.portzero.cloud`), no browser and no local port. See
+**Fixed**: `login_browser` (`client/crates/cli/src/auth.rs`, cloud-side in
+`cloud/api/src/routes/auth.rs`'s `cli_complete`/`cli_poll`) no longer binds a
+local port at all. The printed URL carries a high-entropy session code
+instead of a port; the dashboard's CLI-auth page records completion against
+that code via an authenticated API call, and the CLI polls
+`GET /auth/cli/poll/:code` every 2 seconds until it sees `completed`. The URL
+can now be opened on any device — the CLI never needs a callback to reach it
+directly. `portzero login --interactive` (email one-time code, no browser or
+network callback of any kind) still works too, if you'd rather not open a
+browser at all. See
 [FAQ.md](FAQ.md#how-do-i-expose-a-public-tunnelportzerocloud-url-from-a-remote-claude-code-session)
 for the full cloud-tunnel setup.
+
+Note for anyone poking at the API directly: `/auth/cli/poll/:code` is
+deliberately routed under the *general* rate limiter (`lib.rs`), not the
+strict per-IP `auth_limiter` that `/auth/login`/`/auth/verify` use — a single
+legitimate login polls every 2 seconds for up to several minutes, which blows
+through the ~10-requests-per-minute auth budget almost immediately (caught by
+running the flow end-to-end against a local Postgres before shipping it).
 
 ## Brave shows `ERR_CERT_AUTHORITY_INVALID` for `https://portzero.local`
 

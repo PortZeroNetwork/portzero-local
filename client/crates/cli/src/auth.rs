@@ -7,8 +7,6 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 
 use crate::api_client::ApiClient;
 use crate::browser::open_browser;
@@ -135,17 +133,6 @@ struct VerifyResponse {
     username: String,
 }
 
-/// Callback payload sent by the dashboard to the CLI's local HTTP server.
-#[derive(Deserialize)]
-struct CallbackPayload {
-    code: String,
-    email: String,
-    token: String,
-    account_id: String,
-    #[serde(default)]
-    username: String,
-}
-
 /// Derive the dashboard URL from the API URL.
 ///
 /// - If `PZ_TUNNEL_DASHBOARD_URL` is set, use it directly.
@@ -183,24 +170,24 @@ fn generate_session_code() -> String {
 
 /// Run the browser-based login flow (default).
 ///
-/// 1. Bind a temporary local HTTP server on a random port
-/// 2. Open the browser to the dashboard's CLI auth page
-/// 3. Wait for the dashboard to POST credentials back
+/// 1. Print a URL containing a fresh, high-entropy session code
+/// 2. Try to open it in a local browser (works when there is one)
+/// 3. Poll the API for that code to be completed, regardless of whether the
+///    browser opened here or the URL was opened on a different device
 /// 4. Save credentials and exit
+///
+/// Deliberately does NOT bind a local callback port: earlier versions did,
+/// and had the dashboard page's JS POST directly to
+/// `http://localhost:<port>`. That only works when the browser completing
+/// login and the CLI waiting for it share a loopback interface — never true
+/// when the CLI runs somewhere remote (e.g. a Claude Code cloud session),
+/// even if the URL is opened in a browser on a different machine. Polling
+/// the API instead means the URL can be opened anywhere.
 async fn login_browser() -> Result<()> {
-    // Bind to a random available port
-    let listener = TcpListener::bind("127.0.0.1:0").await.with_context(|| {
-        "Failed to bind a local TCP listener for the login callback.\n\n\
-         Ensure that localhost networking is available."
-    })?;
-    let local_addr = listener.local_addr()?;
-    let port = local_addr.port();
-
     let code = generate_session_code();
     let dash_url = dashboard_url();
-    let auth_url = format!("{dash_url}/#/auth/cli?port={port}&code={code}");
+    let auth_url = format!("{dash_url}/#/auth/cli?code={code}");
 
-    // Try to open the browser
     let browser_opened = open_browser(&auth_url);
 
     if browser_opened {
@@ -209,17 +196,13 @@ async fn login_browser() -> Result<()> {
         println!("Could not open a browser automatically.");
     }
     println!();
-    println!("If the browser did not open, visit this URL to log in:");
+    println!("Visit this URL on any device to log in:");
     println!();
     println!("  {auth_url}");
     println!();
-    println!("Waiting for browser login... (timeout: 2 minutes)");
+    println!("Waiting for login... (timeout: 10 minutes)");
 
-    // Wait for a single POST /callback request with a 2-minute timeout
-    let result = tokio::time::timeout(Duration::from_secs(120), async {
-        accept_callback(&listener, &code).await
-    })
-    .await;
+    let result = tokio::time::timeout(Duration::from_secs(600), poll_for_cli_login(&code)).await;
 
     match result {
         Ok(Ok(config)) => {
@@ -232,12 +215,12 @@ async fn login_browser() -> Result<()> {
         Ok(Err(e)) => Err(e),
         Err(_) => {
             anyhow::bail!(
-                "Login timed out after 2 minutes.\n\n\
-                 The browser login was not completed in time. Try again with:\n\
+                "Login timed out after 10 minutes.\n\n\
+                 The login link was not completed in time. Try again with:\n\
                  \n\
                    portzero login\n\
                  \n\
-                 If you are on a headless server without a browser, use:\n\
+                 If you don't have access to a browser at all, use:\n\
                  \n\
                    portzero login --interactive"
             );
@@ -245,111 +228,54 @@ async fn login_browser() -> Result<()> {
     }
 }
 
-/// Accept a single HTTP request on the listener, parse the callback, and
-/// return the AuthConfig if the session code matches.
-async fn accept_callback(listener: &TcpListener, expected_code: &str) -> Result<AuthConfig> {
+/// Response from GET /auth/cli/poll/:code.
+#[derive(Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum CliPollResponse {
+    Pending,
+    Completed {
+        token: String,
+        account_id: String,
+        email: String,
+        #[serde(default)]
+        username: String,
+    },
+}
+
+/// Poll `GET /auth/cli/poll/:code` every 2 seconds until the dashboard has
+/// linked this code to an account.
+async fn poll_for_cli_login(code: &str) -> Result<AuthConfig> {
+    let client = ApiClient::new();
+
     loop {
-        let (mut stream, _addr) = listener.accept().await?;
+        let resp = client.get(&format!("/auth/cli/poll/{code}")).await?;
 
-        let mut buf = vec![0u8; 8192];
-        let n = stream.read(&mut buf).await?;
-        let request = String::from_utf8_lossy(&buf[..n]);
-
-        // Parse the HTTP request minimally
-        let first_line = request.lines().next().unwrap_or("");
-
-        // Handle CORS preflight
-        if first_line.starts_with("OPTIONS ") {
-            let response = "HTTP/1.1 204 No Content\r\n\
-Access-Control-Allow-Origin: *\r\n\
-Access-Control-Allow-Methods: POST, OPTIONS\r\n\
-Access-Control-Allow-Headers: Content-Type\r\n\
-Access-Control-Max-Age: 86400\r\n\
-Content-Length: 0\r\n\
-\r\n";
-            stream.write_all(response.as_bytes()).await.ok();
-            stream.flush().await.ok();
-            continue;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Failed to check login status (HTTP {status}).\n\n{body}");
         }
 
-        if !first_line.starts_with("POST /callback") {
-            let response = "HTTP/1.1 404 Not Found\r\n\
-Access-Control-Allow-Origin: *\r\n\
-Content-Type: text/plain\r\n\
-Content-Length: 9\r\n\
-\r\n\
-Not Found";
-            stream.write_all(response.as_bytes()).await.ok();
-            stream.flush().await.ok();
-            continue;
+        let poll: CliPollResponse = resp.json().await.with_context(|| {
+            "Received an unexpected response from the server while polling for login."
+        })?;
+
+        if let CliPollResponse::Completed {
+            token,
+            account_id,
+            email,
+            username,
+        } = poll
+        {
+            return Ok(AuthConfig {
+                email,
+                token,
+                account_id,
+                username,
+            });
         }
 
-        // Extract JSON body (everything after the blank line)
-        let body = request
-            .split("\r\n\r\n")
-            .nth(1)
-            .or_else(|| request.split("\n\n").nth(1))
-            .unwrap_or("");
-
-        let payload: CallbackPayload = match serde_json::from_str(body) {
-            Ok(p) => p,
-            Err(e) => {
-                let msg = format!("Invalid request body: {e}");
-                let response = format!(
-                    "HTTP/1.1 400 Bad Request\r\n\
-Access-Control-Allow-Origin: *\r\n\
-Content-Type: text/plain\r\n\
-Content-Length: {}\r\n\
-\r\n\
-{}",
-                    msg.len(),
-                    msg
-                );
-                stream.write_all(response.as_bytes()).await.ok();
-                stream.flush().await.ok();
-                continue;
-            }
-        };
-
-        // Verify session code
-        if payload.code != expected_code {
-            let msg = "Session code mismatch. This request may be from a stale login attempt.";
-            let response = format!(
-                "HTTP/1.1 403 Forbidden\r\n\
-Access-Control-Allow-Origin: *\r\n\
-Content-Type: text/plain\r\n\
-Content-Length: {}\r\n\
-\r\n\
-{}",
-                msg.len(),
-                msg
-            );
-            stream.write_all(response.as_bytes()).await.ok();
-            stream.flush().await.ok();
-            continue;
-        }
-
-        // Success - send back a success response
-        let success_body = r#"{"ok":true}"#;
-        let response = format!(
-            "HTTP/1.1 200 OK\r\n\
-Access-Control-Allow-Origin: *\r\n\
-Content-Type: application/json\r\n\
-Content-Length: {}\r\n\
-\r\n\
-{}",
-            success_body.len(),
-            success_body
-        );
-        stream.write_all(response.as_bytes()).await.ok();
-        stream.flush().await.ok();
-
-        return Ok(AuthConfig {
-            email: payload.email,
-            token: payload.token,
-            account_id: payload.account_id,
-            username: payload.username,
-        });
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
 

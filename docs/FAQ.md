@@ -115,15 +115,14 @@ HTTPS; it's the local overlay that needs `CAP_NET_ADMIN`.
    either is blocked, cloud tunnels can't work from that environment —
    `portzero doctor` will show the cloud connection as failed rather than
    hanging.
-2. **Log in with `portzero login --interactive`, not plain `portzero
-   login`.** The default flow opens a local browser and waits for it to post
-   back to a `127.0.0.1` port on the same machine — in a remote session
-   there's no local browser to open, and even a browser on your own laptop
-   can't reach that loopback port on the sandbox. `--interactive` instead
-   emails you a one-time code you type back at the prompt; no browser or
-   local port involved. (See
-   [troubleshooting.md](troubleshooting.md#portzero-login-hangs-or-times-out-in-a-remote-claude-code-session)
-   if you're curious why the default flow can't work here.)
+2. **Run `portzero login`.** It prints a URL — open it on *any* device
+   (your phone, your own laptop, doesn't matter that it's not the sandbox)
+   and sign in there; the CLI polls the API in the background and picks up
+   the completed login automatically, so nothing needs to be typed back into
+   the sandbox at all. (`portzero login --interactive`, which trades that
+   URL for an emailed one-time code typed at the prompt, still works too and
+   needs no network callback of any kind — useful if you'd rather not open a
+   browser.)
 3. **Persist the login across sessions**, since each session is a fresh
    container: after logging in, save `~/.portzero/auth.json` (an
    email/token/account id, `chmod 600`) as a secret on the Claude Code
