@@ -800,3 +800,78 @@ jobs:
           git add Formula/portzero.rb
           git diff --staged --quiet || git commit -m "portzero v${VERSION}"
           git push
+
+  verify-homebrew-artifacts:
+    name: Verify published Homebrew formula (url + sha256)
+    # Post-publish smoke: the one thing a VM test genuinely can't cover — that
+    # the formula's REAL published GitHub URL actually resolves AND its declared
+    # sha256 matches the published tarball. Catches the `0000…` placeholder
+    # sha256 never getting filled in, a formula whose version didn't get bumped,
+    # or a broken/renamed release asset URL — none of which are reproducible
+    # offline in a guest. Runs after update-homebrew so it reads the just-pushed
+    # tap formula, i.e. exactly what `brew install` will fetch.
+    needs: [version, check-homebrew-token, update-homebrew]
+    runs-on: ubuntu-latest
+    if: ${{ needs.check-homebrew-token.outputs.has-token == 'true' }}
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v5
+        with:
+          repository: PortZeroNetwork/homebrew-portzero
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Verify formula url resolves and sha256 matches
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -uo pipefail
+          FORMULA=tap/Formula/portzero.rb
+          test -f "$FORMULA" || { echo "RESULT=FAIL formula not found at $FORMULA"; exit 1; }
+          fail=0
+
+          # The formula must have been bumped to the release version.
+          fver="$(grep -oE 'version "[^"]+"' "$FORMULA" | head -1 | sed -E 's/version "([^"]+)"/\1/')"
+          if [ "$fver" = "$VERSION" ]; then
+            echo "PHASE=formula-version ok=true value=$fver"
+          else
+            echo "PHASE=formula-version ok=false declared=$fver expected=$VERSION"
+            fail=1
+          fi
+
+          verify() { # <name> <url> <declared-sha256>
+            local name="$1" url="$2" sha="$3"
+            if [ -z "$url" ]; then echo "PHASE=$name-url ok=false reason=missing-in-formula"; fail=1; return; fi
+            if [ -z "$sha" ]; then echo "PHASE=$name-sha ok=false reason=missing-in-formula"; fail=1; return; fi
+            # Reject the all-zero placeholder that ships in the source formula.
+            case "$sha" in
+              *[!0]*) : ;;
+              *) echo "PHASE=$name-sha ok=false reason=all-zero-placeholder (release.yml never filled it in) url=$url"; fail=1; return ;;
+            esac
+            local tmp; tmp="$(mktemp)"
+            if ! curl -fsSL --retry 3 --retry-delay 5 -o "$tmp" "$url"; then
+              echo "PHASE=$name-url ok=false reason=unresolvable url=$url"; fail=1; rm -f "$tmp"; return
+            fi
+            local actual; actual="$(sha256sum "$tmp" | awk '{print $1}')"
+            rm -f "$tmp"
+            if [ "$actual" = "$sha" ]; then
+              echo "PHASE=$name ok=true url=$url"
+            else
+              echo "PHASE=$name ok=false reason=sha256-mismatch declared=$sha actual=$actual url=$url"; fail=1
+            fi
+          }
+
+          for arch in arm64 amd64; do
+            url="$(grep -oE "https://[^\"]*portzero-darwin-${arch}[^\"]*" "$FORMULA" | head -1)"
+            # sha256 lines are tagged with a trailing arch comment: `# arm64` / `# x86_64`.
+            tag="$arch"; [ "$arch" = amd64 ] && tag="x86_64"
+            sha="$(grep -E "sha256 \"[0-9a-fA-F]+\" # ${tag}" "$FORMULA" | grep -oiE '[0-9a-f]{64}' | head -1)"
+            verify "darwin-${arch}" "$url" "$sha"
+          done
+
+          if [ "$fail" -eq 0 ]; then
+            echo "RESULT=PASS published homebrew formula url+sha256 verified"
+          else
+            echo "RESULT=FAIL published homebrew formula verification failed"
+            exit 1
+          fi
