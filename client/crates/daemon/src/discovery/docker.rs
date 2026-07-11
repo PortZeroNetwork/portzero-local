@@ -31,15 +31,67 @@ pub(super) async fn scan_docker_containers(
     }
 }
 
+/// Hard ceiling on any docker CLI invocation made from the discovery loop.
+///
+/// `Command::output()` on a docker child can block FOREVER: the child's stdout
+/// pipe write-end can leak into the long-lived `docker events` stream child
+/// (macOS lacks an atomic-CLOEXEC pipe, so concurrent spawns race), and then
+/// the pipe never EOFs even after the child exits — wedging the whole
+/// discovery loop. Every docker call below therefore runs under this watchdog
+/// and is killed on overrun.
+const DOCKER_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Run `docker <args>` with output capture, bounded by
+/// [`DOCKER_COMMAND_TIMEOUT`]. On timeout the child is killed and an error
+/// naming `label` is returned.
+fn run_docker_capture(args: &[&str], label: &str) -> Result<std::process::Output> {
+    let mut command = std::process::Command::new("docker");
+    command.args(args);
+    crate::tls::trust::run_command_capture_with_timeout(command, DOCKER_COMMAND_TIMEOUT, label)
+}
+
+/// Batched-inspect format: `{{.Id}}` first (so each output line self-identifies
+/// its container), then exactly the fields [`parse_container_inspect_fields`]
+/// expects.
+const INSPECT_BATCH_FORMAT: &str = "{{.Id}}||{{json .Config.Env}}||{{.Name}}||{{json .NetworkSettings.Ports}}||{{.State.Pid}}||{{json .Mounts}}||{{json .Config.Labels}}";
+
+/// ONE bounded `docker inspect` for all `ids` at once, returning
+/// `(container_id, inspect_fields_line)` pairs.
+///
+/// Batching matters: per-container inspects meant one subprocess per container
+/// per scan pass (every 2s) — dozens of spawns that crawled on
+/// container-heavy machines and multiplied exposure to the leaked-pipe wedge
+/// (see [`DOCKER_COMMAND_TIMEOUT`]). Containers that vanish between `ps` and
+/// `inspect` are simply absent from the result: docker reports them on stderr
+/// with a non-zero exit but still prints every found container on stdout, so
+/// stdout is parsed regardless of exit status.
+fn batch_inspect_lines(ids: &[&str]) -> Vec<(String, String)> {
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let mut args = vec!["inspect", "--format", INSPECT_BATCH_FORMAT];
+    args.extend_from_slice(ids);
+    let output = match run_docker_capture(&args, "docker inspect (batched)") {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!("batched docker inspect failed/timed out, skipping scan: {e:#}");
+            return Vec::new();
+        }
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            line.split_once("||")
+                .map(|(id, rest)| (id.to_string(), rest.to_string()))
+        })
+        .collect()
+}
+
 fn scan_docker_containers_impl(
     account_id: Option<&str>,
     username: Option<&str>,
 ) -> Result<(Vec<DiscoveredService>, Vec<crate::notify::Issue>)> {
-    use std::process::Command;
-
-    let output = Command::new("docker")
-        .args(["ps", "--format", "{{.ID}}"])
-        .output()?;
+    let output = run_docker_capture(&["ps", "--format", "{{.ID}}"], "docker ps")?;
 
     if !output.status.success() {
         anyhow::bail!("docker ps failed");
@@ -54,8 +106,14 @@ fn scan_docker_containers_impl(
 
     let mut services = Vec::new();
     let mut issues = Vec::new();
-    for container_id in container_ids {
-        if let Some(svc) = inspect_container(container_id, account_id, username, &mut issues)? {
+    for (container_id, inspect_line) in batch_inspect_lines(&container_ids) {
+        if let Some(svc) = container_service_from_inspect_line(
+            &container_id,
+            &inspect_line,
+            account_id,
+            username,
+            &mut issues,
+        )? {
             services.push(svc);
         }
     }
@@ -63,29 +121,16 @@ fn scan_docker_containers_impl(
     Ok((services, issues))
 }
 
-fn inspect_container(
+/// Build a [`DiscoveredService`] from one container's pre-fetched
+/// batched-inspect fields line (everything after the leading `{{.Id}}||`).
+fn container_service_from_inspect_line(
     container_id: &str,
+    inspect_line: &str,
     account_id: Option<&str>,
     username: Option<&str>,
     issues: &mut Vec<crate::notify::Issue>,
 ) -> Result<Option<DiscoveredService>> {
-    use std::process::Command;
-
-    let output = Command::new("docker")
-        .args([
-            "inspect",
-            container_id,
-            "--format",
-            "{{json .Config.Env}}||{{.Name}}||{{json .NetworkSettings.Ports}}||{{.State.Pid}}||{{json .Mounts}}||{{json .Config.Labels}}",
-        ])
-        .output()?;
-
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let fields = match parse_container_inspect_fields(&stdout) {
+    let fields = match parse_container_inspect_fields(inspect_line) {
         Some(f) => f,
         None => return Ok(None),
     };
@@ -383,15 +428,12 @@ pub(super) async fn scan_network_containers() -> Vec<DiscoveredNetworkService> {
 
 fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService>> {
     use std::net::{IpAddr, SocketAddr};
-    use std::process::Command;
 
     if !command_on_path("docker") {
         return Ok(Vec::new());
     }
 
-    let output = Command::new("docker")
-        .args(["ps", "--format", "{{.ID}}"])
-        .output()?;
+    let output = run_docker_capture(&["ps", "--format", "{{.ID}}"], "docker ps")?;
 
     if !output.status.success() {
         anyhow::bail!("docker ps failed");
@@ -402,23 +444,8 @@ fn scan_network_containers_impl() -> anyhow::Result<Vec<DiscoveredNetworkService
 
     let mut out = Vec::new();
 
-    for id in ids {
-        let inspect = Command::new("docker")
-            .args([
-                "inspect",
-                id,
-                "--format",
-                "{{json .Config.Env}}||{{.Name}}||{{json .NetworkSettings.Ports}}||{{.State.Pid}}||{{json .Mounts}}||{{json .Config.Labels}}",
-            ])
-            .output();
-
-        let output = match inspect {
-            Ok(o) if o.status.success() => o,
-            _ => continue,
-        };
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let fields = match parse_container_inspect_fields(&stdout) {
+    for (id, inspect_line) in batch_inspect_lines(&ids) {
+        let fields = match parse_container_inspect_fields(&inspect_line) {
             Some(f) => f,
             None => continue,
         };

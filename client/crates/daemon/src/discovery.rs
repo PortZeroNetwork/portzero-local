@@ -34,6 +34,7 @@ use sysinfo::System;
 use crate::protocol_detect;
 mod docker;
 mod process;
+mod system_listeners;
 
 #[allow(unused_imports)]
 use docker::{parse_docker_ports, scan_docker_containers, scan_network_containers};
@@ -56,7 +57,6 @@ use process::{parse_macos_ps_env_candidate, parse_macos_ps_env_candidates, parse
 #[allow(unused_imports)]
 use process::parse_proc_net_tcp_line;
 
-pub use process::{enumerate_system_listeners, SystemListener};
 #[cfg(target_os = "windows")]
 #[allow(unused_imports)]
 use process::{
@@ -64,6 +64,7 @@ use process::{
     parse_windows_netstat_stdout_by_pid, parse_windows_tcp_connection_line,
     parse_windows_tcp_connection_stdout,
 };
+pub use system_listeners::{enumerate_system_listeners, SystemListener};
 
 /// The single environment variable used to tag services.
 ///

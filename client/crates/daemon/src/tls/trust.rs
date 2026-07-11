@@ -738,8 +738,15 @@ fn run_command_capture(
 ///
 /// stdin is redirected to null so a tool that blocks waiting on console input
 /// fails immediately rather than hanging until the watchdog fires.
+///
+/// Shared beyond trust installation: any subprocess in a daemon-loop path must
+/// be bounded, because a single child that never closes its pipes wedges
+/// `Command::output()` forever — seen with `docker inspect` whose stdout pipe
+/// write-end leaked into the long-lived `docker events` stream child on macOS,
+/// deadlocking the discovery loop (the pipe never EOFs even after the child
+/// exits).
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn run_command_capture_with_timeout(
+pub(crate) fn run_command_capture_with_timeout(
     mut command: std::process::Command,
     timeout: std::time::Duration,
     label: &str,
