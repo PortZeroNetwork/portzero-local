@@ -13,6 +13,7 @@ mod doctor;
 mod export;
 mod inspect;
 mod mcp;
+mod review;
 mod setup;
 mod skill;
 mod trust;
@@ -114,6 +115,29 @@ enum Command {
     Logout,
     /// Show the currently authenticated user.
     Whoami,
+
+    /// Upload a review record (branch commits + diff) to portzero.cloud so
+    /// feedback threads pinned on your tunneled app link back to the code.
+    /// Commit messages containing "Fixes PZ-<n>" advance the matching
+    /// feedback thread to fix-proposed automatically.
+    Review {
+        /// Base ref to diff against (default: origin's default branch, else "main").
+        #[arg(long)]
+        base: Option<String>,
+
+        /// Tunnel domain hosting the live app for this review
+        /// (default: auto-detected from discovered cloud tunnels).
+        #[arg(long)]
+        domain: Option<String>,
+
+        /// Project name (default: auto-detected from the git repository).
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Open the review record in the dashboard after upload.
+        #[arg(long)]
+        open: bool,
+    },
 
     /// Team management has moved to the dashboard.
     Team,
@@ -222,6 +246,13 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Logout => auth::logout()?,
         Command::Whoami => auth::whoami().await?,
+
+        Command::Review {
+            base,
+            domain,
+            project,
+            open,
+        } => review::run(base, domain, project, open).await?,
 
         Command::Team => {
             println!("Team management has moved to https://app.portzero.cloud/teams");

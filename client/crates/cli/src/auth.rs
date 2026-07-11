@@ -138,7 +138,7 @@ struct VerifyResponse {
 /// - If `PZ_TUNNEL_DASHBOARD_URL` is set, use it directly.
 /// - If `PZ_TUNNEL_API_URL` looks like `localhost:3001`, use `localhost:3003`.
 /// - Otherwise default to `https://app.portzero.cloud`.
-fn dashboard_url() -> String {
+pub(crate) fn dashboard_url() -> String {
     if let Ok(url) = std::env::var("PZ_TUNNEL_DASHBOARD_URL") {
         return url;
     }
