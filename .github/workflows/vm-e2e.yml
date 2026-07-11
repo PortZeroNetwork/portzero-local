@@ -17,6 +17,11 @@ name: VM E2E (Parallels)
 #     also used interactively.
 on:
   workflow_dispatch:
+    inputs:
+      staging:
+        description: "Also run the real cloud-tunnel E2E against staging (creates a throwaway staging test account per platform each run)"
+        type: boolean
+        default: true
 
 concurrency:
   # Only one vm-test can meaningfully run at a time (single physical Mac,
@@ -27,9 +32,9 @@ concurrency:
 
 jobs:
   vm-test:
-    name: vm-test (windows, linux, macos)
+    name: vm-test + vm-test-staging (windows, linux, macos)
     runs-on: [self-hosted, macOS]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -44,5 +49,13 @@ jobs:
         # need this.
         run: cargo build --release -p portzero-cli --bin portzero
 
-      - name: vm-test (windows, linux, macos in series)
+      - name: vm-test (local overlay, no cloud/secrets — windows, linux, macos in series)
         run: just vm-test
+
+      - name: vm-test-staging (real cloud tunnel against staging — windows, linux, macos in series)
+        if: ${{ inputs.staging }}
+        # Rotated seed token: read from the same host-side file the
+        # interactive scripts already default to (this runner IS the host
+        # that owns that file — no GitHub secret needed). See
+        # STAGING_SECRETS_HOST_DEFAULT in vmtest/scripts/vm.sh.
+        run: just vm-test-staging

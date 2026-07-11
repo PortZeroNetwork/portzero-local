@@ -45,31 +45,23 @@ vm-checkpoint vm name:
 vm-reset vm="Windows 11 Pro" name="ready":
     bash vmtest/scripts/vm.sh reset "{{vm}}" "{{name}}"
 
-# Run the default e2e smoke test (local overlay tunnel) for one platform, or
-# with no argument run windows, then linux, then macos in series. Resets each
-# VM to its "built" checkpoint first; vm.sh enforces one VM running at a time,
-# so a bare `just vm-test` never has two guests up simultaneously.
-#   just vm-test            # all three, in series
-#   just vm-test windows
-#   just vm-test linux
-#   just vm-test macos
+# Shared by vm-test / vm-test-staging: run one platform, or all three in
+# series with a failure on one not skipping the rest, then a summary.
 [macos]
-vm-test platform="":
+_vm-test-series flavor platform="":
     #!/usr/bin/env bash
     set -uo pipefail
     if [ -n "{{platform}}" ]; then
-        bash vmtest/scripts/vm.sh test "{{platform}}"
+        bash vmtest/scripts/vm.sh test "{{platform}}" "{{flavor}}"
         exit $?
     fi
-    # Series mode: run all three, but a failure on one shouldn't skip the
-    # others — collect results and report a summary at the end.
     declare -A rc
     for p in windows linux macos; do
-        bash vmtest/scripts/vm.sh test "$p"
+        bash vmtest/scripts/vm.sh test "$p" "{{flavor}}"
         rc[$p]=$?
     done
     echo ""
-    echo "=== vm-test summary ==="
+    echo "=== vm-test ({{flavor}}) summary ==="
     overall=0
     for p in windows linux macos; do
         if [ "${rc[$p]}" -eq 0 ]; then
@@ -80,6 +72,31 @@ vm-test platform="":
         fi
     done
     exit "$overall"
+
+# Run the default e2e smoke test (local overlay tunnel — no cloud, no
+# secrets) for one platform, or with no argument run windows, then linux,
+# then macos in series. Resets each VM to its "built" checkpoint first;
+# vm.sh enforces one VM running at a time, so a bare `just vm-test` never
+# has two guests up simultaneously.
+#   just vm-test            # all three, in series
+#   just vm-test windows
+#   just vm-test linux
+#   just vm-test macos
+[macos]
+vm-test platform="":
+    just _vm-test-series local "{{platform}}"
+
+# Same as vm-test, but the real cloud-tunnel E2E against staging (registers a
+# public tunnel, creates a throwaway staging test account each run). Needs
+# the rotated seed token: Windows/Linux read it via the existing MBP-Sidecar
+# share, macOS gets it pushed in automatically from the same host file vm.sh
+# uses by default (see STAGING_SECRETS_HOST_DEFAULT), or set STAGING_SECRETS
+# yourself to override the source file.
+#   just vm-test-staging            # all three, in series
+#   just vm-test-staging windows
+[macos]
+vm-test-staging platform="":
+    just _vm-test-series staging "{{platform}}"
 
 # Reset to a checkpoint, then run an arbitrary repo script in the guest.
 # Advanced/ad-hoc form — `vm-test <platform>` covers the common case.

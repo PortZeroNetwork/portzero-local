@@ -10,7 +10,9 @@
 #   vm.sh exec <vm> <cmd...>      raw command in the guest
 #   vm.sh stop <vm>               power off
 #   vm.sh ensure-only <vm>        stop every OTHER running VM (one-at-a-time rule)
-#   vm.sh test <platform>         windows|linux|macos: recover-if-missing, reset to "built", run the default e2e script
+#   vm.sh test <platform> [flavor] windows|linux|macos, flavor local (default, no
+#                                  cloud/secrets) or staging (real cloud tunnel):
+#                                  recover-if-missing, reset to "built", run the e2e script
 #   vm.sh list                    VMs + snapshots
 set -euo pipefail
 
@@ -22,6 +24,12 @@ REPO_HOST="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # The 4TB drive holding the archival copy of every VM. Never booted directly
 # except when a user explicitly opts into it (see resolve_effective_vm).
 EXTERNAL_DRIVE="/Volumes/MBP-Sidecar"
+
+# Host-side location of the staging-tunnel test's rotated seed token, mirroring
+# the guest-side defaults baked into e2e-staging-tunnel.sh/.ps1 (which reach
+# the same file via their own \\Mac\MBP-Sidecar / /media/psf/MBP-Sidecar
+# shares). Only used to auto-push it into macOS guests — see cmd_test.
+STAGING_SECRETS_HOST_DEFAULT="$EXTERNAL_DRIVE/loumtech/vm-toolchain-cache/common/staging-e2e.env"
 
 # --- per-VM facts -----------------------------------------------------------
 # Orthogonal per platform: "<name>" is the internal working copy (~/Parallels)
@@ -53,14 +61,18 @@ platform_vm() { case "$1" in
     *) echo "unknown platform: '$1' (expected windows|linux|macos)" >&2; return 1 ;;
 esac; }
 
-# The default smoke-test script for `vm.sh test`, per guest OS: the full local
-# overlay E2E (no cloud, no secrets). e2e-local-overlay.sh is shared by
+# The smoke-test script for `vm.sh test`, per guest OS and flavor. "local"
+# (default): local overlay E2E, no cloud, no secrets. "staging": real cloud
+# tunnel against staging, needs the rotated seed token (see STAGING_SECRETS
+# handling in cmd_test/push_secrets_macos). Both scripts are shared by
 # Linux/macOS; Windows needs the .ps1 twin.
-default_test_script() { # <vm>
+default_test_script() { # <vm> [flavor=local]
+    local base="e2e-local-overlay"
+    [ "${2:-local}" = staging ] && base="e2e-staging-tunnel"
     if [ "$(vm_os "$1")" = windows ]; then
-        echo "vmtest/scripts/e2e-local-overlay.ps1"
+        echo "vmtest/scripts/${base}.ps1"
     else
-        echo "vmtest/scripts/e2e-local-overlay.sh"
+        echo "vmtest/scripts/${base}.sh"
     fi
 }
 
@@ -327,6 +339,21 @@ push_binary_macos() { # <vm> <host-path-to-binary>
     printf '%s' "$guest_bin"
 }
 
+# Same problem as push_binary_macos, for the staging-tunnel test's secrets
+# file: the shared folder Windows/Linux read it through doesn't work on
+# macOS. Prints the guest-side absolute path to the pushed file on stdout.
+push_secrets_macos() { # <vm> <host-path-to-secrets-file>
+    local vm="$1" host_file="$2"
+    local guest_file="/tmp/portzero-vmtest/staging-e2e.env"
+    {
+        printf 'mkdir -p %q\n' "$(dirname "$guest_file")"
+        printf 'base64 -d > %q <<'"'"'PZEOF'"'"'\n' "$guest_file"
+        base64 -i "$host_file"
+        printf 'PZEOF\n'
+    } | prlctl exec "$vm" bash -s >&2
+    printf '%s' "$guest_file"
+}
+
 cmd_run() { # <vm> <repo-relative-script> [args...]
     local vm="$1" script="$2"; shift 2
     if [ "$(vm_os "$vm")" = windows ]; then
@@ -347,6 +374,11 @@ cmd_run() { # <vm> <repo-relative-script> [args...]
                 echo ">> pushing host-built macOS binary into the guest (no toolchain there, shared folder unavailable)..." >&2
                 envargs+=("PORTZERO_EXE=$(push_binary_macos "$vm" "$REPO_HOST/target/release/portzero")")
             fi
+            # Harmless for scripts that don't read STAGING_SECRETS (e.g. the
+            # local-overlay flavor); only the staging-tunnel flavor uses it.
+            if [ -z "${STAGING_SECRETS:-}" ] && [ -f "$STAGING_SECRETS_HOST_DEFAULT" ]; then
+                envargs+=("STAGING_SECRETS=$(push_secrets_macos "$vm" "$STAGING_SECRETS_HOST_DEFAULT")")
+            fi
         else
             target="$(guest_repo "$vm")/${script}"
         fi
@@ -354,16 +386,16 @@ cmd_run() { # <vm> <repo-relative-script> [args...]
     fi
 }
 
-cmd_test() { # <platform: windows|linux|macos>
-    local platform="$1"
+cmd_test() { # <platform: windows|linux|macos> [flavor=local|staging]
+    local platform="$1" flavor="${2:-local}"
     local vm; vm="$(platform_vm "$platform")" || return 1
     local start; start="$(date +%s)"
     local rc=0
-    echo "=== $platform: starting ==="
+    echo "=== $platform ($flavor): starting ==="
     local effective_vm
     effective_vm="$(resolve_effective_vm "$vm")" || return 1
     echo ">> using '$effective_vm'"
-    local script; script="$(default_test_script "$effective_vm")"
+    local script; script="$(default_test_script "$effective_vm" "$flavor")"
     cmd_reset "$effective_vm" built || rc=$?
     if [ "$rc" -eq 0 ]; then
         echo ">> running $script on '$effective_vm'..."
@@ -371,9 +403,9 @@ cmd_test() { # <platform: windows|linux|macos>
     fi
     local elapsed=$(( $(date +%s) - start ))
     if [ "$rc" -eq 0 ]; then
-        echo "=== $platform: PASS (${elapsed}s) ==="
+        echo "=== $platform ($flavor): PASS (${elapsed}s) ==="
     else
-        echo "=== $platform: FAIL (exit $rc, ${elapsed}s) — see output above ===" >&2
+        echo "=== $platform ($flavor): FAIL (exit $rc, ${elapsed}s) — see output above ===" >&2
     fi
     return "$rc"
 }
@@ -390,7 +422,7 @@ case "${1:-}" in
     exec)       shift; cmd_exec "$@" ;;
     stop)       cmd_stop "$2" ;;
     ensure-only) ensure_only "$2" ;;
-    test)       cmd_test "$2" ;;
+    test)       cmd_test "$2" "${3:-}" ;;
     list)       cmd_list ;;
     *) echo "usage: vm.sh {up|checkpoint|reset|run|exec|stop|ensure-only|test|list} ..." >&2; exit 2 ;;
 esac
