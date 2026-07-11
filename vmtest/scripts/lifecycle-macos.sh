@@ -1,26 +1,36 @@
 #!/usr/bin/env bash
-# LIFECYCLE E2E (macOS): full privileged setup -> verify artifacts landed ->
-# uninstall -> ASSERT every artifact is GONE. Closes the audit gap where
-# uninstall was completely untested on macOS: nothing proved that removing
-# portzero pulls its trusted CA out of the System keychain, removes the
-# /etc/resolver/portzero.local resolver, unloads the root LaunchDaemon, tears
-# down the utun interface, and removes the /etc/hosts pin.
+# LIFECYCLE E2E (macOS): real offline `brew install` of a locally-generated
+# formula -> full privileged setup -> verify artifacts landed -> uninstall ->
+# ASSERT every artifact is GONE. Closes the audit gap where uninstall was
+# completely untested on macOS: nothing proved that removing portzero pulls its
+# trusted CA out of the System keychain, removes the /etc/resolver/portzero.local
+# resolver, unloads the root LaunchDaemon, tears down the utun interface, and
+# removes the /etc/hosts pin.
 #
-# Delivery caveat (documented, not hidden): macOS ships via Homebrew (a release
-# tar.gz + tap formula), not a .pkg, and the Parallels macOS guest is an
-# artifact-only, network-pristine end-user machine, so we cannot `brew install`
-# the real release tarball in-VM (that needs GitHub Releases + a real formula
-# sha256). What we CAN and DO exercise here is the exact privileged lifecycle the
-# Homebrew formula's `post_install` + `sudo portzero setup` performs, driven by
-# the host-built binary the harness pushes in — i.e. the CA-trust / LaunchDaemon /
-# resolver / hosts residue the audit actually worries about. The brew *download*
-# step itself is covered by release.yml's macOS interop job, not here.
+# What the brew phase exercises (NEW): macOS ships via Homebrew (a release tar.gz
+# + tap formula), not a .pkg. The Parallels macOS guest is a network-pristine,
+# artifact-only end-user machine, so we cannot fetch the *published* release
+# tarball in-VM (that needs GitHub Releases + the real formula sha256 — checked
+# instead by release.yml's post-publish url+sha256 smoke). What we CAN do — and
+# now do — is exercise the real install *mechanism* fully offline: tar the
+# host-built binary into a `portzero-darwin-<arch>.tar.gz`, GENERATE a formula
+# whose `url` is a `file://` path to it and whose `sha256` is computed from it,
+# mirroring the shipped formula's `install` (`bin.install "portzero"`),
+# `post_install` (`portzero trust generate`), and `caveats` blocks, then run
+# `brew install --formula <generated.rb>` with all network access disabled. This
+# runs the real formula code paths — keg install onto PATH, post_install CA
+# generation — proving the delivery vehicle works, not just its residue. It
+# requires Homebrew to be present in the golden snapshot; if `brew` is absent the
+# brew phase SKIPs cleanly (never a false fail) and the privileged residue
+# lifecycle below still runs.
 #
 # Prints greppable `PHASE=<name> ... ok=<true|false>` lines, then RESULT=PASS|FAIL.
 #
 # Env:
 #   PORTZERO_EXE  path to the portzero binary (the harness pushes the host-built
 #                 one in and sets this). Defaults to a copy under /tmp.
+#   LIFECYCLE_SKIP_BREW=1  skip the offline brew-install phase entirely (used
+#                 only when driving the residue lifecycle in isolation).
 # Helper predicates are invoked indirectly via assert/assert_not; silence the
 # resulting spurious SC2317 "unreachable" info.
 # shellcheck disable=SC2317
@@ -62,6 +72,117 @@ if [ ! -x "$EXE" ]; then
     echo "RESULT=FAIL portzero binary not found at $EXE (set PORTZERO_EXE)"
     exit 1
 fi
+
+# --- BREW: real offline `brew install` of a locally-generated formula --------
+# Exercises the actual delivery mechanism (formula install + post_install)
+# with zero network, using the host-built binary. SKIPs cleanly (never a false
+# fail) when Homebrew is not present in the golden snapshot.
+CA_APP_SUPPORT="$HOME/Library/Application Support/PortZero/ca.crt"
+brew_prefix_bin() { brew --prefix 2>/dev/null; }
+
+run_brew_phase() {
+    if [ "${LIFECYCLE_SKIP_BREW:-0}" = 1 ]; then
+        echo 'PHASE=brew-install ok=SKIP reason="LIFECYCLE_SKIP_BREW=1"'
+        return
+    fi
+    if ! command -v brew >/dev/null 2>&1; then
+        echo 'PHASE=brew-install ok=SKIP reason="Homebrew not installed in golden snapshot"'
+        return
+    fi
+
+    local arch tar_arch work tarball formula sha prefix
+    arch="$(uname -m)"
+    case "$arch" in
+        arm64|aarch64) tar_arch="arm64" ;;
+        *)             tar_arch="amd64" ;;
+    esac
+    work="$(mktemp -d /tmp/pz-brew.XXXXXX)"
+    tarball="$work/portzero-darwin-${tar_arch}.tar.gz"
+
+    # Stage the binary exactly as the release tarball is laid out: a single
+    # top-level dir holding `portzero`, which Homebrew strips so the formula's
+    # `bin.install "portzero"` finds it at the extraction root.
+    local stage="$work/portzero-darwin-${tar_arch}"
+    mkdir -p "$stage"
+    cp "$EXE" "$stage/portzero"
+    chmod +x "$stage/portzero"
+    ( cd "$work" && tar czf "$tarball" "portzero-darwin-${tar_arch}" )
+
+    sha="$(shasum -a 256 "$tarball" | awk '{print $1}')"
+
+    # Generate a formula mirroring packaging/homebrew/Formula/portzero.rb's real
+    # code paths (install + post_install + caveats), but pointed at the local
+    # tarball via file:// so the install runs fully offline. Basename `portzero`
+    # -> class `Portzero`, as Homebrew requires.
+    formula="$work/portzero.rb"
+    cat > "$formula" <<EOF
+class Portzero < Formula
+  desc "PortZero local development overlay (vmtest offline lifecycle build)"
+  homepage "https://portzero.cloud"
+  version "0.0.0-vmtest"
+  license "GPL-3.0-or-later"
+
+  url "file://$tarball"
+  sha256 "$sha"
+
+  def install
+    bin.install "portzero"
+  end
+
+  def post_install
+    # Mirror the shipped formula: generate the local CA (unprivileged; writes to
+    # ~/Library/Application Support/PortZero/). Idempotent.
+    system "#{bin}/portzero", "trust", "generate"
+  end
+
+  def caveats
+    <<~CAVEAT
+      To complete setup, run:
+
+        sudo portzero setup
+    CAVEAT
+  end
+end
+EOF
+
+    # Validate the generated Ruby before handing it to brew, so a malformed
+    # heredoc surfaces as a named failure rather than an opaque brew error.
+    if command -v ruby >/dev/null 2>&1; then
+        assert brew-formula-ruby-valid ruby -c "$formula"
+    fi
+
+    # Fully offline: no auto-update, no API/formula fetch, no analytics. The
+    # file:// url means the "download" is a local copy, so nothing hits the net.
+    export HOMEBREW_NO_AUTO_UPDATE=1
+    export HOMEBREW_NO_INSTALL_FROM_API=1
+    export HOMEBREW_NO_ANALYTICS=1
+    export HOMEBREW_NO_INSTALL_UPGRADE=1
+    export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
+
+    echo ">> brew install --formula (offline, generated formula)"
+    rm -f "$CA_APP_SUPPORT" 2>/dev/null || true
+    local ilog="$work/brew-install.log"
+    brew install --formula "$formula" >"$ilog" 2>&1 || true
+
+    prefix="$(brew_prefix_bin)"
+    # The real install mechanism ran: binary linked onto PATH under the brew
+    # prefix, and post_install generated the CA cert.
+    assert brew-install-binary        test -x "$prefix/bin/portzero"
+    assert brew-install-on-path       command -v portzero
+    assert brew-post-install-ca       test -f "$CA_APP_SUPPORT"
+    # Caveats logic is sound: the formula surfaces the `sudo portzero setup`
+    # instruction (brew renders caveats from the formula's method).
+    assert brew-caveats-setup         brew_caveats_mentions_setup "$formula"
+
+    echo ">> brew uninstall --formula"
+    brew uninstall --formula portzero >/dev/null 2>&1 || true
+    assert brew-uninstall-binary-gone test ! -e "$prefix/bin/portzero"
+
+    rm -rf "$work" 2>/dev/null || true
+}
+brew_caveats_mentions_setup() { brew info --formula "$1" 2>/dev/null | grep -q 'sudo portzero setup'; }
+
+run_brew_phase
 
 # --- INSTALL: the documented privileged setup (== brew post_install + setup) --
 echo ">> portzero setup (trust install + autostart + resolver + hosts pin)"
