@@ -6,6 +6,28 @@ on:
   pull_request:
     branches:
       - 'release/*'
+  # Manual dispatch for running one job group and/or one runner OS in
+  # isolation — e.g. re-running only the Windows real-TUN E2E entry while
+  # debugging a hang, without paying for the full matrix.
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Job group to run'
+        type: choice
+        default: all
+        options:
+          - all
+          - check
+          - e2e
+      os:
+        description: 'Runner OS to target'
+        type: choice
+        default: all
+        options:
+          - all
+          - ubuntu-latest
+          - macos-15
+          - windows-latest
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,12 +35,14 @@ env:
 jobs:
   check:
     name: Check & Test (${{ matrix.os }})
+    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'check'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # Run the unprivileged suite on every supported desktop OS.
-        os: [ubuntu-latest, macos-15, windows-latest]
+        # Run the unprivileged suite on every supported desktop OS. A manual
+        # dispatch with a specific `os` input narrows this to that runner.
+        os: ${{ (github.event_name == 'workflow_dispatch' && inputs.os != 'all') && fromJSON(format('["{0}"]', inputs.os)) || fromJSON('["ubuntu-latest", "macos-15", "windows-latest"]') }}
     steps:
       - uses: actions/checkout@v5
 
@@ -46,12 +70,16 @@ jobs:
 
   e2e:
     name: E2E real TUN overlay (${{ matrix.os }})
+    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'e2e'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # Run the privileged real-TUN E2E on every supported desktop OS.
-        os: [ubuntu-latest, macos-15, windows-latest]
+        # Run the privileged real-TUN E2E on every supported desktop OS. A
+        # manual dispatch with a specific `os` input narrows this to that
+        # runner (e.g. job=e2e, os=windows-latest to reproduce the Wintun
+        # bring-up hang in isolation).
+        os: ${{ (github.event_name == 'workflow_dispatch' && inputs.os != 'all') && fromJSON(format('["{0}"]', inputs.os)) || fromJSON('["ubuntu-latest", "macos-15", "windows-latest"]') }}
     steps:
       - uses: actions/checkout@v5
 
