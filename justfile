@@ -368,6 +368,17 @@ openapi:
     $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
     cargo run -p portzero-daemon --bin generate-openapi
 
+# Enforce file-size/complexity budgets on client/*.rs (see docs/dev/complexity-budgets.md).
+# Checks the whole tree by default; pass `--changed` to scope to staged files
+# (used by the pre-commit hook, so it stays fast).
+[unix]
+complexity *ARGS:
+    ./scripts/check-file-size-budget.sh {{ARGS}}
+
+[windows]
+complexity *ARGS:
+    bash ./scripts/check-file-size-budget.sh {{ARGS}}
+
 # Run the unprivileged local checks from the main CI job.
 # Recommended before pushing. Follow with `just e2e` for current-OS CI parity.
 # This still does not cover the other CI operating systems or release packaging.
@@ -375,6 +386,7 @@ verify:
     just fmt-check
     just clippy
     just test
+    just complexity
 
 # -----------------------------------------------------------------------------
 # Git hooks setup (cross platform via lefthook)
@@ -383,7 +395,7 @@ verify:
 #     just install-hooks
 #
 # This enables:
-#   - pre-commit : fmt check
+#   - pre-commit : fmt check + file-size budget (changed files only)
 #   - pre-push   : fmt + clippy (-D warnings) + unprivileged tests
 #
 # These are the same checks GitHub Actions runs. Catching clippy/test
@@ -417,7 +429,7 @@ install-hooks:
     lefthook install
     echo ""
     echo "✓ lefthook git hooks installed."
-    echo "   pre-commit : just fmt-check"
+    echo "   pre-commit : just fmt-check + just complexity --changed"
     echo "   pre-push   : just fmt-check + just clippy + just test"
     echo ""
     echo "Also run (recommended):"
@@ -448,7 +460,7 @@ install-hooks:
     lefthook install
     Write-Host ""
     Write-Host "✓ lefthook git hooks installed."
-    Write-Host "   pre-commit : just fmt-check"
+    Write-Host "   pre-commit : just fmt-check + just complexity --changed"
     Write-Host "   pre-push   : just fmt-check + just clippy + just test"
     Write-Host ""
     Write-Host "Also run (recommended):"

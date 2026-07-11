@@ -7,6 +7,7 @@ Audience: project contributors and maintainers.
 ## Documents
 
 - [Development](development.md) — test suite, local verification with `just`, git hooks with lefthook, and Ticketry.
+- [Complexity budgets](complexity-budgets.md) — the `just complexity` file-size check, its threshold and rationale, and what's deferred.
 - [Software delivery lifecycle](sdlc.md) — branch flow (`develop` / `release/current`), release validation, and manual GitHub release publishing.
 - [Release version numbers](release-version-numbers.md) — how the release workflow picks the next version, and how to force a specific bump (e.g. `1.0.0`).
 - [Windows signing runbook](windows-signing.md) — Azure Artifact Signing setup, release signing order, and Defender false-positive follow-up.

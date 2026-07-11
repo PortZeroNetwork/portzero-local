@@ -1,7 +1,7 @@
 ---
 id: c8e8362e-fc85-4dbb-9185-52c34af7a25d
 slug: task-50
-status: todo
+status: done
 title: Add cyclomatic complexity and max file size budgets (lefthook + CI)
 relations:
   contains:
