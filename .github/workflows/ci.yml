@@ -68,6 +68,18 @@ jobs:
           cargo run -p portzero-daemon --bin generate-openapi
           git diff --exit-code api/management-v1.yaml
 
+  file-size-budget:
+    name: File-size budget (client/*.rs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check file-size budget
+        run: ./scripts/check-file-size-budget.sh
+        # See docs/dev/complexity-budgets.md. Same script `just complexity`
+        # runs locally / in the pre-commit hook, so a PR that passes locally
+        # can't slip past this on CI, and --no-verify can't bypass it here.
+
   e2e:
     name: E2E real TUN overlay (${{ matrix.os }})
     if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'e2e'

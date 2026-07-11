@@ -12,7 +12,7 @@
 # consistent and all platforms are handled in one place.
 #
 # What runs:
-#   pre-commit: fast format check (catches style before you even commit)
+#   pre-commit: fast format check + file-size budget (catches style/size before you even commit)
 #   pre-push:   the important CI-parity checks (fmt + clippy -D warnings + tests)
 #
 # Privileged / root-gated tests are NEVER run automatically here.
@@ -25,6 +25,11 @@ pre-commit:
     fmt:
       run: just fmt-check
       # We deliberately do not auto-fix here. Run `cargo fmt` yourself if needed.
+    complexity:
+      glob: 'client/**/*.rs'
+      run: just complexity --changed
+      # File-size budget only (see docs/dev/complexity-budgets.md). Scoped to
+      # staged client/*.rs files so it stays cheap even as the tree grows.
 
 pre-push:
   # Run sequentially so failures are easy to attribute.
