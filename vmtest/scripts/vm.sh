@@ -78,6 +78,17 @@ default_test_script() { # <vm> [flavor=local]
         esac
         return
     fi
+    # The upgrade flavor installs a PRIOR version then the NEW one and asserts
+    # the in-place upgrade duplicated nothing. Per-OS script names, like
+    # lifecycle. See upgrade-{linux,windows,macos}.{sh,ps1}.
+    if [ "${2:-local}" = upgrade ]; then
+        case "$(vm_os "$1")" in
+            windows) echo "vmtest/scripts/upgrade-windows.ps1" ;;
+            linux)   echo "vmtest/scripts/upgrade-linux.sh" ;;
+            macos)   echo "vmtest/scripts/upgrade-macos.sh" ;;
+        esac
+        return
+    fi
     local base="e2e-local-overlay"
     [ "${2:-local}" = staging ] && base="e2e-staging-tunnel"
     if [ "$(vm_os "$1")" = windows ]; then
@@ -401,19 +412,28 @@ cmd_run() { # <vm> <repo-relative-script> [args...]
             local artifact; artifact="$(downloaded_artifact_host_path windows)"
             [ -f "$artifact" ] && exe_override="$(guest_path_under_repo "$vm" "$artifact")"
         fi
-        if [ -n "$exe_override" ]; then
-            echo ">> using downloaded artifact as PORTZERO_EXE: $exe_override" >&2
-            run_guarded "$vm" prlctl exec "$vm" cmd /c "set \"PORTZERO_EXE=$exe_override\"&& powershell -NoProfile -ExecutionPolicy Bypass -File \"$win\""
+        # cmd-side `set NAME=VALUE&&` prefix for whatever we forward: the
+        # discovered exe override, plus the upgrade flavor's prior-MSI pin.
+        local setpfx=""
+        [ -n "$exe_override" ] && setpfx="${setpfx}set \"PORTZERO_EXE=$exe_override\"&& "
+        [ -n "${PORTZERO_MSI_OLD:-}" ] && setpfx="${setpfx}set \"PORTZERO_MSI_OLD=$PORTZERO_MSI_OLD\"&& "
+        if [ -n "$setpfx" ]; then
+            [ -n "$exe_override" ] && echo ">> using downloaded artifact as PORTZERO_EXE: $exe_override" >&2
+            run_guarded "$vm" prlctl exec "$vm" cmd /c "${setpfx}powershell -NoProfile -ExecutionPolicy Bypass -File \"$win\""
         else
             run_guarded "$vm" prlctl exec "$vm" powershell -NoProfile -ExecutionPolicy Bypass -File "$win" "$@"
         fi
     else
         # Forward selected host env into the guest (macOS uses a host-built
         # binary + a different secrets path). `env` with no assignments is a
-        # harmless passthrough.
+        # harmless passthrough. The *_OLD pins are for the upgrade flavor: a
+        # host-side path to a prior artifact the guest can reach (same contract
+        # as PORTZERO_EXE — caller is responsible for a guest-valid path).
         local envargs=()
         [ -n "${PORTZERO_EXE:-}" ] && envargs+=("PORTZERO_EXE=$PORTZERO_EXE")
         [ -n "${STAGING_SECRETS:-}" ] && envargs+=("STAGING_SECRETS=$STAGING_SECRETS")
+        [ -n "${PORTZERO_DEB_OLD:-}" ] && envargs+=("PORTZERO_DEB_OLD=$PORTZERO_DEB_OLD")
+        [ -n "${PORTZERO_EXE_OLD:-}" ] && envargs+=("PORTZERO_EXE_OLD=$PORTZERO_EXE_OLD")
         local target
         if [ "$os" = macos ]; then
             target="$(push_script_macos "$vm" "$script")"
@@ -457,7 +477,7 @@ cmd_test() { # <platform: windows|linux|macos> [flavor=local|staging]
         # overlay up, then uninstalls — slower than the plain overlay smoke, so
         # give it a bigger default budget.
         local default_to=360
-        [ "$flavor" = lifecycle ] && default_to=600
+        { [ "$flavor" = lifecycle ] || [ "$flavor" = upgrade ]; } && default_to=600
         VM_RUN_TIMEOUT="${VM_RUN_TIMEOUT:-$default_to}" cmd_run "$effective_vm" "$script" || rc=$?
     fi
     local elapsed=$(( $(date +%s) - start ))
