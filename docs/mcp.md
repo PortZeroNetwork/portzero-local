@@ -66,20 +66,56 @@ advertises the `tools` capability and protocol revision `2024-11-05`.
 
 ### Tools
 
-All tools take **no arguments** and return a JSON text block.
+Every tool returns a JSON text block. The daemon-state tools take **no
+arguments**; the two cloud-backed feedback tools take typed arguments (see
+below). Arguments are passed the standard MCP way, as the `arguments` object
+inside `tools/call` params.
 
-| Tool               | Returns                                                                 |
-|--------------------|-------------------------------------------------------------------------|
-| `overview`         | Everything at once: services, tunnels, observed edges, exercised routes, and the observability caveat. |
-| `list_services`    | Discovered processes/containers with `PZ_TUNNEL`: domain, port, source (process pid + cwd, or container id/name), health path. |
-| `list_tunnels`     | Tunnel domains (local + cloud), resolved URLs, health paths, and cloud review status. |
-| `observed_edges`   | `from → to` dependency edges between tunnels (protocol, request count, last seen). |
-| `exercised_routes` | HTTP routes hit per tunnel (method, path, count, `X-PZ-Test` attributions) — a smoke-test inventory. |
+| Tool               | Arguments | Returns                                                                 |
+|--------------------|-----------|-------------------------------------------------------------------------|
+| `overview`         | none      | Everything at once: services, tunnels, observed edges, exercised routes, and the observability caveat. |
+| `list_services`    | none      | Discovered processes/containers with `PZ_TUNNEL`: domain, port, source (process pid + cwd, or container id/name), health path. |
+| `list_tunnels`     | none      | Tunnel domains (local + cloud), resolved URLs, health paths, and cloud review status. |
+| `observed_edges`   | none      | `from → to` dependency edges between tunnels (protocol, request count, last seen). |
+| `exercised_routes` | none      | HTTP routes hit per tunnel (method, path, count, `X-PZ-Test` attributions) — a smoke-test inventory. |
+| `list_feedback`    | `status?` | Feedback threads from portzero.cloud: reviewer comments pinned on your tunneled app. Requires `portzero login`. |
+| `propose_fix`      | `thread_id`, `fix_commit`, `fix_summary` | Marks a feedback thread as fixed by a commit (`fix_proposed`). Requires `portzero login`. |
 
-Example call:
+Example call (no-argument tool — `arguments` may be `{}` or omitted):
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exercised_routes","arguments":{}}}
+```
+
+### Feedback tools (`list_feedback`, `propose_fix`)
+
+These two tools call the portzero.cloud API and need stored credentials from
+`portzero login`; without them the call returns an `isError: true` result with
+the "Not logged in" message. See [Review records](review-records.md) for the
+full workflow they belong to.
+
+**`list_feedback`** — arguments: `{ "status"?: "open" | "fix_proposed" |
+"resolved" }` (default `"open"`). Returns, for each thread: its `ref`
+(`PZ-<n>`), `id`, `status`, `domain`, `route`, `guest_name`, `created_at`, the
+comment bodies, and `fix_commit`/`fix_summary` when a fix has been proposed.
+These are reviewer comments pinned on your tunneled app. To mark one fixed,
+either call `propose_fix`, or include `Fixes PZ-<n>` in the commit message of
+the fixing commit and upload a review record with `portzero review` — the
+cloud advances the thread automatically.
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_feedback","arguments":{"status":"open"}}}
+```
+
+**`propose_fix`** — arguments (all required): `{ "thread_id": string,
+"fix_commit": string, "fix_summary": string }`. `thread_id` is the `id` field
+from `list_feedback` (not the `PZ-<n>` ref). The thread moves to
+`fix_proposed` and then awaits human confirmation: the commenter or a team
+member resolves it. The `Fixes PZ-<n>` commit-message convention (see above)
+is the hands-off alternative.
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"propose_fix","arguments":{"thread_id":"<id>","fix_commit":"abc1234","fix_summary":"Fix checkout button contrast"}}}
 ```
 
 ### How edges and routes are recorded
