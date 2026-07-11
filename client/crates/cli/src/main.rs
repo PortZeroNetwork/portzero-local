@@ -153,6 +153,30 @@ enum Command {
     /// Install AI coding-agent skills into your project.
     #[command(subcommand)]
     Skill(SkillCommand),
+
+    /// Manage the discovery daemon (grouped aliases for the top-level
+    /// `start` / `stop` / `restart` / `status` commands).
+    #[command(subcommand)]
+    Daemon(DaemonCommand),
+}
+
+#[derive(Subcommand)]
+enum DaemonCommand {
+    /// Start the discovery daemon and tunnel connection.
+    Start {
+        /// Run in the foreground instead of daemonizing (used internally).
+        #[arg(long, hide = true)]
+        foreground: bool,
+        /// Do not automatically open the dashboard in a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Stop the discovery daemon.
+    Stop,
+    /// Restart the discovery daemon.
+    Restart,
+    /// Show daemon and tunnel status.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -269,6 +293,21 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Skill(cmd) => match cmd {
             SkillCommand::Install { dir, force, print } => skill::install(dir, force, print)?,
+        },
+        Command::Daemon(cmd) => match cmd {
+            DaemonCommand::Start {
+                foreground,
+                no_browser,
+            } => {
+                if foreground {
+                    daemon::start_foreground().await?;
+                } else {
+                    daemon::start(!no_browser)?;
+                }
+            }
+            DaemonCommand::Stop => daemon::stop()?,
+            DaemonCommand::Restart => daemon::restart()?,
+            DaemonCommand::Status => daemon::status().await?,
         },
     }
 

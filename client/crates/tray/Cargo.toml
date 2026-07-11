@@ -1,0 +1,32 @@
+[package]
+name = "portzero-tray"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "System-tray companion for the PortZero local tunnel daemon: shows daemon health, surfaces issues, and offers one-click start/restart/stop and HTTPS control."
+repository = "https://github.com/PortZeroNetwork/portzero-local"
+homepage = "https://portzero.cloud"
+
+[[bin]]
+name = "portzero-tray"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+portzero-daemon = { path = "../daemon" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tray-icon = "0.19"
+muda = "0.15"
+
+[dev-dependencies]
+tempfile = "3"
+
+# Linux drives the tray from a GTK main loop (libappindicator / StatusNotifierItem).
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+# Windows and macOS drive the tray from a winit event loop, which owns the
+# native message pump / run loop the tray icon needs.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+winit = "0.30"
