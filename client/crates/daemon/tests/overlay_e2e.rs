@@ -1059,6 +1059,173 @@ async fn real_tun_overlay_inner() -> Result<(), String> {
         .map(|_| ())
 }
 
+/// Privileged trust-store lifecycle e2e: brings the real overlay up with
+/// `install_trust: true` (the production default), asserts the PortZero local CA
+/// actually landed in this host's OS trust store, tears the overlay down, runs
+/// the real `trust uninstall`, and asserts the CA is GONE.
+///
+/// This closes the coverage gap the launch audit flagged: trust-store *install*
+/// is disabled in [`real_tun_overlay`] (`install_trust: false`) to keep ordinary
+/// `just e2e` side-effect free, so nothing else in the suite proves the CA is
+/// installed on a real machine — and *nothing at all* proved uninstall removes
+/// it. Leftover trusted-CA residue after uninstall is the loud-complaint bug
+/// class, so it gets its own asserted test.
+///
+/// Double-gated on purpose: it mutates the host's real trust store, so it needs
+/// BOTH `PORTZERO_REQUIRE_REAL_TUN_E2E=1` (the existing real-TUN opt-in) AND
+/// `PORTZERO_REQUIRE_TRUST_LIFECYCLE=1`. Plain `just e2e` sets only the former,
+/// so this stays skipped there and runs only where a caller (the VM harness, or
+/// `just e2e-trust`) explicitly opts into trust-store mutation. Also requires
+/// root (Unix) / elevated Administrator (Windows), like [`real_tun_overlay`].
+#[cfg(any(unix, target_os = "windows"))]
+#[test]
+fn real_tun_overlay_trust_lifecycle() {
+    if std::env::var("PORTZERO_REQUIRE_REAL_TUN_E2E").as_deref() != Ok("1")
+        || std::env::var("PORTZERO_REQUIRE_TRUST_LIFECYCLE").as_deref() != Ok("1")
+    {
+        println!(
+            "real_tun_overlay_trust_lifecycle: skipped: set PORTZERO_REQUIRE_REAL_TUN_E2E=1 AND \
+             PORTZERO_REQUIRE_TRUST_LIFECYCLE=1 to run the privileged trust-store lifecycle e2e"
+        );
+        return;
+    }
+
+    #[cfg(unix)]
+    {
+        // SAFETY: geteuid is always safe to call.
+        let euid = unsafe { libc::geteuid() };
+        if euid != 0 {
+            println!("real_tun_overlay_trust_lifecycle: skipped: requires root (euid={euid})");
+            return;
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let elevated = std::process::Command::new("fltmc")
+            .arg("filters")
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        assert!(
+            elevated,
+            "real_tun_overlay_trust_lifecycle requires an elevated Administrator process on Windows"
+        );
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = std::panic::catch_unwind(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build trust-lifecycle runtime");
+            rt.block_on(real_tun_overlay_trust_lifecycle_inner())
+        })
+        .map_err(|panic| {
+            if let Some(s) = panic.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = panic.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "trust-lifecycle worker panicked with non-string payload".to_string()
+            }
+        })
+        .and_then(|inner| inner);
+        let _ = tx.send(result);
+    });
+
+    // Generous budget: real `update-ca-certificates` / `update-ca-trust` /
+    // `security` / certutil invocations are slower than the in-memory paths.
+    match rx.recv_timeout(Duration::from_secs(60)) {
+        Ok(Ok(())) => println!("real_tun_overlay_trust_lifecycle: passed"),
+        Ok(Err(e)) => panic!("{e}"),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!("real_tun_overlay_trust_lifecycle timed out")
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("real_tun_overlay_trust_lifecycle worker exited without reporting a result")
+        }
+    }
+}
+
+#[cfg(any(unix, target_os = "windows"))]
+async fn real_tun_overlay_trust_lifecycle_inner() -> Result<(), String> {
+    use portzero_daemon::net::overlay::{OverlayConfig, OverlayNetwork};
+    use portzero_daemon::net::tun_device::TunConfig;
+    use portzero_daemon::tls::ca::LocalCa;
+    use portzero_daemon::tls::trust;
+
+    // The on-disk CA PEM the trust store install/verify/uninstall all operate on.
+    // `load_or_create` is what production startup uses, so the path is identical
+    // to a real install.
+    LocalCa::load_or_create().map_err(|e| format!("load_or_create CA failed: {e:#}"))?;
+    let ca_path =
+        LocalCa::ca_cert_path().map_err(|e| format!("resolve ca_cert_path failed: {e:#}"))?;
+
+    // Keep the test overlay off the production interface/gateway, exactly like
+    // `real_tun_overlay` does, so it can run while the daemon is installed.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let mut tun = TunConfig::default();
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    let tun = TunConfig::default();
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        tun.name = Some("portzero-e2e".to_string());
+        tun.address = Ipv4Addr::new(10, 254, 250, 1);
+    }
+
+    let config = OverlayConfig {
+        dns_listen: "127.0.0.1:53000".parse().unwrap(),
+        tun,
+        // The whole point: exercise the real trust-store install on startup.
+        install_trust: true,
+        ..Default::default()
+    };
+
+    let overlay = tokio::time::timeout(
+        TEST_TIMEOUT,
+        OverlayNetwork::start(config, std::sync::Arc::new(tokio::sync::Notify::new())),
+    )
+    .await
+    .map_err(|_| "overlay start (install_trust) timed out".to_string())?
+    .map_err(|e| format!("overlay start failed under root: {e:#}"))?;
+
+    // 1. The CA must actually be in the OS trust store now.
+    let report = trust::verify_installation(&ca_path)
+        .map_err(|e| format!("verify_installation after install failed: {e:#}"))?;
+    if !report.is_clean() {
+        overlay.shutdown().await;
+        return Err(format!(
+            "CA was NOT fully installed after overlay startup; missing stores: {:?}",
+            report.missing
+        ));
+    }
+    println!("real_tun_overlay_trust_lifecycle: CA installed and verified in every trust store");
+
+    // Tear the overlay (and its TUN) down before removing trust, mirroring a
+    // real uninstall: stop the daemon, then remove the CA.
+    overlay.shutdown().await;
+
+    // 2. Run the real uninstall and assert the CA is gone from every store.
+    trust::uninstall().map_err(|e| format!("trust uninstall failed: {e:#}"))?;
+    let report = trust::verify_installation(&ca_path)
+        .map_err(|e| format!("verify_installation after uninstall failed: {e:#}"))?;
+    if report.is_clean() {
+        return Err(
+            "CA is STILL present in the trust store after `trust uninstall` — leftover \
+             trusted-CA residue is exactly the bug this test guards against"
+                .to_string(),
+        );
+    }
+    println!(
+        "real_tun_overlay_trust_lifecycle: CA removed from trust store after uninstall \
+         (now-missing stores: {:?})",
+        report.missing
+    );
+
+    Ok(())
+}
+
 /// Non-Unix builds still compile and report this privileged Unix TUN scenario
 /// as skipped when they do not support the privileged test path.
 #[cfg(not(any(unix, target_os = "windows")))]

@@ -73,9 +73,102 @@ jobs:
           path: target/release/portzero
           retention-days: 1
 
+  # Real installable artifacts for the lifecycle test (install -> verify ->
+  # uninstall -> assert-clean). Unlike vm-test's raw binaries, these are the
+  # actual package a user installs, so the guest exercises the real postinst /
+  # prerm (Linux) and the real MSI custom actions (Windows).
+  package-linux-deb:
+    name: Build linux .deb (lifecycle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p portzero-cli --bin portzero
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+      - name: Build .deb
+        run: cargo deb -p portzero-cli --no-build
+      - uses: actions/upload-artifact@v5
+        with:
+          name: portzero-deb
+          path: target/debian/*.deb
+          retention-days: 1
+
+  package-windows-msi:
+    name: Build windows MSI (lifecycle, unsigned)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p portzero-cli --bin portzero
+      # Assemble the MSI SourceDir exactly as release.yml's "Package (Windows)"
+      # does (wintun + VC++ redistributable DLLs the .wxs lists as components),
+      # then build an UNSIGNED MSI. Signing is release-only; msiexec installs an
+      # unsigned MSI fine under the elevated/SYSTEM context the guest runs in.
+      - name: Cache wintun
+        uses: actions/cache@v4
+        with:
+          path: wintun.zip
+          key: wintun-0.14.1
+      - name: Package payload
+        shell: pwsh
+        run: |
+          $staging = "portzero-windows-amd64"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item "target\release\portzero.exe" "$staging\"
+
+          if (-not (Test-Path "wintun.zip")) {
+            Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "wintun.zip" -TimeoutSec 60
+          }
+          Expand-Archive -Path "wintun.zip" -DestinationPath "wintun" -Force
+          Copy-Item "wintun\wintun\bin\amd64\wintun.dll" "$staging\"
+
+          $vswhere = Join-Path "${env:ProgramFiles(x86)}" "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -requiresAny `
+            -requires Microsoft.VisualStudio.Component.VC.Redist.14.Latest Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          $redistRoot = Join-Path $vsPath "VC\Redist\MSVC"
+          $redistVersionDir = Get-ChildItem -Directory -Path $redistRoot |
+            Where-Object { $_.Name -match '^\d+\.' -and (Test-Path (Join-Path $_.FullName "x64")) } |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          $x64Root = Join-Path $redistVersionDir.FullName "x64"
+          $requiredDlls = @(
+            "concrt140.dll","msvcp140.dll","msvcp140_1.dll","msvcp140_2.dll",
+            "msvcp140_atomic_wait.dll","msvcp140_codecvt_ids.dll","vccorlib140.dll",
+            "vcruntime140.dll","vcruntime140_1.dll","vcruntime140_threads.dll"
+          )
+          foreach ($dllName in $requiredDlls) {
+            $dll = Get-ChildItem -Path $x64Root -Recurse -File -Filter $dllName |
+              Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $dll) { throw "VC++ redistributable DLL not found: $dllName" }
+            Copy-Item $dll.FullName "$staging\" -Force
+          }
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: choco install wixtoolset --no-progress -y
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $sourceDir = (Resolve-Path ".\portzero-windows-amd64").Path
+          $wixRoot = "${env:ProgramFiles(x86)}\WiX Toolset*"
+          $candle = Get-ChildItem $wixRoot -Recurse -Filter candle.exe | Select-Object -First 1
+          $light = Get-ChildItem $wixRoot -Recurse -Filter light.exe | Select-Object -First 1
+          if (-not $candle -or -not $light) { throw "WiX candle/light not found" }
+          & $candle.FullName "-dProductVersion=0.0.0" "-dSourceDir=$sourceDir" -out "portzero.wixobj" "packaging\windows\portzero.wxs"
+          & $light.FullName -out "portzero-0.0.0-x86_64.msi" "portzero.wixobj"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: portzero-msi
+          path: "*.msi"
+          retention-days: 1
+
   vm-test:
     name: vm-test + vm-test-staging (windows, linux, macos)
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, package-linux-deb, package-windows-msi]
     runs-on: [self-hosted, macOS]
     timeout-minutes: 45
     steps:
@@ -108,8 +201,29 @@ jobs:
         # the exec bit.
         run: chmod +x vmtest/.downloaded-artifacts/linux/portzero
 
+      - name: Download linux .deb (lifecycle)
+        # lifecycle-linux.sh's find_deb looks here first.
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-deb
+          path: vmtest/.downloaded-artifacts/linux
+
+      - name: Download windows MSI (lifecycle)
+        # lifecycle-windows.ps1's Find-Msi looks here first.
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-msi
+          path: vmtest/.downloaded-artifacts/windows
+
       - name: vm-test (local overlay, no cloud/secrets — windows, linux, macos in series)
         run: just vm-test
+
+      - name: vm-test-lifecycle (real install -> verify -> UNINSTALL -> assert-clean)
+        # The audit's highest-priority gap: proves uninstall removes the trusted
+        # CA, the .portzero.local DNS resolver/pin, the autostart service, and
+        # the TUN interface — no residue. Linux installs the real .deb, Windows
+        # the real MSI, macOS runs the privileged setup/teardown flow.
+        run: just vm-test-lifecycle
 
       - name: vm-test-staging (real cloud tunnel against staging — windows, linux, macos in series)
         # Runs by default on every trigger (inputs.staging is unset — not

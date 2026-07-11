@@ -80,6 +80,28 @@ jobs:
         # runs locally / in the pre-commit hook, so a PR that passes locally
         # can't slip past this on CI, and --no-verify can't bypass it here.
 
+  lifecycle-upgrade-linux:
+    name: Lifecycle upgrade (Linux .deb, prior -> new)
+    if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p portzero-cli --bin portzero
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+      - name: Build new .deb
+        run: cargo deb -p portzero-cli --no-build
+      - name: Upgrade lifecycle (fetches the latest published release .deb as the
+              prior version via gh; SKIPs cleanly if there is no prior release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          new_deb="$(ls target/debian/*.deb | head -1)"
+          PORTZERO_DEB_NEW="$new_deb" bash vmtest/scripts/upgrade-linux.sh
+
   e2e:
     name: E2E real TUN overlay (${{ matrix.os }})
     if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'e2e'
@@ -131,6 +153,23 @@ jobs:
         if: runner.os != 'Windows'
         timeout-minutes: 5
         run: sudo -E env PORTZERO_REQUIRE_REAL_TUN_E2E=1 $(which cargo) test -p portzero-daemon --test overlay_e2e real_tun_overlay -- --nocapture
+
+      - name: E2E - trust-store install/verify/UNINSTALL lifecycle (Linux)
+        # Brings the overlay up with install_trust:true (the production default),
+        # asserts the local CA actually landed in the OS trust store, then runs
+        # the real `trust uninstall` and asserts it is GONE — the leftover-CA
+        # residue bug the launch audit flagged. Double-gated so ordinary runs
+        # never mutate a trust store; safe here because the ubuntu runner is a
+        # throwaway VM. Linux only: macOS/Windows trust stores need keychain /
+        # cert-store perms better exercised by the Parallels VM harness.
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          sudo -E env \
+            PORTZERO_REQUIRE_REAL_TUN_E2E=1 \
+            PORTZERO_REQUIRE_TRUST_LIFECYCLE=1 \
+            $(which cargo) test -p portzero-daemon --test overlay_e2e \
+            real_tun_overlay_trust_lifecycle -- --nocapture
 
       - name: E2E - real TUN overlay (Windows)
         if: runner.os == 'Windows'
