@@ -872,6 +872,10 @@ jobs:
 
           for arch in arm64 amd64; do
             url="$(grep -oE "https://[^\"]*portzero-darwin-${arch}[^\"]*" "$FORMULA" | head -1)"
+            # The formula embeds Ruby string interpolation (`#{version}`) in its url
+            # lines, resolved by Homebrew at install time but not by a raw grep here.
+            interp='#{version}'
+            url="${url//$interp/$VERSION}"
             # sha256 lines are tagged with a trailing arch comment: `# arm64` / `# x86_64`.
             tag="$arch"; [ "$arch" = amd64 ] && tag="x86_64"
             sha="$(grep -E "sha256 \"[0-9a-fA-F]+\" # ${tag}" "$FORMULA" | grep -oiE '[0-9a-f]{64}' | head -1)"
