@@ -557,6 +557,19 @@ fn uninstall_impl(_link_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Synchronously remove the `.portzero.local` NRPT rule.
+///
+/// `portzero stop` terminates the Windows daemon with `taskkill /F` (there is
+/// no graceful console signal to deliver to a detached process), so the
+/// daemon's own overlay teardown — which removes this rule — never runs.
+/// `stop` calls this after the kill so no DNS residue outlives the daemon;
+/// must run AFTER the daemon is gone, or its resolver-repair loop would
+/// recreate the rule.
+#[cfg(target_os = "windows")]
+pub fn remove_nrpt_rule_sync() -> Result<()> {
+    uninstall_impl("")
+}
+
 /// PowerShell snippet that adds (or replaces) the NRPT rule.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) fn powershell_add_nrpt_script(dns_addr: SocketAddr) -> String {

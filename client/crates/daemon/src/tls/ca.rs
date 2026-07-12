@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose,
+    BasicConstraints, CertificateParams, CidrSubnet, DistinguishedName, DnType,
+    ExtendedKeyUsagePurpose, GeneralSubtree, IsCa, KeyPair, KeyUsagePurpose, NameConstraints,
 };
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
@@ -28,6 +28,11 @@ const CA_CERT: &str = "ca.crt";
 const WILDCARD_CERT: &str = "wildcard.crt";
 const WILDCARD_KEY: &str = "wildcard.key";
 const WILDCARD_EXPIRY: &str = "wildcard.expiry";
+
+/// DNS subtree the CA is permitted to issue certificates for. Per RFC 5280
+/// §4.2.1.10 a DNS permitted subtree of `portzero.local` matches the apex name
+/// and every subdomain (`portzero.local`, `*.portzero.local`, `a.b.portzero.local`).
+const CA_NAME_CONSTRAINT_DNS: &str = "portzero.local";
 
 const CA_VALIDITY_DAYS: i64 = 365 * 10;
 const WILDCARD_VALIDITY_DAYS: i64 = 365;
@@ -64,7 +69,16 @@ impl LocalCa {
 
         if is_fresh(&dir) && has_browser_tls_usages(&dir) {
             match load(&dir) {
-                Ok(ca) => return Ok(ca),
+                Ok(ca) => {
+                    if !ca_pem_is_name_constrained(&ca.ca_cert_pem) {
+                        // Do NOT auto-regenerate under the daemon: that would silently
+                        // break trusted HTTPS until the user re-ran `trust install`.
+                        tracing::warn!(
+                            "local CA is not name-constrained; a leaked CA key could impersonate any site. Run `portzero trust generate && sudo portzero trust install` to replace it."
+                        );
+                    }
+                    return Ok(ca);
+                }
                 Err(e) => {
                     tracing::warn!("failed to load existing TLS certs, regenerating: {e:#}");
                 }
@@ -75,6 +89,17 @@ impl LocalCa {
         let (ca, expiry) = generate()?;
         save(&ca, expiry, &dir)?;
         Ok(ca)
+    }
+
+    /// Ensure the persisted CA carries the X.509 name-constraints extension,
+    /// regenerating it in place if a legacy (unconstrained) CA is found.
+    ///
+    /// Returns `true` iff an existing CA was replaced because it lacked the
+    /// constraint. This is the migration entry point for `portzero trust
+    /// generate`; the daemon deliberately does not call it (see
+    /// [`load_or_create`], which only warns).
+    pub fn ensure_name_constrained() -> Result<bool> {
+        ensure_name_constrained_in(&data_dir()?)
     }
 
     /// Absolute path to the CA certificate PEM file.
@@ -182,16 +207,40 @@ fn load(dir: &Path) -> Result<LocalCa> {
 }
 
 fn save(ca: &LocalCa, expiry: OffsetDateTime, dir: &Path) -> Result<()> {
-    // Key written first with restricted permissions; if this fails the cert
-    // files are never written so the bundle stays consistent on retry.
-    write_private(&dir.join(WILDCARD_KEY), ca.wildcard_key_pem.as_bytes())?;
-    std::fs::write(dir.join(CA_CERT), &ca.ca_cert_pem).context("write ca.crt")?;
-    std::fs::write(dir.join(WILDCARD_CERT), &ca.wildcard_cert_pem).context("write wildcard.crt")?;
-    std::fs::write(
-        dir.join(WILDCARD_EXPIRY),
-        expiry.format(&Rfc3339).context("format expiry timestamp")?,
+    // Each file is written to a sibling temp file and renamed into place, so a
+    // regeneration replaces the old CA atomically: a concurrent reader (or a
+    // crash mid-write) never sees a truncated or half-written cert. Key written
+    // first with restricted permissions; if this fails the cert files are never
+    // written so the bundle stays consistent on retry.
+    write_private_atomic(&dir.join(WILDCARD_KEY), ca.wildcard_key_pem.as_bytes())?;
+    write_atomic(&dir.join(CA_CERT), ca.ca_cert_pem.as_bytes()).context("write ca.crt")?;
+    write_atomic(&dir.join(WILDCARD_CERT), ca.wildcard_cert_pem.as_bytes())
+        .context("write wildcard.crt")?;
+    write_atomic(
+        &dir.join(WILDCARD_EXPIRY),
+        expiry
+            .format(&Rfc3339)
+            .context("format expiry timestamp")?
+            .as_bytes(),
     )
     .context("write wildcard.expiry")?;
+    Ok(())
+}
+
+/// Path for the temporary sibling file used by the atomic-write helpers.
+fn tmp_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    path.with_file_name(name)
+}
+
+/// Write `content` to `path` atomically: write a sibling temp file, then rename
+/// it over `path`. On the same filesystem the rename is atomic.
+fn write_atomic(path: &Path, content: &[u8]) -> Result<()> {
+    let tmp = tmp_path(path);
+    std::fs::write(&tmp, content).with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
     Ok(())
 }
 
@@ -201,6 +250,7 @@ fn generate() -> Result<(LocalCa, OffsetDateTime)> {
     // --- CA (10-year self-signed) ---
     let mut ca_params = CertificateParams::new(vec![]).context("build CA cert params")?;
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.name_constraints = Some(ca_name_constraints());
     ca_params.key_usages = vec![
         KeyUsagePurpose::KeyCertSign,
         KeyUsagePurpose::CrlSign,
@@ -241,6 +291,81 @@ fn generate() -> Result<(LocalCa, OffsetDateTime)> {
     ))
 }
 
+/// The X.509 Name Constraints the CA is issued with.
+///
+/// - `permitted_subtrees`: DNS names must fall within the `portzero.local`
+///   subtree. A conforming verifier rejects any leaf whose DNS SAN lies outside
+///   it, so a leaked CA key cannot mint a trusted cert for `example.com`.
+/// - `excluded_subtrees`: all IPv4 and IPv6 addresses are excluded. A DNS
+///   permitted subtree alone does not constrain a leaf that carries only an IP
+///   SAN (RFC 5280 applies constraints per name-form), so we additionally
+///   exclude the entire IP space. We never issue IP leaves, so this costs us
+///   nothing and closes the IP-SAN bypass.
+///
+/// rcgen writes the Name Constraints extension as **critical** (see
+/// `rcgen::certificate` — `oid::NAME_CONSTRAINTS` is emitted with the critical
+/// flag set unconditionally), which is what RFC 5280 requires.
+fn ca_name_constraints() -> NameConstraints {
+    NameConstraints {
+        permitted_subtrees: vec![GeneralSubtree::DnsName(CA_NAME_CONSTRAINT_DNS.to_string())],
+        excluded_subtrees: vec![
+            GeneralSubtree::IpAddress(CidrSubnet::from_v4_prefix([0, 0, 0, 0], 0)),
+            GeneralSubtree::IpAddress(CidrSubnet::from_v6_prefix([0; 16], 0)),
+        ],
+    }
+}
+
+/// True when `ca_pem` carries a Name Constraints extension whose permitted DNS
+/// subtree is exactly `portzero.local`. Used both to warn about legacy
+/// (unconstrained) CAs and to decide whether to regenerate.
+fn ca_pem_is_name_constrained(ca_pem: &str) -> bool {
+    let Ok(params) = CertificateParams::from_ca_cert_pem(ca_pem) else {
+        return false;
+    };
+    params.name_constraints.as_ref().is_some_and(|nc| {
+        nc.permitted_subtrees.iter().any(|subtree| {
+            matches!(subtree, GeneralSubtree::DnsName(dns) if dns == CA_NAME_CONSTRAINT_DNS)
+        })
+    })
+}
+
+/// True when the CA cert persisted in `dir` is name-constrained.
+/// A missing or unreadable CA file counts as unconstrained.
+fn dir_ca_is_name_constrained(dir: &Path) -> bool {
+    let Ok(ca_pem) = std::fs::read_to_string(dir.join(CA_CERT)) else {
+        return false;
+    };
+    ca_pem_is_name_constrained(&ca_pem)
+}
+
+/// Ensure the CA persisted in `dir` carries the name-constraints extension,
+/// regenerating the whole bundle in place if a legacy (unconstrained) CA is
+/// found. Returns `true` iff an existing CA was replaced because it lacked the
+/// constraint — the caller should then tell the user to re-run `trust install`.
+///
+/// A fresh install (no CA on disk yet) generates a constrained CA and returns
+/// `false`: that is the normal first-run path, not a migration.
+fn ensure_name_constrained_in(dir: &Path) -> Result<bool> {
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("create PortZero data dir: {}", dir.display()))?;
+
+    let ca_exists = dir.join(CA_CERT).exists();
+    if ca_exists && !dir_ca_is_name_constrained(dir) {
+        tracing::info!("existing local CA has no name constraints; regenerating");
+        let (ca, expiry) = generate()?;
+        save(&ca, expiry, dir)?;
+        return Ok(true);
+    }
+
+    // Already constrained, or absent — reuse when still fresh, else (re)create.
+    if is_fresh(dir) && has_browser_tls_usages(dir) && dir_ca_is_name_constrained(dir) {
+        return Ok(false);
+    }
+    let (ca, expiry) = generate()?;
+    save(&ca, expiry, dir)?;
+    Ok(false)
+}
+
 fn make_dn(common_name: &str, org: Option<&str>) -> DistinguishedName {
     let mut dn = DistinguishedName::new();
     dn.push(DnType::CommonName, common_name);
@@ -250,11 +375,14 @@ fn make_dn(common_name: &str, org: Option<&str>) -> DistinguishedName {
     dn
 }
 
-/// Write `content` to `path` with owner-only read/write permissions.
+/// Write `content` to `path` atomically with owner-only read/write permissions.
 ///
-/// On Unix this is mode 0o600.  On other platforms falls back to a plain
-/// write (Windows ACLs are handled separately by the trust store installer).
-fn write_private(path: &Path, content: &[u8]) -> Result<()> {
+/// On Unix the temp file is created mode 0o600 before the rename, so the key is
+/// never briefly world-readable.  On other platforms falls back to a plain
+/// atomic write (Windows ACLs are handled separately by the trust store
+/// installer).
+fn write_private_atomic(path: &Path, content: &[u8]) -> Result<()> {
+    let tmp = tmp_path(path);
     #[cfg(unix)]
     {
         use std::io::Write as _;
@@ -264,15 +392,17 @@ fn write_private(path: &Path, content: &[u8]) -> Result<()> {
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(path)
-            .with_context(|| format!("open {} for writing", path.display()))?
+            .open(&tmp)
+            .with_context(|| format!("open {} for writing", tmp.display()))?
             .write_all(content)
-            .with_context(|| format!("write {}", path.display()))?;
+            .with_context(|| format!("write {}", tmp.display()))?;
     }
     #[cfg(not(unix))]
     {
-        std::fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
+        std::fs::write(&tmp, content).with_context(|| format!("write {}", tmp.display()))?;
     }
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
     Ok(())
 }
 
@@ -309,6 +439,16 @@ mod tests {
         assert!(ca_text.contains("Certificate Sign"));
         assert!(ca_text.contains("CRL Sign"));
         assert!(ca_text.contains("Digital Signature"));
+        // Name Constraints must be present, critical, and scope DNS to the
+        // portzero.local subtree while excluding the whole IP space.
+        assert!(
+            ca_text.contains("X509v3 Name Constraints: critical"),
+            "Name Constraints must be marked critical:\n{ca_text}"
+        );
+        assert!(ca_text.contains("Permitted:"));
+        assert!(ca_text.contains("DNS:portzero.local"));
+        assert!(ca_text.contains("Excluded:"));
+        assert!(ca_text.contains("IP:0.0.0.0/0.0.0.0"));
 
         let leaf_text = openssl_x509_text(&openssl, &leaf_path);
         assert!(leaf_text.contains("DNS:*.portzero.local"));
@@ -405,13 +545,77 @@ mod tests {
         use std::os::unix::fs::MetadataExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("key.pem");
-        write_private(&path, b"test").unwrap();
+        write_private_atomic(&path, b"test").unwrap();
         let mode = std::fs::metadata(&path).unwrap().mode();
         assert_eq!(
             mode & 0o777,
             0o600,
             "key file must be owner-read/write only"
         );
+    }
+
+    #[test]
+    fn generated_ca_is_name_constrained() {
+        let (ca, _) = generate().unwrap();
+        assert!(
+            ca_pem_is_name_constrained(&ca.ca_cert_pem),
+            "freshly generated CA must carry the portzero.local name constraint"
+        );
+    }
+
+    #[test]
+    fn legacy_ca_is_not_name_constrained() {
+        let (ca, _) = generate_legacy_without_usages().unwrap();
+        assert!(
+            !ca_pem_is_name_constrained(&ca.ca_cert_pem),
+            "legacy CA has no name constraints and must be detected as such"
+        );
+    }
+
+    #[test]
+    fn ensure_name_constrained_replaces_legacy_ca() {
+        let dir = tempfile::tempdir().unwrap();
+        let (legacy, expiry) = generate_legacy_without_usages().unwrap();
+        save(&legacy, expiry, dir.path()).unwrap();
+        assert!(!dir_ca_is_name_constrained(dir.path()));
+
+        let regenerated = ensure_name_constrained_in(dir.path()).unwrap();
+        assert!(regenerated, "a legacy CA must be reported as regenerated");
+        assert!(
+            dir_ca_is_name_constrained(dir.path()),
+            "the replacement CA must be name-constrained"
+        );
+        // Bundle stays internally consistent: the new leaf is signed by the new CA.
+        assert!(has_browser_tls_usages(dir.path()));
+    }
+
+    #[test]
+    fn ensure_name_constrained_keeps_constrained_ca() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ca, expiry) = generate().unwrap();
+        save(&ca, expiry, dir.path()).unwrap();
+
+        let regenerated = ensure_name_constrained_in(dir.path()).unwrap();
+        assert!(
+            !regenerated,
+            "an already-constrained CA must not be replaced"
+        );
+        let reloaded = load(dir.path()).unwrap();
+        assert_eq!(
+            reloaded.ca_cert_pem, ca.ca_cert_pem,
+            "the constrained CA must be left byte-for-byte unchanged"
+        );
+    }
+
+    #[test]
+    fn ensure_name_constrained_creates_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let regenerated = ensure_name_constrained_in(dir.path()).unwrap();
+        assert!(
+            !regenerated,
+            "a first-run create is not a migration and must return false"
+        );
+        assert!(dir_ca_is_name_constrained(dir.path()));
     }
 
     fn openssl_available() -> Option<String> {

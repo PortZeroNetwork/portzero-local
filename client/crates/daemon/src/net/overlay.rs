@@ -70,6 +70,18 @@ fn default_dns_listen() -> SocketAddr {
     }
 }
 
+/// The address the scoped OS resolver is pointed at with the default overlay
+/// configuration — and, equivalently, the address a client can send
+/// `*.portzero.local` DNS queries to and reach the embedded DNS server.
+///
+/// macOS: `127.0.0.1:10053`; Linux/others: the TUN gateway `10.254.0.1:53`;
+/// Windows: `127.0.0.1:53`. Exposed for the `portzero doctor` diagnostics
+/// command, which probes the embedded DNS server directly and inspects the
+/// scoped resolver config, both of which need this exact address.
+pub fn default_resolver_dns_addr() -> SocketAddr {
+    resolver_dns_addr(default_dns_listen())
+}
+
 fn resolver_dns_addr(listen_addr: SocketAddr) -> SocketAddr {
     #[cfg(target_os = "windows")]
     {

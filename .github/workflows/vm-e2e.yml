@@ -1,0 +1,254 @@
+name: VM E2E (Parallels)
+
+# Hardware-in-the-loop coverage that CI's hosted runners can't give: real
+# installers, real trust stores, real TUN/wintun adapters, driven end to end
+# on genuine Windows/Linux/macOS guests. See vmtest/README.md.
+#
+# windows/linux binaries are built on hosted runners (build-windows,
+# build-linux below) and pushed into the guests, so vm-test always exercises
+# the commit under test — not whatever was last baked into a VM's "built"
+# snapshot by hand. macOS builds directly on the self-hosted runner (which
+# already runs macOS) and pushes its own binary in; see vmtest/scripts/vm.sh.
+#
+# Runs on the org's one self-hosted macOS runner, which also hosts the
+# Parallels VMs under test. vm-test stops any other running VM on the host
+# (one-VM-at-a-time enforcement) and reuses this one Mac's Parallels
+# install, so it isn't free of side effects on a machine also used
+# interactively — acceptable for this org's workflow, worth knowing if that
+# changes.
+on:
+  pull_request:
+    branches:
+      - develop
+      - release/current
+  push:
+    branches:
+      - develop
+      - release/current
+  workflow_dispatch:
+    inputs:
+      staging:
+        description: "Also run the real cloud-tunnel E2E against staging (creates a throwaway staging test account per platform each run)"
+        type: boolean
+        default: true
+
+concurrency:
+  # Only one vm-test can meaningfully run at a time (single physical Mac,
+  # single set of VMs) — queue rather than cancel, so a cancellation can't
+  # land mid-test and leave a guest daemon wedged.
+  group: vm-e2e
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-windows:
+    name: Build windows binary
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p portzero-cli --bin portzero
+      - uses: actions/upload-artifact@v5
+        with:
+          name: portzero-windows
+          path: target/release/portzero.exe
+          retention-days: 1
+
+  build-linux:
+    name: Build linux binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p portzero-cli --bin portzero
+      - uses: actions/upload-artifact@v5
+        with:
+          name: portzero-linux
+          path: target/release/portzero
+          retention-days: 1
+
+  # Real installable artifacts for the lifecycle test (install -> verify ->
+  # uninstall -> assert-clean). Unlike vm-test's raw binaries, these are the
+  # actual package a user installs, so the guest exercises the real postinst /
+  # prerm (Linux) and the real MSI custom actions (Windows).
+  package-linux-deb:
+    name: Build linux .deb (lifecycle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p portzero-cli --bin portzero
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+      - name: Build .deb
+        run: cargo deb -p portzero-cli --no-build
+      - uses: actions/upload-artifact@v5
+        with:
+          name: portzero-deb
+          path: target/debian/*.deb
+          retention-days: 1
+
+  package-windows-msi:
+    name: Build windows MSI (lifecycle, unsigned)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p portzero-cli --bin portzero
+      # Assemble the MSI SourceDir exactly as release.yml's "Package (Windows)"
+      # does (wintun + VC++ redistributable DLLs the .wxs lists as components),
+      # then build an UNSIGNED MSI. Signing is release-only; msiexec installs an
+      # unsigned MSI fine under the elevated/SYSTEM context the guest runs in.
+      - name: Cache wintun
+        uses: actions/cache@v4
+        with:
+          path: wintun.zip
+          key: wintun-0.14.1
+      - name: Package payload
+        shell: pwsh
+        run: |
+          $staging = "portzero-windows-amd64"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item "target\release\portzero.exe" "$staging\"
+
+          if (-not (Test-Path "wintun.zip")) {
+            Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "wintun.zip" -TimeoutSec 60
+          }
+          Expand-Archive -Path "wintun.zip" -DestinationPath "wintun" -Force
+          Copy-Item "wintun\wintun\bin\amd64\wintun.dll" "$staging\"
+
+          $vswhere = Join-Path "${env:ProgramFiles(x86)}" "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -requiresAny `
+            -requires Microsoft.VisualStudio.Component.VC.Redist.14.Latest Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          $redistRoot = Join-Path $vsPath "VC\Redist\MSVC"
+          $redistVersionDir = Get-ChildItem -Directory -Path $redistRoot |
+            Where-Object { $_.Name -match '^\d+\.' -and (Test-Path (Join-Path $_.FullName "x64")) } |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          $x64Root = Join-Path $redistVersionDir.FullName "x64"
+          $requiredDlls = @(
+            "concrt140.dll","msvcp140.dll","msvcp140_1.dll","msvcp140_2.dll",
+            "msvcp140_atomic_wait.dll","msvcp140_codecvt_ids.dll","vccorlib140.dll",
+            "vcruntime140.dll","vcruntime140_1.dll","vcruntime140_threads.dll"
+          )
+          foreach ($dllName in $requiredDlls) {
+            $dll = Get-ChildItem -Path $x64Root -Recurse -File -Filter $dllName |
+              Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $dll) { throw "VC++ redistributable DLL not found: $dllName" }
+            Copy-Item $dll.FullName "$staging\" -Force
+          }
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: choco install wixtoolset --no-progress -y
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $sourceDir = (Resolve-Path ".\portzero-windows-amd64").Path
+          $wixRoot = "${env:ProgramFiles(x86)}\WiX Toolset*"
+          $candle = Get-ChildItem $wixRoot -Recurse -Filter candle.exe | Select-Object -First 1
+          $light = Get-ChildItem $wixRoot -Recurse -Filter light.exe | Select-Object -First 1
+          if (-not $candle -or -not $light) { throw "WiX candle/light not found" }
+          & $candle.FullName "-dProductVersion=0.0.0" "-dSourceDir=$sourceDir" -out "portzero.wixobj" "packaging\windows\portzero.wxs"
+          & $light.FullName -out "portzero-0.0.0-x86_64.msi" "portzero.wixobj"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: portzero-msi
+          path: "*.msi"
+          retention-days: 1
+
+  vm-test:
+    name: vm-test + vm-test-staging (windows, linux, macos)
+    needs: [build-windows, build-linux, package-linux-deb, package-windows-msi]
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build macOS binary
+        # macOS guest testing is host-built-artifact-only (no toolchain in
+        # that guest); vm.sh pushes this into the guest itself.
+        run: cargo build --release -p portzero-cli --bin portzero
+
+      - name: Download windows binary
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-windows
+          path: vmtest/.downloaded-artifacts/windows
+
+      - name: Download linux binary
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-linux
+          path: vmtest/.downloaded-artifacts/linux
+
+      - name: Restore exec bit on the linux binary
+        # vm.sh looks for .downloaded-artifacts/<os>/portzero[.exe] (see
+        # downloaded_artifact_host_path); download-artifact doesn't preserve
+        # the exec bit.
+        run: chmod +x vmtest/.downloaded-artifacts/linux/portzero
+
+      - name: Download linux .deb (lifecycle)
+        # lifecycle-linux.sh's find_deb looks here first.
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-deb
+          path: vmtest/.downloaded-artifacts/linux
+
+      - name: Download windows MSI (lifecycle)
+        # lifecycle-windows.ps1's Find-Msi looks here first.
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-msi
+          path: vmtest/.downloaded-artifacts/windows
+
+      - name: vm-test (local overlay, no cloud/secrets — windows, linux, macos in series)
+        run: just vm-test
+
+      - name: vm-test-lifecycle (real install -> verify -> UNINSTALL -> assert-clean)
+        # The audit's highest-priority gap: proves uninstall removes the trusted
+        # CA, the .portzero.local DNS resolver/pin, the autostart service, and
+        # the TUN interface — no residue. Linux installs the real .deb, Windows
+        # the real MSI, macOS runs the privileged setup/teardown flow. macOS
+        # additionally exercises a real offline `brew install` of a formula
+        # generated from the host-built tarball (SKIPs if Homebrew isn't in the
+        # golden snapshot).
+        run: just vm-test-lifecycle
+
+      - name: vm-test-upgrade (prior version -> new version, assert no duplication)
+        # Prior-version upgrade dup-checks on all three guests: one hosts pin +
+        # unit (Linux), WiX <MajorUpgrade> single product/task/NRPT/adapter
+        # (Windows), single LaunchDaemon/resolver/keychain-CA/hosts pin (macOS).
+        # The prior artifact is fetched via gh, or the script SKIPs cleanly
+        # (never a false fail) when none is available (e.g. before the first
+        # release, or a pristine guest without gh). Linux upgrade is also
+        # covered on hosted CI (ci.yml: lifecycle-upgrade-linux).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: just vm-test-upgrade
+
+      - name: vm-test-staging (real cloud tunnel against staging — windows, linux, macos in series)
+        # Runs on every pull_request/push; a manual dispatch can pass
+        # staging=false to skip it. NOTE: on push/PR `inputs.staging` is null,
+        # and GitHub's loose comparison treats null == false as EQUAL, so the
+        # old `inputs.staging != false` silently skipped this leg on every
+        # push — gate on the event name instead.
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.staging }}
+        # Rotated seed token: read from the same host-side file the
+        # interactive scripts already default to (this runner IS the host
+        # that owns that file — no GitHub secret needed). See
+        # STAGING_SECRETS_HOST_DEFAULT in vmtest/scripts/vm.sh.
+        run: just vm-test-staging

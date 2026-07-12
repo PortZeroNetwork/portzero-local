@@ -32,6 +32,17 @@ enum Probe {
 /// `portzero wait <domain> [--healthy] [--timeout <secs>]`.
 pub async fn wait(domain: &str, healthy: bool, timeout: Option<u64>) -> Result<()> {
     let config = DaemonConfig::load();
+    wait_with_config(&config, domain, healthy, timeout).await
+}
+
+/// Core of `wait()`, parameterized over the `DaemonConfig` so tests can point
+/// it at a throwaway state directory instead of the real `~/.portzero`.
+async fn wait_with_config(
+    config: &DaemonConfig,
+    domain: &str,
+    healthy: bool,
+    timeout: Option<u64>,
+) -> Result<()> {
     let target = domain.trim().to_string();
     let timeout = Duration::from_secs(timeout.unwrap_or(DEFAULT_TIMEOUT_SECS));
     let deadline = Instant::now() + timeout;
@@ -49,7 +60,7 @@ pub async fn wait(domain: &str, healthy: bool, timeout: Option<u64>) -> Result<(
     let mut last_reason: String;
 
     loop {
-        match probe(&config, &client, &target, healthy).await {
+        match probe(config, &client, &target, healthy).await {
             Probe::Ready => {
                 println!("{target} is ready");
                 return Ok(());
@@ -157,4 +168,244 @@ fn edge_status(config: &DaemonConfig, domain: &str) -> Option<String> {
     map.into_iter()
         .find(|(d, _)| d.eq_ignore_ascii_case(domain))
         .map(|(_, status)| status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use portzero_daemon::discovery::ServiceSource;
+    use portzero_daemon::route_table::OverlayRoute;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Build a `DaemonConfig` pointed at a fresh, uniquely-named temp
+    /// directory so tests never collide or touch a real `~/.portzero`.
+    fn temp_config(tag: &str) -> DaemonConfig {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "portzero-wait-test-{tag}-{}-{n}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp state dir");
+        DaemonConfig {
+            state_dir: dir,
+            ..DaemonConfig::default()
+        }
+    }
+
+    fn cleanup(config: &DaemonConfig) {
+        let _ = std::fs::remove_dir_all(&config.state_dir);
+    }
+
+    fn write_cloud_route_status(config: &DaemonConfig, domain: &str, status: &str) {
+        let mut map = std::collections::HashMap::new();
+        map.insert(domain.to_string(), status.to_string());
+        std::fs::write(
+            config.cloud_route_status_path(),
+            serde_json::to_string(&map).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn overlay_route(domain: &str, service_port: u16, health_path: Option<&str>) -> OverlayRoute {
+        OverlayRoute {
+            domain: domain.to_string(),
+            domain_template: domain.to_string(),
+            substitutions: Default::default(),
+            service_port,
+            real_addr: "127.0.0.1:0".to_string(),
+            health_path: health_path.map(|s| s.to_string()),
+            pid: 1234,
+            source: ServiceSource::Process { cwd: None },
+        }
+    }
+
+    fn write_overlay(config: &DaemonConfig, routes: Vec<OverlayRoute>) {
+        let state = portzero_daemon::route_table::OverlayState {
+            overlay_active: true,
+            routes,
+        };
+        state.save(&config.overlay_path()).unwrap();
+    }
+
+    // --- edge_status ---
+
+    #[test]
+    fn edge_status_none_when_no_file() {
+        let config = temp_config("edge-none");
+        assert_eq!(edge_status(&config, "api.example.portzero.cloud"), None);
+        cleanup(&config);
+    }
+
+    #[test]
+    fn edge_status_matches_case_insensitively() {
+        let config = temp_config("edge-ci");
+        write_cloud_route_status(&config, "Api.Example.Portzero.Cloud", "paused");
+        assert_eq!(
+            edge_status(&config, "api.example.portzero.cloud"),
+            Some("paused".to_string())
+        );
+        cleanup(&config);
+    }
+
+    // --- probe() ---
+
+    #[tokio::test]
+    async fn probe_paused_short_circuits_before_lookup() {
+        let config = temp_config("probe-paused");
+        write_cloud_route_status(&config, "api.example.portzero.cloud", "paused");
+        let client = reqwest::Client::new();
+        let outcome = probe(&config, &client, "api.example.portzero.cloud", false).await;
+        assert!(matches!(outcome, Probe::Paused));
+        cleanup(&config);
+    }
+
+    #[tokio::test]
+    async fn probe_not_yet_when_tunnel_undiscovered() {
+        let config = temp_config("probe-undiscovered");
+        let client = reqwest::Client::new();
+        let outcome = probe(&config, &client, "nope.portzero.local", false).await;
+        match outcome {
+            Probe::NotYet(reason) => assert!(reason.contains("not discovered")),
+            _ => panic!("expected NotYet"),
+        }
+        cleanup(&config);
+    }
+
+    #[tokio::test]
+    async fn probe_ready_when_discovered_and_no_health_required() {
+        let config = temp_config("probe-ready");
+        write_overlay(
+            &config,
+            vec![overlay_route("web.portzero.local", 8080, None)],
+        );
+        let client = reqwest::Client::new();
+        let outcome = probe(&config, &client, "web.portzero.local", false).await;
+        assert!(matches!(outcome, Probe::Ready));
+        cleanup(&config);
+    }
+
+    #[tokio::test]
+    async fn probe_not_yet_when_health_declared_and_unreachable() {
+        let config = temp_config("probe-health-unreachable");
+        write_overlay(
+            &config,
+            vec![overlay_route("db.portzero.local", 1, Some("/health"))],
+        );
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        // "db.portzero.local" won't resolve in a sandbox with no overlay running,
+        // so the health probe fails with a DNS/connect error — exercising the
+        // NotYet(reason) path without needing a real overlay network.
+        let outcome = probe(&config, &client, "db.portzero.local", false).await;
+        match outcome {
+            Probe::NotYet(reason) => assert!(!reason.is_empty()),
+            _ => panic!("expected NotYet due to unreachable health path"),
+        }
+        cleanup(&config);
+    }
+
+    // --- poll_health() ---
+
+    #[tokio::test]
+    async fn poll_health_true_on_2xx() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let tunnel = TunnelUrl {
+            domain: "test.portzero.local".to_string(),
+            url: format!("http://{addr}"),
+            health_path: None,
+        };
+        let result = poll_health(&client, &tunnel, "/health").await;
+        handle.join().unwrap();
+        assert_eq!(result, Ok(true));
+    }
+
+    #[tokio::test]
+    async fn poll_health_err_on_connection_failure() {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let tunnel = TunnelUrl {
+            domain: "dead.portzero.local".to_string(),
+            // Port 1 is reserved (tcpmux) and virtually never has a listener,
+            // so the connection is refused immediately.
+            url: "http://127.0.0.1:1".to_string(),
+            health_path: None,
+        };
+        let result = poll_health(&client, &tunnel, "/health").await;
+        assert!(result.is_err());
+    }
+
+    // --- wait_with_config() — only scenarios that resolve without a real
+    // sleep. A `--timeout 0` request means the deadline has already passed by
+    // the time the loop checks it, so the timeout branch fires on the first
+    // iteration without ever hitting `tokio::time::sleep`. ---
+
+    #[tokio::test]
+    async fn wait_bails_immediately_when_paused() {
+        let config = temp_config("wait-paused");
+        write_cloud_route_status(&config, "api.example.portzero.cloud", "paused");
+        let err = wait_with_config(&config, "api.example.portzero.cloud", false, Some(0))
+            .await
+            .expect_err("expected paused tunnel to bail");
+        let msg = err.to_string();
+        assert!(msg.contains("paused at the edge"), "message was: {msg}");
+        cleanup(&config);
+    }
+
+    #[tokio::test]
+    async fn wait_times_out_with_reason_when_never_discovered() {
+        let config = temp_config("wait-timeout");
+        let err = wait_with_config(&config, "never.portzero.local", false, Some(0))
+            .await
+            .expect_err("expected timeout");
+        let msg = err.to_string();
+        assert!(msg.contains("Timed out after 0s"), "message was: {msg}");
+        assert!(msg.contains("never.portzero.local"), "message was: {msg}");
+        assert!(msg.contains("not discovered yet"), "message was: {msg}");
+        assert!(!msg.contains("serving its health path"));
+        cleanup(&config);
+    }
+
+    #[tokio::test]
+    async fn wait_times_out_mentions_health_path_when_healthy_flag_set() {
+        let config = temp_config("wait-timeout-healthy");
+        let err = wait_with_config(&config, "never.portzero.local", true, Some(0))
+            .await
+            .expect_err("expected timeout");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("serving its health path"),
+            "message was: {msg}"
+        );
+        cleanup(&config);
+    }
+
+    #[tokio::test]
+    async fn wait_returns_ok_when_tunnel_already_ready() {
+        let config = temp_config("wait-ready");
+        write_overlay(
+            &config,
+            vec![overlay_route("web.portzero.local", 8080, None)],
+        );
+        wait_with_config(&config, "web.portzero.local", false, Some(0))
+            .await
+            .expect("expected immediate readiness");
+        cleanup(&config);
+    }
 }

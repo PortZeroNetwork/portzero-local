@@ -9,12 +9,13 @@ mod auth;
 mod autostart;
 mod browser;
 mod daemon;
+mod doctor;
 mod export;
 mod inspect;
 mod mcp;
+mod review;
 mod setup;
 mod skill;
-mod team;
 mod trust;
 mod update;
 mod wait;
@@ -23,7 +24,7 @@ mod wait;
 #[command(
     name = "portzero",
     version,
-    about = "Expose local services via portzero.cloud tunnels"
+    about = "Eliminate port conflicts: stable *.portzero.local and cloud tunnel names for your dev services"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -48,6 +49,15 @@ enum Command {
     Restart,
     /// Show daemon and tunnel status.
     Status,
+
+    /// Diagnose the overlay, DNS, and TLS path in one command.
+    ///
+    /// Runs a series of named checks (daemon running, overlay active, scoped
+    /// resolver, embedded DNS, end-to-end resolution, local CA trust,
+    /// per-tunnel reachability, cloud state), printing pass/warn/fail with a
+    /// concrete fix on failure. Exits non-zero if any check fails. Works even
+    /// when the daemon is not running.
+    Doctor,
 
     /// Print the resolved URL for a tunnel domain (script-safe: only the URL
     /// is written to stdout).
@@ -106,9 +116,31 @@ enum Command {
     /// Show the currently authenticated user.
     Whoami,
 
-    /// Manage teams.
-    #[command(subcommand)]
-    Team(TeamCommand),
+    /// Upload a review record (branch commits + diff) to portzero.cloud so
+    /// feedback threads pinned on your tunneled app link back to the code.
+    /// Commit messages containing "Fixes PZ-<n>" advance the matching
+    /// feedback thread to fix-proposed automatically.
+    Review {
+        /// Base ref to diff against (default: origin's default branch, else "main").
+        #[arg(long)]
+        base: Option<String>,
+
+        /// Tunnel domain hosting the live app for this review
+        /// (default: auto-detected from discovered cloud tunnels).
+        #[arg(long)]
+        domain: Option<String>,
+
+        /// Project name (default: auto-detected from the git repository).
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Open the review record in the dashboard after upload.
+        #[arg(long)]
+        open: bool,
+    },
+
+    /// Team management has moved to the dashboard.
+    Team,
 
     /// Manage starting the daemon automatically at boot.
     #[command(subcommand)]
@@ -121,6 +153,30 @@ enum Command {
     /// Install AI coding-agent skills into your project.
     #[command(subcommand)]
     Skill(SkillCommand),
+
+    /// Manage the discovery daemon (grouped aliases for the top-level
+    /// `start` / `stop` / `restart` / `status` commands).
+    #[command(subcommand)]
+    Daemon(DaemonCommand),
+}
+
+#[derive(Subcommand)]
+enum DaemonCommand {
+    /// Start the discovery daemon and tunnel connection.
+    Start {
+        /// Run in the foreground instead of daemonizing (used internally).
+        #[arg(long, hide = true)]
+        foreground: bool,
+        /// Do not automatically open the dashboard in a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Stop the discovery daemon.
+    Stop,
+    /// Restart the discovery daemon.
+    Restart,
+    /// Show daemon and tunnel status.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -162,19 +218,6 @@ enum AutostartCommand {
     Status,
 }
 
-#[derive(Subcommand)]
-enum TeamCommand {
-    /// List teams you belong to.
-    List,
-    /// Invite a user to your team.
-    Invite {
-        /// Email address to invite.
-        email: String,
-    },
-    /// List members of the current team and their environments.
-    Members,
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -205,6 +248,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Stop => daemon::stop()?,
         Command::Restart => daemon::restart()?,
         Command::Status => daemon::status().await?,
+        Command::Doctor => doctor::run().await?,
         Command::Url { domain } => export::url(&domain)?,
         Command::Env { github } => export::env(github)?,
         Command::Wait {
@@ -227,11 +271,16 @@ async fn main() -> anyhow::Result<()> {
         Command::Logout => auth::logout()?,
         Command::Whoami => auth::whoami().await?,
 
-        Command::Team(cmd) => match cmd {
-            TeamCommand::List => team::list().await?,
-            TeamCommand::Invite { email } => team::invite(&email).await?,
-            TeamCommand::Members => team::members().await?,
-        },
+        Command::Review {
+            base,
+            domain,
+            project,
+            open,
+        } => review::run(base, domain, project, open).await?,
+
+        Command::Team => {
+            println!("Team management has moved to https://app.portzero.cloud/teams");
+        }
         Command::Autostart(cmd) => match cmd {
             AutostartCommand::Enable => autostart::enable()?,
             AutostartCommand::Disable => autostart::disable()?,
@@ -244,6 +293,21 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Skill(cmd) => match cmd {
             SkillCommand::Install { dir, force, print } => skill::install(dir, force, print)?,
+        },
+        Command::Daemon(cmd) => match cmd {
+            DaemonCommand::Start {
+                foreground,
+                no_browser,
+            } => {
+                if foreground {
+                    daemon::start_foreground().await?;
+                } else {
+                    daemon::start(!no_browser)?;
+                }
+            }
+            DaemonCommand::Stop => daemon::stop()?,
+            DaemonCommand::Restart => daemon::restart()?,
+            DaemonCommand::Status => daemon::status().await?,
         },
     }
 

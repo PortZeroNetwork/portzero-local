@@ -150,3 +150,131 @@ fn describe_source(source: &ServiceSource, pid: u32) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use portzero_daemon::discovery_loop::DaemonConfig;
+    use portzero_daemon::route_table::OverlayRoute;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Build a `DaemonConfig` pointed at a fresh, uniquely-named temp
+    /// directory so tests never collide or touch a real `~/.portzero`.
+    fn temp_config(tag: &str) -> DaemonConfig {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "portzero-inspect-test-{tag}-{}-{n}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp state dir");
+        DaemonConfig {
+            state_dir: dir,
+            ..DaemonConfig::default()
+        }
+    }
+
+    fn cleanup(config: &DaemonConfig) {
+        let _ = std::fs::remove_dir_all(&config.state_dir);
+    }
+
+    // --- describe_source() ---
+
+    #[test]
+    fn describe_source_process_with_cwd() {
+        let source = ServiceSource::Process {
+            cwd: Some(std::path::PathBuf::from("/home/user/app")),
+        };
+        assert_eq!(
+            describe_source(&source, 42),
+            "process pid 42 (/home/user/app)"
+        );
+    }
+
+    #[test]
+    fn describe_source_process_without_cwd() {
+        let source = ServiceSource::Process { cwd: None };
+        assert_eq!(describe_source(&source, 42), "process pid 42");
+    }
+
+    #[test]
+    fn describe_source_container_truncates_id() {
+        let source = ServiceSource::Container {
+            id: "abcdef0123456789fulllength".to_string(),
+            name: "web".to_string(),
+        };
+        assert_eq!(describe_source(&source, 0), "container web (abcdef012345)");
+    }
+
+    #[test]
+    fn describe_source_container_short_id_not_padded() {
+        let source = ServiceSource::Container {
+            id: "ab12".to_string(),
+            name: "web".to_string(),
+        };
+        assert_eq!(describe_source(&source, 0), "container web (ab12)");
+    }
+
+    // --- render() ---
+
+    #[test]
+    fn render_reports_stopped_daemon_and_no_tunnels_when_empty() {
+        let config = temp_config("empty");
+        let out = render(&config);
+        assert!(out.contains("Daemon: stopped"));
+        assert!(out.contains("none discovered"));
+        assert!(out.contains("none observed yet"));
+        cleanup(&config);
+    }
+
+    #[test]
+    fn render_lists_discovered_tunnels_sorted_by_domain() {
+        let config = temp_config("tunnels");
+        let state = portzero_daemon::route_table::OverlayState {
+            overlay_active: true,
+            routes: vec![
+                OverlayRoute {
+                    domain: "zeta.portzero.local".to_string(),
+                    domain_template: "zeta.portzero.local".to_string(),
+                    substitutions: Default::default(),
+                    service_port: 8080,
+                    real_addr: "127.0.0.1:9000".to_string(),
+                    health_path: Some("/healthz".to_string()),
+                    pid: 99,
+                    source: ServiceSource::Process { cwd: None },
+                },
+                OverlayRoute {
+                    domain: "alpha.portzero.local".to_string(),
+                    domain_template: "alpha.portzero.local".to_string(),
+                    substitutions: Default::default(),
+                    service_port: 3000,
+                    real_addr: "127.0.0.1:9001".to_string(),
+                    health_path: None,
+                    pid: 100,
+                    source: ServiceSource::Process { cwd: None },
+                },
+            ],
+        };
+        state.save(&config.overlay_path()).unwrap();
+
+        let out = render(&config);
+        let alpha_pos = out.find("alpha.portzero.local").expect("alpha present");
+        let zeta_pos = out.find("zeta.portzero.local").expect("zeta present");
+        assert!(alpha_pos < zeta_pos, "expected alpha before zeta:\n{out}");
+        assert!(out.contains("health: /healthz"));
+        assert!(out.contains("health: -"));
+        assert!(out.contains("url:    http://zeta.portzero.local:8080"));
+        cleanup(&config);
+    }
+
+    #[test]
+    fn render_shows_running_when_daemon_pid_file_present_and_alive() {
+        let config = temp_config("running");
+        // Use our own PID so `is_process_alive` reports true without needing
+        // a real daemon subprocess.
+        std::fs::write(config.pid_path(), std::process::id().to_string()).unwrap();
+        let out = render(&config);
+        assert!(out.contains("Daemon: running"));
+        cleanup(&config);
+    }
+}

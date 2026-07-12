@@ -16,17 +16,19 @@ GitHub Actions is not free. The main CI job runs:
 - `cargo fmt -- --check`
 - `cargo clippy --workspace -- -D warnings`
 - `cargo test --workspace`
+- `./scripts/check-file-size-budget.sh` (the `file-size-budget` job — see [Complexity budgets](complexity-budgets.md))
 
 (plus privileged E2E on a separate job).
 
 Run the equivalent locally before you push:
 
 ```bash
-just verify          # fmt + clippy (-D) + test
+just verify          # fmt + clippy (-D) + test + complexity
 # or individually
 just fmt-check
 just clippy
 just test
+just complexity      # file-size budget on client/*.rs; see docs/dev/complexity-budgets.md
 ```
 
 These are the same commands the CI uses on Linux (and the Rust parts of the other OS jobs).
@@ -35,7 +37,7 @@ These are the same commands the CI uses on Linux (and the Rust parts of the othe
 
 We use **lefthook** (a fast, lightweight, cross-platform git hooks framework) so the checks run automatically:
 
-- `pre-commit`: `just fmt-check`
+- `pre-commit`: `just fmt-check` + `just complexity --changed` (file-size budget, staged `client/*.rs` files only)
 - `pre-push`  : `just fmt-check` + `just clippy` + `just test`
 
 ### One-time setup on a machine (Linux, macOS, or Windows)

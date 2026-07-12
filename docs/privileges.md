@@ -46,7 +46,7 @@ fall through to systemd-resolved, and resolve via the overlay DNS as normal.
 The simplest path for local development is to start the daemon with `sudo`:
 
 ```bash
-sudo -E port-zero start --foreground
+sudo -E portzero start --foreground
 ```
 
 `-E` preserves your environment.
@@ -79,7 +79,7 @@ with `sudo` (see below); the command fails fast with that hint when run without
 root:
 
 ```bash
-sudo port-zero autostart enable
+sudo portzero autostart enable
 ```
 
 ### macOS: why a LaunchDaemon (not a LaunchAgent)

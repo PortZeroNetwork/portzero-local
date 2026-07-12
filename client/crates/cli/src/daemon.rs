@@ -478,3 +478,68 @@ pub fn restart() -> Result<()> {
 
     start(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use portzero_daemon::discovery::ServiceSource;
+
+    // --- health_cell() ---
+
+    #[test]
+    fn health_cell_shows_dash_when_no_health_path() {
+        assert_eq!(health_cell(None), "-");
+    }
+
+    #[test]
+    fn health_cell_shows_declared_path() {
+        assert_eq!(health_cell(Some("/healthz")), "/healthz");
+    }
+
+    // --- format_source() ---
+
+    #[test]
+    fn format_source_process_shows_pid() {
+        let source = ServiceSource::Process { cwd: None };
+        assert_eq!(format_source(&source, 4242), "PID 4242");
+    }
+
+    #[test]
+    fn format_source_process_ignores_cwd() {
+        let source = ServiceSource::Process {
+            cwd: Some(std::path::PathBuf::from("/home/user/app")),
+        };
+        assert_eq!(format_source(&source, 1), "PID 1");
+    }
+
+    #[test]
+    fn format_source_container_truncates_id_to_12_chars() {
+        let source = ServiceSource::Container {
+            id: "abcdef0123456789fulllength".to_string(),
+            name: "web".to_string(),
+        };
+        assert_eq!(format_source(&source, 0), "container abcdef012345");
+    }
+
+    #[test]
+    fn format_source_container_short_id_is_not_padded() {
+        let source = ServiceSource::Container {
+            id: "ab12".to_string(),
+            name: "web".to_string(),
+        };
+        assert_eq!(format_source(&source, 0), "container ab12");
+    }
+
+    // --- overlay_inactive_hint() ---
+    //
+    // This helper is `#[cfg(target_os = ...)]`-gated internally; only the
+    // branch for the OS we're compiling/testing on is present, so we can only
+    // assert the shape of whatever variant is active here.
+
+    #[test]
+    fn overlay_inactive_hint_is_nonempty_and_mentions_overlay() {
+        let hint = overlay_inactive_hint();
+        assert!(!hint.is_empty());
+        assert!(hint.contains("overlay network"));
+    }
+}
