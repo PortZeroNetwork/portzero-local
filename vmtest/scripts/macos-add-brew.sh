@@ -29,7 +29,7 @@ set -euo pipefail
 
 REPO_HOST="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VM="macOS 15.7.7"
-VMSH="$REPO_HOST/vmtest/scripts/vm.sh"
+VMSH="vmkit"   # VM control plane (brew install portzeronetwork/portzero/vmkit)
 
 has_snap() { # <snapshot-name> — prlctl snapshot-list only shows names with -i <id>
     local name="$1" id
@@ -40,24 +40,24 @@ has_snap() { # <snapshot-name> — prlctl snapshot-list only shows names with -i
 }
 
 echo ">> [1/4] reset '$VM' to its pristine 'built' reset point"
-bash "$VMSH" reset "$VM" built
+"$VMSH" reset "$VM" built
 
 if has_snap "portzero-pre-brew"; then
     echo ">> [2/4] 'portzero-pre-brew' already exists — keeping the original pristine snapshot, not re-taking it"
 else
     echo ">> [2/4] preserving pristine state as 'portzero-pre-brew'"
-    bash "$VMSH" checkpoint "$VM" pre-brew
+    "$VMSH" checkpoint "$VM" pre-brew
 fi
 
 echo ">> [3/4] installing Homebrew in the guest (CLT + brew; several minutes)"
-VM_RUN_TIMEOUT="${VM_RUN_TIMEOUT:-2400}" \
-    bash "$VMSH" run "$VM" vmtest/scripts/macos-install-homebrew.sh
+VMKIT_RUN_TIMEOUT="${VMKIT_RUN_TIMEOUT:-2400}" \
+    "$VMSH" run "$VM" vmtest/scripts/macos-install-homebrew.sh
 
 echo ">> [4/5] re-capturing 'portzero-built' with Homebrew baked in"
-bash "$VMSH" checkpoint "$VM" built
+"$VMSH" checkpoint "$VM" built
 
 echo ">> [5/5] capturing the permanent 'portzero-toolchain' anchor (never auto-overwritten)"
-bash "$VMSH" checkpoint "$VM" toolchain
+"$VMSH" checkpoint "$VM" toolchain
 
 cat <<EOF
 

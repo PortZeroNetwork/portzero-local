@@ -1,5 +1,11 @@
 # Parallels VM system-test harness
 
+> The VM control plane now lives in [vmkit](https://github.com/PortZeroNetwork/vmkit)
+> (`brew install portzeronetwork/portzero/vmkit`): snapshot ladder, boot policy,
+> guarded guest exec, doctor, and the human-setup contract. This repo keeps only
+> what is portzero-specific: flavor scripts, provisioning, the installer cache,
+> and `./vmkit.conf`. Machine inventory: `~/.config/vmkit/host.conf`.
+
 Host-driven system tests for portzero against real Windows / Linux / macOS
 guests, run from the macOS host that owns the Parallels VMs. The point is
 coverage the unit/E2E suites can't give: real trust stores, real TUN/wintun
@@ -85,7 +91,7 @@ just vm-repro-trust "Windows Pro"    # the trust-install hang probe
 `just vm-test <platform>` resets that VM to its `built` checkpoint and runs the
 default local-overlay E2E (`vmtest/scripts/e2e-local-overlay.ps1`/`.sh`).
 `just vm-test` with no argument runs windows, then linux, then macos in
-series — `vm.sh` stops any other running VM before each reset, so only one
+series — `vmkit` stops any other running VM before each reset, so only one
 guest is ever up at a time.
 
 ```

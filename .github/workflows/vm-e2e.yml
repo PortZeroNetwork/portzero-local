@@ -8,7 +8,7 @@ name: VM E2E (Parallels)
 # build-linux below) and pushed into the guests, so vm-test always exercises
 # the commit under test — not whatever was last baked into a VM's "built"
 # snapshot by hand. macOS builds directly on the self-hosted runner (which
-# already runs macOS) and pushes its own binary in; see vmtest/scripts/vm.sh.
+# already runs macOS) and pushes its own binary in; see ./vmkit.conf.
 #
 # Runs on the org's one self-hosted macOS runner, which also hosts the
 # Parallels VMs under test. vm-test stops any other running VM on the host
@@ -174,13 +174,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Ensure vmkit (VM control plane) is installed
+        # The harness runs through vmkit (see ./vmkit.conf and
+        # ~/.config/vmkit/host.conf on the runner; `vmkit doctor` validates the
+        # host). Installed via the tap so every checkout uses the same pinned
+        # version rather than whatever scripts are lying around.
+        run: |
+          command -v vmkit >/dev/null || brew install portzeronetwork/portzero/vmkit
+          vmkit version
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Build macOS binary
         # macOS guest testing is host-built-artifact-only (no toolchain in
-        # that guest); vm.sh pushes this into the guest itself.
+        # that guest); vmkit pushes this into the guest itself (see
+        # VMKIT_ARTIFACT_MACOS in ./vmkit.conf).
         run: cargo build --release -p portzero-cli --bin portzero
 
       - name: Download windows binary
@@ -196,7 +206,7 @@ jobs:
           path: vmtest/.downloaded-artifacts/linux
 
       - name: Restore exec bit on the linux binary
-        # vm.sh looks for .downloaded-artifacts/<os>/portzero[.exe] (see
+        # vmkit looks for .downloaded-artifacts/<os>/portzero[.exe] (see
         # downloaded_artifact_host_path); download-artifact doesn't preserve
         # the exec bit.
         run: chmod +x vmtest/.downloaded-artifacts/linux/portzero
@@ -250,5 +260,5 @@ jobs:
         # Rotated seed token: read from the same host-side file the
         # interactive scripts already default to (this runner IS the host
         # that owns that file — no GitHub secret needed). See
-        # STAGING_SECRETS_HOST_DEFAULT in vmtest/scripts/vm.sh.
+        # VMKIT_SECRETS_HOST_DEFAULT in ./vmkit.conf.
         run: just vm-test-staging
