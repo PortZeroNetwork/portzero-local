@@ -9,20 +9,26 @@
 Host-driven system tests for portzero against real Windows / Linux / macOS
 guests, run from the macOS host that owns the Parallels VMs. The point is
 coverage the unit/E2E suites can't give: real trust stores, real TUN/wintun
-adapters, real DNS, and — via `vm-test-lifecycle` — the real installer
-(install → use → **uninstall** → assert nothing is left behind), driven end to
-end on a genuine OS.
+adapters, real DNS, and the real installer (install → use → **uninstall** →
+assert nothing is left behind), driven end to end on a genuine OS.
 
-> **Two different things, don't conflate them.** `vm-test` runs the overlay
-> *smoke* (TUN + DNS + proxy) against the **raw binary** pushed into the guest —
-> it does NOT install a package and says nothing about install/uninstall.
-> `vm-test-lifecycle` installs the **real package** (Linux `.deb` via `dpkg`,
-> Windows signed MSI via `msiexec`, macOS an offline `brew install` of a
-> locally-generated formula **plus** the privileged `setup` flow the Homebrew
-> formula's `post_install` + caveats run), verifies the CA / DNS / autostart /
-> TUN artifacts landed, then runs the real uninstaller and asserts every one is
-> GONE. `vm-test-upgrade` layers on prior-version→new-version upgrade dup-checks.
-> If you want installer/uninstaller coverage, those are the recipes — see below.
+`just vm-test [platform]` is the one recipe you need: one VM reset per
+platform runs `install -> local-tunnel test -> upgrade -> cloud-tunnel test ->
+uninstall` in a single pass (`vmkit.conf`'s `combined` flavor, backed by
+`vmtest/scripts/combined-{linux,macos,windows}.{sh,ps1}`). It installs the
+**real package** (Linux `.deb` via `dpkg`, Windows signed MSI via `msiexec`,
+macOS an offline `brew install` of a locally-generated formula **plus** the
+privileged `setup` flow the Homebrew formula's `post_install` + caveats run)
+— the prior released version if one is available, else the new one directly —
+proves the real local overlay works, upgrades to the new version and asserts
+nothing got duplicated, proves the real cloud tunnel works against staging,
+then runs the real uninstaller and asserts every CA / DNS / autostart / TUN
+artifact is GONE. See "Running the combined e2e test" below.
+
+For iterating on one phase in isolation without paying for the whole
+sequence, `just vm-test-local` / `vm-test-staging` / `vm-test-lifecycle` /
+`vm-test-upgrade` run just that slice — see "Ad-hoc single-flavor debugging"
+below.
 
 ## Why this exists (and its one hard limit)
 
@@ -86,10 +92,12 @@ just vm-inventory "Windows Pro"      # what dev tooling the guest already has
 just vm-repro-trust "Windows Pro"    # the trust-install hang probe
 ```
 
-## Running the e2e smoke test
+## Running the combined e2e test
 
-`just vm-test <platform>` resets that VM to its `built` checkpoint and runs the
-default local-overlay E2E (`vmtest/scripts/e2e-local-overlay.ps1`/`.sh`).
+`just vm-test <platform>` resets that VM to its `built` checkpoint and runs
+the combined E2E (`vmkit.conf`'s `combined` flavor:
+`vmtest/scripts/combined-{linux,macos,windows}.{sh,ps1}`): install →
+local-tunnel test → upgrade → cloud-tunnel test → uninstall, all in one pass.
 `just vm-test` with no argument runs windows, then linux, then macos in
 series — `vmkit` stops any other running VM before each reset, so only one
 guest is ever up at a time.
@@ -101,16 +109,59 @@ just vm-test linux
 just vm-test macos
 ```
 
+Needs the real artifact staged where the combined scripts look (Linux
+`vmtest/.downloaded-artifacts/linux/*.deb`, Windows
+`vmtest/.downloaded-artifacts/windows/*.msi`, macOS the host-built binary,
+pushed in automatically via `vmkit.conf`'s `VMKIT_ARTIFACT_*`) —
+`vm-e2e.yml` stages these; locally, drop the artifact in or set
+`PORTZERO_DEB`/`PORTZERO_MSI`/`PORTZERO_EXE` in the guest. The prior-version
+artifact (`PORTZERO_DEB_OLD`/`PORTZERO_MSI_OLD`/`PORTZERO_EXE_OLD`) is
+fetched from the latest published release via `gh` if unset; the upgrade
+step SKIPs cleanly (never a false fail) when none is available. The
+cloud-tunnel step needs the rotated seed token (see `STAGING_SECRETS`/
+`VMKIT_SECRETS_HOST_DEFAULT` below) and SKIPs cleanly if none is found; set
+`COMBINED_SKIP_CLOUD=1` to skip that step outright.
+
+Each script prints greppable `PHASE=<name> ok=<true|false|SKIP>` lines and a
+final `RESULT=PASS|FAIL`; a leftover artifact or a broken tunnel yields
+`ok=false` and fails the run.
+
 For anything other than the default script/checkpoint, use
 `just vm-test-script "<vm>" vmtest/scripts/<name>.ps1 [checkpoint] [args...]`.
 
-## Lifecycle test: install → use → UNINSTALL → assert-clean
+## Ad-hoc single-flavor debugging
 
-`just vm-test-lifecycle [platform]` is the coverage a launch audit flagged as
-missing: the whole download→install→use→**uninstall**→(upgrade) path against the
-**real installer**, with every uninstall step *asserted*. Leftover trusted-CA or
-DNS-resolver residue after uninstall is the loud-complaint bug class, so it is
-proven gone, not assumed.
+`just vm-test-local` / `vm-test-staging` / `vm-test-lifecycle` /
+`vm-test-upgrade [platform]` run one slice of the combined flow in isolation,
+useful when iterating on a single phase without paying for the whole
+sequence:
+
+| Recipe               | What it runs                                                            |
+|-----------------------|--------------------------------------------------------------------------|
+| `vm-test-local`       | overlay smoke (TUN + DNS + proxy) against the raw pushed binary — no install, no cloud |
+| `vm-test-staging`     | cloud-tunnel smoke against the raw pushed binary — no install |
+| `vm-test-lifecycle`   | real install → verify → uninstall → assert-clean (no upgrade, no tunnel tests) |
+| `vm-test-upgrade`     | prior-version → new-version install, assert nothing duplicated (no tunnel tests) |
+
+```
+just vm-test-local linux
+just vm-test-upgrade windows
+```
+
+These map straight to `vmkit series <flavor> <platform>` for the
+`local`/`staging`/`lifecycle`/`upgrade` flavors declared in `vmkit.conf` —
+the same building blocks `combined` fuses together.
+
+## Lifecycle coverage: install → use → UNINSTALL → assert-clean
+
+The install→uninstall→assert-clean half of `vm-test`'s combined flow is the
+coverage a launch audit flagged as missing: the whole
+download→install→use→**uninstall** path against the **real installer**, with
+every uninstall step *asserted*. Leftover trusted-CA or DNS-resolver residue
+after uninstall is the loud-complaint bug class, so it is proven gone, not
+assumed. To exercise just this slice in isolation (no upgrade, no tunnel
+tests), use `just vm-test-lifecycle [platform]`, which runs
+`lifecycle-<os>.{sh,ps1}` — the same logic `combined-<os>` folds in.
 
 Per platform, `lifecycle-<os>.{sh,ps1}` install the real artifact, verify it
 landed, run the real uninstaller, then assert the artifacts are removed:
@@ -130,6 +181,9 @@ scripts read the artifact from where `vm-e2e.yml` stages it
 just vm-test-lifecycle            # all three, in series
 just vm-test-lifecycle linux
 ```
+
+(This is the `lifecycle` slice in isolation — `vm-test` runs the same logic as
+part of the combined flow.)
 
 **macOS delivery — what's real, what's not (honest scope).** macOS ships via
 Homebrew (a release `.tar.gz` + tap formula), *not* a `.pkg`. `lifecycle-macos.sh`
@@ -165,10 +219,14 @@ place with a real MSI-capable Windows guest and a real macOS keychain/LaunchDaem
 The **published** Homebrew formula's URL + sha256 are verified post-publish in
 `release.yml` (`verify-homebrew-artifacts`) — see the upgrade/release notes below.
 
-## Upgrade test: prior version → new version (all three platforms)
+## Upgrade coverage: prior version → new version (all three platforms)
 
-`upgrade-{linux,windows,macos}.{sh,ps1}` install a **prior** released version,
-then the new one over the top, and assert the in-place upgrade DUPLICATED nothing:
+The upgrade step of `vm-test`'s combined flow installs a **prior** released
+version, then the new one over the top, and asserts the in-place upgrade
+DUPLICATED nothing. To exercise just this slice in isolation (no tunnel
+tests), use `just vm-test-upgrade [platform]`, which runs
+`upgrade-{linux,windows,macos}.{sh,ps1}` — the same logic `combined-<os>`
+folds in:
 
 | Platform | Prior install → new install | Asserts (exactly one of each; no side-by-side) |
 |----------|-----------------------------|------------------------------------------------|
@@ -181,8 +239,9 @@ pinned with `PORTZERO_DEB_OLD` / `PORTZERO_MSI_OLD` / `PORTZERO_EXE_OLD`. Each
 script `SKIP`s cleanly (never a false pass) when no prior artifact is available —
 before the first release, or a network-pristine guest without `gh`. The Windows
 upgrade additionally SKIPs when the prior and new MSI carry the **same**
-`ProductVersion` (`<MajorUpgrade>` needs a version bump). Run all three with
-`just vm-test-upgrade` (wired into `vm-e2e.yml`); Linux also runs on hosted CI
+`ProductVersion` (`<MajorUpgrade>` needs a version bump). This runs as part of
+`just vm-test` on all three platforms (wired into `vm-e2e.yml`), or in
+isolation with `just vm-test-upgrade`; Linux also runs on hosted CI
 (`ci.yml`: `lifecycle-upgrade-linux`).
 
 ## Release-time smoke: published Homebrew formula (url + sha256)
