@@ -133,6 +133,14 @@ install:
         rm -f "$active" && cp "$cargo_bin" "$active"
     fi
 
+    # System-tray companion: a small GUI that shows daemon/tunnel health, starts
+    # the daemon if it isn't running, and offers start/restart/stop + HTTPS
+    # control. Best-effort — a tray build failure never aborts the daemon install.
+    echo "→ Building and installing the system-tray companion (portzero-tray)..."
+    cargo install --path client/crates/tray \
+      || echo "warning: portzero-tray build failed; continuing without the tray." >&2
+    cargo_bin_tray="$HOME/.cargo/bin/portzero-tray"
+
     OS="$(uname -s)"
     case "$OS" in
       Linux*)
@@ -164,6 +172,24 @@ install:
         echo "→ Starting daemon..."
         portzero start --no-browser
         open_dashboard || true
+        if [ -x "$cargo_bin_tray" ]; then
+          echo "→ Installing tray autostart (XDG) and launching it..."
+          mkdir -p "$HOME/.config/autostart"
+          {
+            printf '%s\n' '[Desktop Entry]'
+            printf '%s\n' 'Type=Application'
+            printf '%s\n' 'Name=PortZero Tray'
+            printf '%s\n' 'Comment=PortZero daemon status and controls'
+            printf '%s\n' "Exec=$cargo_bin_tray"
+            printf '%s\n' 'X-GNOME-Autostart-enabled=true'
+            printf '%s\n' 'NoDisplay=false'
+          } > "$HOME/.config/autostart/portzero-tray.desktop"
+          if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+            ( "$cargo_bin_tray" >/dev/null 2>&1 & )
+          else
+            echo "  (no desktop session detected; the tray will start at your next login)"
+          fi
+        fi
         ;;
       Darwin*)
         echo "→ Generating CA certificate for *.portzero.local HTTPS..."
@@ -191,6 +217,24 @@ install:
         echo "→ Opening dashboard..."
         open_dashboard || true
         echo "→ Daemon installed and started via LaunchDaemon."
+        if [ -x "$cargo_bin_tray" ]; then
+          echo "→ Installing tray LaunchAgent (per-user) and launching it..."
+          mkdir -p "$HOME/Library/LaunchAgents"
+          tray_plist="$HOME/Library/LaunchAgents/cloud.portzero.tray.plist"
+          {
+            printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+            printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+            printf '%s\n' '<plist version="1.0"><dict>'
+            printf '%s\n' '  <key>Label</key><string>cloud.portzero.tray</string>'
+            printf '%s\n' '  <key>ProgramArguments</key>'
+            printf '%s\n' "  <array><string>$cargo_bin_tray</string></array>"
+            printf '%s\n' '  <key>RunAtLoad</key><true/>'
+            printf '%s\n' '  <key>KeepAlive</key><true/>'
+            printf '%s\n' '</dict></plist>'
+          } > "$tray_plist"
+          launchctl unload "$tray_plist" 2>/dev/null || true
+          launchctl load "$tray_plist" 2>/dev/null || true
+        fi
         ;;
       MINGW*|MSYS*|CYGWIN*)
         echo "→ Installing scheduled task for autostart..."

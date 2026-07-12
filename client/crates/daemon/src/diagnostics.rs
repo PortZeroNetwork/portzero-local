@@ -20,6 +20,10 @@ const PORTZERO_LOCAL_DASHBOARD_IP: &str = "10.254.0.2";
 const PORTZERO_LOCAL_DASHBOARD_IPV4: Ipv4Addr = Ipv4Addr::new(10, 254, 0, 2);
 const PORTZERO_LOCAL_HTTP_URL: &str = "http://portzero.local/status.json";
 const ACTIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+/// Maximum number of tunnel domains probed per `run_diagnostics` pass. Overlay
+/// and cloud tunnels are each capped separately; if a user has more than this
+/// many tunnels, only the first N (sorted, for determinism) are probed.
+const TUNNEL_DNS_PROBE_CAP: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
@@ -1089,6 +1093,187 @@ async fn probe_portzero_local_http() -> Diagnostic {
     }
 }
 
+/// Returns true if `ip` falls inside the `10.254.0.0/16` overlay VIP range
+/// (the dashboard itself lives at `10.254.0.2`). IPv6 addresses are never
+/// part of the overlay range.
+fn ip_in_overlay_range(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.octets()[0] == 10 && v4.octets()[1] == 254,
+        IpAddr::V6(_) => false,
+    }
+}
+
+/// Outcome of an active DNS lookup for a single tunnel domain, decoupled from
+/// the real I/O in [`lookup_tunnel_domain`] so the classification below can be
+/// unit tested without performing a real DNS lookup.
+enum TunnelLookupResult {
+    TimedOut,
+    Failed(String),
+    Resolved(Vec<IpAddr>),
+}
+
+/// Classify the outcome of resolving a `.portzero.local` overlay tunnel
+/// domain into a `Diagnostic`, or `None` if it resolved healthily.
+fn classify_overlay_tunnel_dns(domain: &str, result: &TunnelLookupResult) -> Option<Diagnostic> {
+    match result {
+        TunnelLookupResult::TimedOut | TunnelLookupResult::Failed(_) => Some(Diagnostic {
+            id: "tunnel_dns_failed".into(),
+            severity: Severity::Warning,
+            category: "dns".into(),
+            title: format!("{domain} is not resolving"),
+            detail: format!(
+                "The local tunnel name {domain} did not resolve to an overlay address. {}",
+                lookup_failure_reason(result)
+            ),
+            fix: Some(Fix {
+                kind: FixKind::Manual,
+                description: "Run `portzero doctor` or check the scoped .portzero.local resolver."
+                    .to_string(),
+                command: Some("portzero doctor".to_string()),
+            }),
+        }),
+        TunnelLookupResult::Resolved(ips) => {
+            if ips.iter().any(|ip| ip_in_overlay_range(*ip)) {
+                None
+            } else {
+                Some(Diagnostic {
+                    id: "tunnel_dns_wrong_target".into(),
+                    severity: Severity::Warning,
+                    category: "dns".into(),
+                    title: format!("{domain} resolved to an unexpected address"),
+                    detail: format!(
+                        "The local tunnel name {domain} resolved to {} instead of an address in 10.254.0.0/16.",
+                        format_ip_list(ips)
+                    ),
+                    fix: Some(Fix {
+                        kind: FixKind::Manual,
+                        description:
+                            "Check for conflicting resolver rules or /etc/hosts entries overriding this tunnel name."
+                                .to_string(),
+                        command: None,
+                    }),
+                })
+            }
+        }
+    }
+}
+
+/// Classify the outcome of resolving a `*.tunnel.portzero.cloud` cloud tunnel
+/// domain into a `Diagnostic`, or `None` if it resolved.
+fn classify_cloud_tunnel_dns(domain: &str, result: &TunnelLookupResult) -> Option<Diagnostic> {
+    match result {
+        TunnelLookupResult::TimedOut | TunnelLookupResult::Failed(_) => Some(Diagnostic {
+            id: "cloud_tunnel_dns_failed".into(),
+            severity: Severity::Warning,
+            category: "dns".into(),
+            title: format!("{domain} is not resolving"),
+            detail: format!(
+                "The public DNS name for cloud tunnel {domain} did not resolve. This can be a \
+                 propagation delay after the tunnel was created, or the tunnel may be offline. {}",
+                lookup_failure_reason(result)
+            ),
+            fix: Some(Fix {
+                kind: FixKind::Manual,
+                description:
+                    "Check internet connectivity and confirm the tunnel is registered with portzero.cloud."
+                        .to_string(),
+                command: None,
+            }),
+        }),
+        TunnelLookupResult::Resolved(_) => None,
+    }
+}
+
+/// Render the reason a [`TunnelLookupResult`] failed, for use in diagnostic
+/// detail messages. Panics if called on `Resolved` (callers only reach this
+/// from the failure arms).
+fn lookup_failure_reason(result: &TunnelLookupResult) -> String {
+    match result {
+        TunnelLookupResult::TimedOut => "The active DNS probe timed out.".to_string(),
+        TunnelLookupResult::Failed(err) => format!("The active DNS probe failed: {err}"),
+        TunnelLookupResult::Resolved(_) => unreachable!("only called from failure arms"),
+    }
+}
+
+/// Determine which overlay and cloud tunnel domains should be probed, applying
+/// the "overlay must be active" gate and the per-list probe cap. Pure and
+/// state-free beyond its inputs, so it is unit-testable without touching disk.
+fn collect_tunnel_probe_domains(
+    overlay: &crate::route_table::OverlayState,
+    routes: &crate::route_table::RouteTable,
+) -> (Vec<String>, Vec<String>) {
+    // Skip local overlay tunnels entirely while the overlay is inactive: every
+    // lookup would fail and that's already a separate, already-reported
+    // condition — probing here would just be per-tunnel noise on top of it.
+    let overlay_domains = if overlay.overlay_active {
+        let mut domains: Vec<String> = overlay.routes.iter().map(|r| r.domain.clone()).collect();
+        domains.sort();
+        domains.dedup();
+        domains.truncate(TUNNEL_DNS_PROBE_CAP);
+        domains
+    } else {
+        Vec::new()
+    };
+
+    let mut cloud_domains: Vec<String> = routes.routes.values().map(|r| r.domain.clone()).collect();
+    cloud_domains.sort();
+    cloud_domains.dedup();
+    cloud_domains.truncate(TUNNEL_DNS_PROBE_CAP);
+
+    (overlay_domains, cloud_domains)
+}
+
+async fn lookup_tunnel_domain(domain: &str) -> TunnelLookupResult {
+    match timeout(ACTIVE_PROBE_TIMEOUT, lookup_host((domain, 443))).await {
+        Err(_) => TunnelLookupResult::TimedOut,
+        Ok(Err(err)) => TunnelLookupResult::Failed(err.to_string()),
+        Ok(Ok(addrs)) => TunnelLookupResult::Resolved(unique_ips(addrs.map(|addr| addr.ip()))),
+    }
+}
+
+/// Probe DNS resolution for individual tunnel domains: local
+/// `.portzero.local` overlay tunnels and cloud `*.tunnel.portzero.cloud`
+/// tunnels. Resolution failure for `portzero.local` itself is already
+/// handled by [`probe_portzero_local_dns`]; this only covers per-tunnel
+/// domains, and stays quiet for tunnels that resolve healthily to avoid
+/// per-tunnel Info spam.
+///
+/// Probes run concurrently. `run_diagnostics` is awaited inline on the daemon's
+/// discovery loop every ~30s, so bounding this to a single timeout (rather than
+/// the sum of every tunnel's timeout) keeps a batch of slow/absent tunnel DNS
+/// from stalling discovery. Each list is still capped at [`TUNNEL_DNS_PROBE_CAP`].
+async fn probe_tunnel_dns(state_dir: &Path) -> Vec<Diagnostic> {
+    let overlay =
+        crate::route_table::OverlayState::load(&state_dir.join("overlay.json")).unwrap_or_default();
+    let routes =
+        crate::route_table::RouteTable::load(&state_dir.join("routes.json")).unwrap_or_default();
+
+    let (overlay_domains, cloud_domains) = collect_tunnel_probe_domains(&overlay, &routes);
+
+    let overlay_probes = overlay_domains.iter().map(|domain| async move {
+        classify_overlay_tunnel_dns(domain, &lookup_tunnel_domain(domain).await)
+    });
+    let cloud_probes = cloud_domains.iter().map(|domain| async move {
+        classify_cloud_tunnel_dns(domain, &lookup_tunnel_domain(domain).await)
+    });
+
+    let mut issues: Vec<Diagnostic> = futures_util::future::join_all(overlay_probes)
+        .await
+        .into_iter()
+        .chain(futures_util::future::join_all(cloud_probes).await)
+        .flatten()
+        .collect();
+
+    issues.sort_by(|a, b| {
+        a.severity
+            .cmp(&b.severity)
+            .then_with(|| a.id.cmp(&b.id))
+            .then_with(|| a.title.cmp(&b.title))
+    });
+
+    issues
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /// Run all diagnostic checks and return a report.
@@ -1097,8 +1282,10 @@ async fn probe_portzero_local_http() -> Diagnostic {
 /// async executor free.
 pub async fn run_diagnostics(state_dir: &std::path::Path) -> DiagnosticsReport {
     let state_dir: PathBuf = state_dir.to_path_buf();
+    let state_dir_for_blocking = state_dir.clone();
 
     let (mut issues, mut checks_run) = tokio::task::spawn_blocking(move || {
+        let state_dir = state_dir_for_blocking;
         let mut out: Vec<Diagnostic> = Vec::new();
         let mut checks_run: usize = 0;
 
@@ -1157,6 +1344,22 @@ pub async fn run_diagnostics(state_dir: &std::path::Path) -> DiagnosticsReport {
             fix: None,
         });
     }
+
+    // Determine how many per-tunnel probes will actually run so `checks_run`
+    // reflects reality, then run them. This reloads the same state files
+    // `probe_tunnel_dns` loads internally; both reads are small local JSON
+    // files, so the duplication is cheap and keeps `probe_tunnel_dns`'s
+    // signature simple (matches the existing pattern of `check_state_files_valid`
+    // also reading routes.json/overlay.json independently).
+    let overlay_for_count =
+        crate::route_table::OverlayState::load(&state_dir.join("overlay.json")).unwrap_or_default();
+    let routes_for_count =
+        crate::route_table::RouteTable::load(&state_dir.join("routes.json")).unwrap_or_default();
+    let (overlay_domains, cloud_domains) =
+        collect_tunnel_probe_domains(&overlay_for_count, &routes_for_count);
+    checks_run += overlay_domains.len() + cloud_domains.len();
+
+    issues.extend(probe_tunnel_dns(&state_dir).await);
 
     issues.sort_by(|a, b| a.severity.cmp(&b.severity));
 
@@ -1309,10 +1512,41 @@ fn summarize_reqwest_error(err: &reqwest::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        analyze_portzero_hosts_entries, format_ip_list, nsswitch_prefers_mdns_for_local_hosts,
-        unique_ips,
+        analyze_portzero_hosts_entries, classify_cloud_tunnel_dns, classify_overlay_tunnel_dns,
+        collect_tunnel_probe_domains, format_ip_list, ip_in_overlay_range,
+        nsswitch_prefers_mdns_for_local_hosts, unique_ips, TunnelLookupResult,
     };
+    use crate::discovery::ServiceSource;
+    use crate::route_table::{OverlayRoute, OverlayState, Route, RouteTable};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    fn overlay_route(domain: &str) -> OverlayRoute {
+        OverlayRoute {
+            domain: domain.to_string(),
+            domain_template: String::new(),
+            substitutions: Default::default(),
+            service_port: 8080,
+            real_addr: "127.0.0.1:32771".to_string(),
+            health_path: None,
+            pid: 1234,
+            source: ServiceSource::Process { cwd: None },
+        }
+    }
+
+    fn cloud_route(domain: &str) -> Route {
+        Route {
+            domain: domain.to_string(),
+            domain_template: String::new(),
+            substitutions: Default::default(),
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            extra_ports: Vec::new(),
+            health_path: None,
+            source: ServiceSource::Process { cwd: None },
+            pid: 1234,
+            discovered_at: chrono::Utc::now(),
+        }
+    }
 
     #[test]
     fn expected_linux_dashboard_pin_is_not_treated_as_conflict() {
@@ -1426,5 +1660,156 @@ mod tests {
                 "{id} must not be treated as a post-setup regression"
             );
         }
+    }
+
+    #[test]
+    fn ip_in_overlay_range_accepts_overlay_addresses() {
+        assert!(ip_in_overlay_range(IpAddr::V4(Ipv4Addr::new(
+            10, 254, 0, 5
+        ))));
+    }
+
+    #[test]
+    fn ip_in_overlay_range_rejects_neighboring_subnet() {
+        assert!(!ip_in_overlay_range(IpAddr::V4(Ipv4Addr::new(
+            10, 253, 0, 5
+        ))));
+    }
+
+    #[test]
+    fn ip_in_overlay_range_rejects_loopback() {
+        assert!(!ip_in_overlay_range(IpAddr::V4(Ipv4Addr::new(
+            127, 0, 0, 1
+        ))));
+    }
+
+    #[test]
+    fn ip_in_overlay_range_rejects_ipv6() {
+        assert!(!ip_in_overlay_range(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn overlay_tunnel_timeout_is_flagged() {
+        let diag =
+            classify_overlay_tunnel_dns("web.myapp.portzero.local", &TunnelLookupResult::TimedOut)
+                .expect("expected a diagnostic");
+        assert_eq!(diag.id, "tunnel_dns_failed");
+        assert_eq!(diag.severity, super::Severity::Warning);
+    }
+
+    #[test]
+    fn overlay_tunnel_error_is_flagged() {
+        let diag = classify_overlay_tunnel_dns(
+            "web.myapp.portzero.local",
+            &TunnelLookupResult::Failed("no such host".to_string()),
+        )
+        .expect("expected a diagnostic");
+        assert_eq!(diag.id, "tunnel_dns_failed");
+    }
+
+    #[test]
+    fn overlay_tunnel_resolved_in_range_is_healthy() {
+        let result = TunnelLookupResult::Resolved(vec![IpAddr::V4(Ipv4Addr::new(10, 254, 0, 9))]);
+        assert!(classify_overlay_tunnel_dns("web.myapp.portzero.local", &result).is_none());
+    }
+
+    #[test]
+    fn overlay_tunnel_resolved_outside_range_is_flagged() {
+        let result = TunnelLookupResult::Resolved(vec![IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4))]);
+        let diag = classify_overlay_tunnel_dns("web.myapp.portzero.local", &result)
+            .expect("expected a diagnostic");
+        assert_eq!(diag.id, "tunnel_dns_wrong_target");
+        assert!(diag.detail.contains("1.2.3.4"));
+    }
+
+    #[test]
+    fn cloud_tunnel_timeout_is_flagged() {
+        let diag = classify_cloud_tunnel_dns(
+            "api.alice.tunnel.portzero.cloud",
+            &TunnelLookupResult::TimedOut,
+        )
+        .expect("expected a diagnostic");
+        assert_eq!(diag.id, "cloud_tunnel_dns_failed");
+        assert_eq!(diag.severity, super::Severity::Warning);
+    }
+
+    #[test]
+    fn cloud_tunnel_resolved_is_healthy() {
+        let result = TunnelLookupResult::Resolved(vec![IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1))]);
+        assert!(classify_cloud_tunnel_dns("api.alice.tunnel.portzero.cloud", &result).is_none());
+    }
+
+    #[test]
+    fn collect_tunnel_probe_domains_skips_overlay_when_inactive() {
+        let overlay = OverlayState {
+            overlay_active: false,
+            routes: vec![overlay_route("web.myapp.portzero.local")],
+        };
+        let routes = RouteTable::default();
+
+        let (overlay_domains, cloud_domains) = collect_tunnel_probe_domains(&overlay, &routes);
+        assert!(overlay_domains.is_empty());
+        assert!(cloud_domains.is_empty());
+    }
+
+    #[test]
+    fn collect_tunnel_probe_domains_includes_active_overlay_routes() {
+        let overlay = OverlayState {
+            overlay_active: true,
+            routes: vec![
+                overlay_route("web.myapp.portzero.local"),
+                overlay_route("api.myapp.portzero.local"),
+            ],
+        };
+        let routes = RouteTable::default();
+
+        let (overlay_domains, cloud_domains) = collect_tunnel_probe_domains(&overlay, &routes);
+        assert_eq!(
+            overlay_domains,
+            vec![
+                "api.myapp.portzero.local".to_string(),
+                "web.myapp.portzero.local".to_string(),
+            ]
+        );
+        assert!(cloud_domains.is_empty());
+    }
+
+    #[test]
+    fn collect_tunnel_probe_domains_dedups_and_sorts_cloud_routes() {
+        let overlay = OverlayState::default();
+        let mut routes = RouteTable::default();
+        routes.routes.insert(
+            "k1".to_string(),
+            cloud_route("z.alice.tunnel.portzero.cloud"),
+        );
+        routes.routes.insert(
+            "k2".to_string(),
+            cloud_route("a.alice.tunnel.portzero.cloud"),
+        );
+
+        let (overlay_domains, cloud_domains) = collect_tunnel_probe_domains(&overlay, &routes);
+        assert!(overlay_domains.is_empty());
+        assert_eq!(
+            cloud_domains,
+            vec![
+                "a.alice.tunnel.portzero.cloud".to_string(),
+                "z.alice.tunnel.portzero.cloud".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn collect_tunnel_probe_domains_caps_at_limit() {
+        let overlay_routes: Vec<OverlayRoute> = (0..30)
+            .map(|i| overlay_route(&format!("svc{i:02}.myapp.portzero.local")))
+            .collect();
+        let overlay = OverlayState {
+            overlay_active: true,
+            routes: overlay_routes,
+        };
+        let routes = RouteTable::default();
+
+        let (overlay_domains, _cloud_domains) = collect_tunnel_probe_domains(&overlay, &routes);
+        assert_eq!(overlay_domains.len(), super::TUNNEL_DNS_PROBE_CAP);
     }
 }

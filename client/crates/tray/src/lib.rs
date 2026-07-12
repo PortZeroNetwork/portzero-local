@@ -1,0 +1,24 @@
+//! PortZero system-tray companion library.
+//!
+//! A small, opt-in GUI companion (deliberately separate from the headless
+//! daemon) that gives the daemon a face in the menu bar / system tray:
+//!
+//! - A green / amber / red status dot reflecting daemon and tunnel health, read
+//!   entirely from the daemon's on-disk state so it works even when the daemon
+//!   is **down** — the case a new user is most likely to hit.
+//! - If the daemon isn't running when the tray starts, it launches it once
+//!   (`portzero start`), and offers Start / Restart / Stop from the menu.
+//! - A browsable list of local and cloud tunnels (with their http/https scheme),
+//!   a global "enable HTTPS for HTTP tunnels" toggle, and any current issues.
+//!
+//! The menu is built once in [`menu`] and used unchanged on every platform, so
+//! it stays identical across macOS, Windows, and Linux.
+
+pub mod actions;
+pub mod controller;
+pub mod icon;
+pub mod menu;
+pub mod platform;
+pub mod state;
+
+pub use platform::run;
