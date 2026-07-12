@@ -185,7 +185,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      # NO Swatinem/rust-cache here: this job runs on the persistent
+      # self-hosted runner, whose target/ and ~/.cargo already survive between
+      # runs locally. The remote cache added nothing on restore and its
+      # post-job SAVE uploaded a multi-GB target dir over the runner's
+      # residential uplink — 39+ minutes, blowing the 45-minute job timeout
+      # AFTER every test had passed (run 29200942798).
 
       - name: Build macOS binary
         # macOS guest testing is host-built-artifact-only (no toolchain in
