@@ -320,14 +320,32 @@ async fn stream_events_once(
 ) -> StreamOutcome {
     use tokio::process::Command;
 
-    let mut child = match Command::new("docker")
+    let mut command = Command::new("docker");
+    command
         .args(["events", "--format", EVENTS_FORMAT])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-    {
+        .kill_on_drop(true);
+
+    // This child is LONG-LIVED. On macOS, pipe fds created by concurrent
+    // spawns elsewhere in the daemon (docker inspect, lsof, …) can leak into
+    // it at fork time (no atomic CLOEXEC pipe on macOS), and a leaked pipe
+    // write-end held by this immortal child means the sibling's
+    // `Command::output()` NEVER sees EOF — wedging the discovery loop. Close
+    // every fd above stdio in the child before exec so it cannot capture
+    // foreign pipes.
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            for fd in 3..1024 {
+                libc::close(fd);
+            }
+            Ok(())
+        });
+    }
+
+    let mut child = match command.spawn() {
         Ok(c) => c,
         Err(e) => {
             tracing::debug!(
@@ -409,12 +427,21 @@ async fn inspect_container_state(id: &str) -> Option<InspectState> {
         return None;
     }
 
-    let output = Command::new("docker")
-        .args(["inspect", id, "--format", INSPECT_FORMAT])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .await
-        .ok()?;
+    // Bounded: a docker child whose pipe write-end leaks into the long-lived
+    // `docker events` stream never EOFs, and an unbounded .output() would
+    // stall event processing forever (same wedge class as the discovery-loop
+    // docker scans; see DOCKER_COMMAND_TIMEOUT in discovery/docker.rs).
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        Command::new("docker")
+            .args(["inspect", id, "--format", INSPECT_FORMAT])
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
     if !output.status.success() {
         return None;
     }

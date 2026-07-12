@@ -555,6 +555,9 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     let mut shutdown = Box::pin(wait_for_shutdown_signal());
 
     let mut diag_scan_counter: u32 = 0;
+    // Last legacy-listener sweep result, republished on the iterations between
+    // the ~30s full-system sweeps (see gather_and_publish_issues).
+    let mut legacy_issues_cache: Vec<notify::Issue> = Vec::new();
     // Whether we have already fired a desktop notification for the current
     // "resolver removed" episode. Reset once the resolver is healthy again so a
     // future removal notifies afresh (rather than once per 30s check).
@@ -788,6 +791,10 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 (issues, services)
             };
             let docker_conflicts = conflicts.snapshot().await;
+            // Full-system legacy sweep only on the ~30s diagnostics cadence
+            // (see gather_and_publish_issues); cached issues republish between
+            // sweeps.
+            let scan_legacy = diag_scan_counter.is_multiple_of(15);
             gather_and_publish_issues(
                 &config,
                 &route_table,
@@ -796,6 +803,8 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
                 docker_conflicts,
                 cloud_scope_issues,
                 &mut notified_issues,
+                scan_legacy,
+                &mut legacy_issues_cache,
             )
             .await;
 
@@ -1222,6 +1231,7 @@ async fn run_dns_fast_overlay_refresh(
 ///
 /// `overlay_issues` / `overlay_services` come from a prior overlay refresh (or
 /// are empty when the overlay isn't running). Best-effort and non-fatal.
+#[allow(clippy::too_many_arguments)]
 async fn gather_and_publish_issues(
     config: &DaemonConfig,
     route_table: &RouteTable,
@@ -1230,17 +1240,27 @@ async fn gather_and_publish_issues(
     docker_conflicts: Vec<notify::Issue>,
     cloud_scope_issues: Vec<notify::Issue>,
     notified_issues: &mut IssuesState,
+    scan_legacy: bool,
+    legacy_cache: &mut Vec<notify::Issue>,
 ) {
-    let managed = build_managed_context(route_table, overlay_services);
-    // enumerate_system_listeners() does a full /proc scan + per-pid fd reads —
-    // blocking. Run it on the spawn_blocking pool so the async executor stays
-    // free to handle shutdown signals and other tasks.
-    let legacy =
-        tokio::task::spawn_blocking(move || crate::legacy_monitor::scan_legacy_listeners(&managed))
-            .await
-            .unwrap_or_default();
+    // The legacy-listener sweep enumerates EVERY process's listening ports —
+    // a full-system scan that can take tens of seconds on busy machines even
+    // after the per-OS enumeration was de-subprocessed. Running it every 2s
+    // iteration wedged the loop (routes/overlay adoption starved behind it in
+    // CI); it is advisory, so run it on the same ~30s cadence as diagnostics
+    // and republish the cached result in between.
+    if scan_legacy {
+        let managed = build_managed_context(route_table, overlay_services);
+        // Blocking full-system scan: run it on the spawn_blocking pool so the
+        // async executor stays free for shutdown signals and other tasks.
+        *legacy_cache = tokio::task::spawn_blocking(move || {
+            crate::legacy_monitor::scan_legacy_listeners(&managed)
+        })
+        .await
+        .unwrap_or_default();
+    }
     let mut all = overlay_issues;
-    all.extend(legacy);
+    all.extend(legacy_cache.iter().cloned());
     // Real-time Docker port-bind conflicts caught by the event monitor (task-8).
     all.extend(docker_conflicts);
     // Invalidly-scoped PZ_TUNNEL cloud tunnel domains found on this scan

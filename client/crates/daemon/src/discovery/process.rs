@@ -737,27 +737,42 @@ pub(super) fn discover_process_ports(pid: u32) -> Vec<ListeningPort> {
 
 #[cfg(target_os = "linux")]
 fn discover_ports_linux(pid: u32) -> Vec<ListeningPort> {
-    // Collect socket inodes owned by this process via /proc/<pid>/fd/
+    // Collect socket inodes owned by this process via /proc/<pid>/fd/.
+    //
+    // IMPORTANT: only fall back to spawning `lsof` when /proc is actually
+    // UNREADABLE (permissions), never merely because the process owns no
+    // TCP listeners. Most processes on a system have no listening sockets,
+    // and this function is called for every pid by
+    // `enumerate_system_listeners` — conflating "empty" with "unreadable"
+    // used to spawn one lsof per socketless process, hundreds of spawns per
+    // scan, which wedged the discovery loop for tens of seconds (hosted CI)
+    // to minutes (busy dev machines).
     let mut owned_inodes = std::collections::HashSet::new();
     let fd_dir = format!("/proc/{}/fd", pid);
-    if let Ok(entries) = std::fs::read_dir(&fd_dir) {
-        for entry in entries.flatten() {
-            if let Ok(target) = std::fs::read_link(entry.path()) {
-                let s = target.to_string_lossy();
-                if let Some(inode_str) =
-                    s.strip_prefix("socket:[").and_then(|s| s.strip_suffix(']'))
-                {
-                    if let Ok(inode) = inode_str.parse::<u64>() {
-                        owned_inodes.insert(inode);
+    match std::fs::read_dir(&fd_dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                if let Ok(target) = std::fs::read_link(entry.path()) {
+                    let s = target.to_string_lossy();
+                    if let Some(inode_str) =
+                        s.strip_prefix("socket:[").and_then(|s| s.strip_suffix(']'))
+                    {
+                        if let Ok(inode) = inode_str.parse::<u64>() {
+                            owned_inodes.insert(inode);
+                        }
                     }
                 }
             }
         }
+        // fd dir unreadable (different user, no privilege) — lsof may still
+        // see the process's sockets, so this one case keeps the fallback.
+        Err(_) => return discover_ports_lsof(pid),
     }
 
-    // If we can't read fd (permissions), fall back to lsof
+    // Readable fd dir with no socket fds at all: the process has no sockets.
+    // Definitive — no fallback.
     if owned_inodes.is_empty() {
-        return discover_ports_lsof(pid);
+        return Vec::new();
     }
 
     let tcp_path = format!("/proc/{}/net/tcp", pid);
@@ -774,11 +789,10 @@ fn discover_ports_linux(pid: u32) -> Vec<ListeningPort> {
         }
     }
 
-    if ports.is_empty() {
-        discover_ports_lsof(pid)
-    } else {
-        ports
-    }
+    // Sockets exist but none is a TCP listener (UDP/unix/connected sockets
+    // parse to nothing): that, too, is a definitive answer from /proc — do
+    // NOT spawn lsof, it would only re-derive the same result.
+    ports
 }
 
 /// Parse one line from /proc/<pid>/net/tcp or tcp6.
@@ -1034,71 +1048,6 @@ pub(super) fn parse_windows_local_address_port(local: &str) -> Option<ListeningP
     };
 
     Some(ListeningPort { port, bind })
-}
-
-// ---------------------------------------------------------------------------
-// System-wide listener enumeration (for legacy-port monitoring)
-// ---------------------------------------------------------------------------
-
-/// A TCP listener observed system-wide, attributed to its owning process.
-///
-/// Used by the legacy-port monitor to find processes that serve a port directly
-/// (bypassing port-zero). Carries enough context (pid, cwd, whether
-/// `PZ_TUNNEL` is set) for the monitor's *pure* comparison logic to decide
-/// whether the listener is "legacy".
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SystemListener {
-    /// The TCP port being listened on.
-    pub port: u16,
-    /// Owning process id.
-    pub pid: u32,
-    /// Working directory of the owning process, if discoverable.
-    pub cwd: Option<PathBuf>,
-    /// Whether the owning process has `PZ_TUNNEL` set (i.e. it is already
-    /// managed by us and must NOT be flagged as legacy).
-    pub has_port_zero: bool,
-}
-
-/// Enumerate every process's listening TCP ports system-wide, attributed to the
-/// owning process (pid, cwd, whether `PZ_TUNNEL` is set).
-///
-/// This is the single public entry point the legacy-port monitor uses; it
-/// reuses the existing per-OS [`discover_process_ports`] enumeration rather than
-/// duplicating any netstat/lsof/proc parsing. Best-effort and cross-platform:
-/// on platforms where per-process port discovery is unavailable it simply
-/// returns an empty list.
-pub fn enumerate_system_listeners() -> Vec<SystemListener> {
-    let mut sys = System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-
-    let mut out = Vec::new();
-    for (pid, process) in sys.processes() {
-        let pid_u32 = pid.as_u32();
-        if pid_u32 <= 1 {
-            continue;
-        }
-
-        let listening = discover_process_ports(pid_u32);
-        if listening.is_empty() {
-            continue;
-        }
-
-        let cwd = process.cwd().map(|p| p.to_path_buf());
-        let has_port_zero = scan_process_env(pid_u32, ENV_VAR_NAME)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
-
-        for lp in listening {
-            out.push(SystemListener {
-                port: lp.port,
-                pid: pid_u32,
-                cwd: cwd.clone(),
-                has_port_zero,
-            });
-        }
-    }
-
-    out
 }
 
 // ---------------------------------------------------------------------------
