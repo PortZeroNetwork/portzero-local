@@ -72,6 +72,33 @@ install_linux_certutil() {
     return 1
 }
 
+install_linux_setcap() {
+    if has_cmd setcap; then
+        return 0
+    fi
+
+    info "Installing libcap tools so portzero can be granted CAP_NET_ADMIN/CAP_NET_BIND_SERVICE..."
+    if has_cmd apt-get; then
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 \
+            && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y libcap2-bin >/dev/null 2>&1 \
+            && return 0
+    elif has_cmd dnf; then
+        sudo dnf install -y libcap >/dev/null 2>&1 && return 0
+    elif has_cmd yum; then
+        sudo yum install -y libcap >/dev/null 2>&1 && return 0
+    elif has_cmd zypper; then
+        sudo zypper --non-interactive install libcap-progs >/dev/null 2>&1 && return 0
+    elif has_cmd pacman; then
+        sudo pacman -S --noconfirm --needed libcap >/dev/null 2>&1 && return 0
+    elif has_cmd apk; then
+        sudo apk add libcap >/dev/null 2>&1 && return 0
+    fi
+
+    warn "Could not install libcap tools automatically."
+    warn "Install libcap2-bin (Debian/Ubuntu) or libcap (Fedora/RHEL) so setcap is available."
+    return 1
+}
+
 install_linux_resolved_polkit_rule() {
     if [ "$(uname -s)" != "Linux" ]; then
         return 0
@@ -311,6 +338,11 @@ if [ "$(uname -s)" = "Linux" ]; then
     # CAP_NET_BIND_SERVICE (let the embedded DNS server bind 10.254.0.1:53 so
     # *.portzero.local resolves) without running as root. Without the bind cap
     # the DNS server exits with "Permission denied" and no name resolves.
+    #
+    # Ensure setcap itself is present first — on a minimal system libcap tools
+    # are not installed, so setcap would be missing and the grant would be
+    # skipped, leaving the user to run `sudo setcap ...` by hand.
+    install_linux_setcap || true
     if setcap_path="$(find_cmd setcap 2>/dev/null)"; then
         if sudo "$setcap_path" 'cap_net_admin,cap_net_bind_service+eip' "$bin_path" 2>/dev/null; then
             info "CAP_NET_ADMIN + CAP_NET_BIND_SERVICE granted to $bin_path"

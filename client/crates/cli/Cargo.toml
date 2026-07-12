@@ -35,8 +35,12 @@ license-file = ["../../../LICENSE", "0"]
 extended-description = """Eliminate port conflicts in your dev environment by letting the OS pick
 random available ports, then forwarding those ports to virtual domains
 on a virtual NIC. Run multiple branches simultaneously without clashing."""
-depends = "$auto"
-recommends = "libcap2-bin, libnss3-tools"
+# libcap2-bin provides setcap, which the postinst uses to grant the daemon
+# CAP_NET_ADMIN + CAP_NET_BIND_SERVICE. It is a hard dependency (not a
+# recommendation) so an --no-install-recommends / minimal install still gets
+# setcap and never leaves the user to run `sudo setcap ...` by hand.
+depends = "$auto, libcap2-bin"
+recommends = "libnss3-tools"
 section = "net"
 priority = "optional"
 assets = [
@@ -70,3 +74,9 @@ systemctl --user disable --now portzero-daemon 2>/dev/null || true
 sed -i '/# portzero-local/d' /etc/hosts 2>/dev/null || true
 systemctl daemon-reload 2>/dev/null || true
 """
+
+# libcap provides setcap, used by post_install_script to grant the daemon
+# CAP_NET_ADMIN + CAP_NET_BIND_SERVICE. Required (not optional) so setcap is
+# always present and the user never has to run `sudo setcap ...` by hand.
+[package.metadata.generate-rpm.requires]
+libcap = "*"
