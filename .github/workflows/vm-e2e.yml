@@ -173,10 +173,23 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+        # This runner is persistent, so its disk IS the build cache: keep the
+        # workspace `target/` and `~/.cargo` between runs instead of wiping
+        # them. `git clean -ffdx` (the checkout default) would delete `target/`
+        # and force a cold rebuild + crate re-download every run.
+        with:
+          clean: false
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
+      # NOTE: deliberately NO Swatinem/rust-cache here. That action targets
+      # ephemeral GitHub-hosted runners — it UPLOADS the whole cargo/target
+      # cache to GitHub's cache backend on every run and downloads it on the
+      # next, which is exactly the metered-internet traffic we want to avoid on
+      # this self-hosted Mac. The persistent local disk (see `clean: false`
+      # above) already gives us the cache for free with zero network cost. See
+      # ci.yml's e2e job, which guards rust-cache off the self-hosted runner
+      # the same way.
 
       - name: Build macOS binary
         # macOS guest testing is host-built-artifact-only (no toolchain in
