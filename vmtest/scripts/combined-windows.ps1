@@ -147,13 +147,14 @@ function Fetch-PriorMsi {
     return $null
 }
 
-# --- tunnel-test helper: serve a tagged echo, start the daemon, assert the
-# domain resolves+serves, then stop the daemon. Shared shape for local/cloud.
+# --- local-tunnel helper: serve a tagged echo, start the daemon, assert the
+# .portzero.local domain resolves+serves through the overlay directly, then
+# stop the daemon. Local-only: a cloud tunnel's public domain isn't reachable
+# via a same-host http:// poll the way the overlay intercepts .portzero.local
+# (it needs route-registration + approval first, and only serves over the real
+# public HTTPS edge) — see Invoke-CloudTunnelTest below for that flow.
 function Invoke-TunnelTest {
-    param(
-        [string] $Prefix, [string] $TunnelEnvValue, [string] $Domain, [string] $Body,
-        [hashtable] $ExtraEnv = @{}
-    )
+    param([string] $Prefix, [string] $TunnelEnvValue, [string] $Domain, [string] $Body)
     $lib = Join-Path $PSScriptRoot 'lib\http-echo.ps1'
     $work = Join-Path $env:TEMP ("pz-$Prefix-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $work | Out-Null
@@ -174,10 +175,8 @@ function Invoke-TunnelTest {
         if (-not $up) { Phase "$Prefix-service" $false; return }
         "PHASE=$Prefix-service ok=true port=$port tunnel=$Domain"
 
-        foreach ($k in $ExtraEnv.Keys) { Set-Item -Path "Env:\$k" -Value $ExtraEnv[$k] }
         Start-Process -FilePath $InstalledExe -ArgumentList 'start','--no-browser' -WindowStyle Hidden `
             -RedirectStandardOutput (Join-Path $work 'start.log') -RedirectStandardError (Join-Path $work 'start.err')
-        foreach ($k in $ExtraEnv.Keys) { Remove-Item "Env:\$k" -ErrorAction SilentlyContinue }
         "PHASE=$Prefix-daemon-launched ok=true"
 
         $ok = $false
@@ -196,11 +195,73 @@ function Invoke-TunnelTest {
             Phase "$Prefix-tunnel" $false
         }
     } finally {
-        foreach ($k in $ExtraEnv.Keys) { Set-Item -Path "Env:\$k" -Value $ExtraEnv[$k] }
         $j = Start-Job { & $using:InstalledExe stop 2>&1 | Out-Null }
         if (-not (Wait-Job $j -Timeout 10)) { Stop-Job $j -ErrorAction SilentlyContinue; "WARN=stop-wedged-forced-kill" }
         Remove-Job $j -Force -ErrorAction SilentlyContinue
-        foreach ($k in $ExtraEnv.Keys) { Remove-Item "Env:\$k" -ErrorAction SilentlyContinue }
+        Get-Process portzero -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        if ($svc) { Stop-Process -Id $svc.Id -Force -ErrorAction SilentlyContinue }
+        Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    }
+}
+
+# --- cloud-tunnel helper: serve a tagged echo, start the daemon pointed at
+# staging, wait for the route to actually REGISTER via the cloud API (the
+# real readiness gate — the daemon connects out to the edge asynchronously),
+# approve it, then fetch the real public HTTPS URL. Keeps the daemon alive
+# through approval + fetch and stops it exactly once at the end.
+function Invoke-CloudTunnelTest {
+    param([string] $Tunnel, [string] $Token, [string] $ApiUrl, [string] $EdgeUrl, [string] $BaseDomain, [string] $Body)
+    $lib = Join-Path $PSScriptRoot 'lib\http-echo.ps1'
+    $work = Join-Path $env:TEMP ("pz-cloud-" + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    $svcOut = Join-Path $work 'svc.out'
+    $svc = $null
+    try {
+        $port = 18080
+        $env:PZ_TUNNEL = "${Tunnel}:80"
+        $svc = Start-Process powershell -PassThru -WindowStyle Hidden `
+            -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$lib,'-Body',$Body,'-Port',"$port") `
+            -RedirectStandardOutput $svcOut -RedirectStandardError (Join-Path $work 'svc.err')
+        Remove-Item Env:\PZ_TUNNEL -ErrorAction SilentlyContinue
+        $up = $false
+        for ($i = 0; $i -lt 30; $i++) {
+            try { $null = Invoke-WebRequest "http://127.0.0.1:$port/" -TimeoutSec 2 -UseBasicParsing; $up = $true; break } catch {}
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $up) { Phase 'cloud-service' $false; return }
+        "PHASE=cloud-service ok=true port=$port tunnel=$Tunnel"
+
+        $env:PZ_TUNNEL_API_URL = $ApiUrl; $env:PZ_TUNNEL_EDGE_URL = $EdgeUrl; $env:PZ_TUNNEL_BASE_DOMAIN = $BaseDomain
+        Start-Process -FilePath $InstalledExe -ArgumentList 'start','--no-browser' -WindowStyle Hidden `
+            -RedirectStandardOutput (Join-Path $work 'start.log') -RedirectStandardError (Join-Path $work 'start.err')
+        "PHASE=cloud-daemon-launched ok=true"
+
+        $headers = @{ Authorization = "Bearer $Token" }
+        $registered = $false
+        for ($i = 1; $i -le 45; $i++) {
+            try { $routes = Invoke-RestMethod -Uri "$ApiUrl/routes" -Headers $headers; if ($routes | Where-Object { $_.domain -eq $Tunnel }) { $registered = $true; break } } catch {}
+            Start-Sleep -Seconds 2
+        }
+        if (-not $registered) {
+            Phase 'cloud-route-registered' $false
+            $dlog = Join-Path $env:USERPROFILE '.portzero\daemon\daemon.log'
+            if (Test-Path $dlog) { "PHASE=diag daemon-log-tail:"; Get-Content $dlog -Tail 8 }
+        } else {
+            "PHASE=cloud-route-registered ok=true"
+            try { Invoke-RestMethod -Method Post -Uri "$ApiUrl/routes/$Tunnel/approve" -Headers $headers -ContentType 'application/json' -Body '{}' | Out-Null } catch {}
+            $ok = $false
+            for ($i = 1; $i -le 30; $i++) {
+                try { $r = Invoke-WebRequest "https://$Tunnel/" -TimeoutSec 10 -UseBasicParsing; if ($r.Content.Trim() -eq $Body) { $ok = $true; break } } catch {}
+                Start-Sleep -Seconds 2
+            }
+            Phase 'cloud-public-url' $ok
+        }
+    } finally {
+        $env:PZ_TUNNEL_API_URL = $ApiUrl; $env:PZ_TUNNEL_EDGE_URL = $EdgeUrl; $env:PZ_TUNNEL_BASE_DOMAIN = $BaseDomain
+        $j = Start-Job { & $using:InstalledExe stop 2>&1 | Out-Null }
+        if (-not (Wait-Job $j -Timeout 10)) { Stop-Job $j -ErrorAction SilentlyContinue; "WARN=stop-wedged-forced-kill" }
+        Remove-Job $j -Force -ErrorAction SilentlyContinue
+        Remove-Item Env:\PZ_TUNNEL_API_URL,Env:\PZ_TUNNEL_EDGE_URL,Env:\PZ_TUNNEL_BASE_DOMAIN -ErrorAction SilentlyContinue
         Get-Process portzero -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         if ($svc) { Stop-Process -Id $svc.Id -Force -ErrorAction SilentlyContinue }
         Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
@@ -322,19 +383,7 @@ if ($env:COMBINED_SKIP_CLOUD -eq '1') {
                     Set-Content -Path (Join-Path $authDir 'auth.json') -NoNewline
                 "PHASE=cloud-auth ok=true user=$($verify.username)"
 
-                Invoke-TunnelTest -Prefix 'cloud' -TunnelEnvValue "${tunnel}:80" -Domain $tunnel -Body $body `
-                    -ExtraEnv @{ PZ_TUNNEL_API_URL = $apiUrl; PZ_TUNNEL_EDGE_URL = $edgeUrl; PZ_TUNNEL_BASE_DOMAIN = $stagingDomain }
-
-                # cloud tunnels are only reachable via HTTPS at the public edge; approve
-                # + fetch the real public URL too.
-                $headers = @{ Authorization = "Bearer $($verify.token)" }
-                Invoke-RestMethod -Method Post -Uri "$apiUrl/routes/$tunnel/approve" -Headers $headers -ContentType 'application/json' -Body '{}' | Out-Null
-                $ok = $false
-                for ($i = 1; $i -le 30; $i++) {
-                    try { $r = Invoke-WebRequest "https://$tunnel/" -TimeoutSec 10 -UseBasicParsing; if ($r.Content.Trim() -eq $body) { $ok = $true; break } } catch {}
-                    Start-Sleep -Seconds 2
-                }
-                Phase 'cloud-public-url' $ok
+                Invoke-CloudTunnelTest -Tunnel $tunnel -Token $verify.token -ApiUrl $apiUrl -EdgeUrl $edgeUrl -BaseDomain $stagingDomain -Body $body
             } catch {
                 Phase 'cloud-auth' $false
                 "WARN=cloud-tunnel-exception: $($_.Exception.Message)"

@@ -134,11 +134,14 @@ install_deb() { # <path> — dpkg -i, retrying with apt -f install on dep failur
     }
 }
 
-# --- tunnel-test helper: serve a tagged echo, start the daemon, assert the
-# domain resolves+serves, then stop the daemon. Shared shape for local/cloud.
-run_tunnel_test() { # <phase-prefix> <tunnel-env-value> <domain-to-check> <expected-body> [extra env=val ...]
-    local prefix="$1" tunnel_env="$2" domain="$3" body="$4"; shift 4
-    local extra_env=("$@")
+# --- local-tunnel helper: serve a tagged echo, start the daemon, assert the
+# .portzero.local domain resolves+serves through the overlay directly, then
+# stop the daemon. Local-only: a cloud tunnel's public domain isn't reachable
+# via a same-host http:// poll the way the overlay intercepts .portzero.local
+# (it needs route-registration + approval first, and only serves over the real
+# public HTTPS edge) — see run_cloud_tunnel_test below for that flow.
+run_tunnel_test() { # <phase-prefix> <tunnel-env-value> <domain-to-check> <expected-body>
+    local prefix="$1" tunnel_env="$2" domain="$3" body="$4"
     local work; work="$(mktemp -d)"
     local svc_pid=""
 
@@ -155,7 +158,7 @@ run_tunnel_test() { # <phase-prefix> <tunnel-env-value> <domain-to-check> <expec
     fi
     echo "PHASE=$prefix-service ok=true port=$PORT tunnel=$domain"
 
-    sudo_ env HOME="$HOME" "${extra_env[@]}" "$BIN" start --no-browser >"$work/start.out" 2>&1
+    sudo_ env HOME="$HOME" "$BIN" start --no-browser >"$work/start.out" 2>&1
     echo "PHASE=$prefix-daemon-launched ok=true"
 
     local ok=0
@@ -173,7 +176,66 @@ run_tunnel_test() { # <phase-prefix> <tunnel-env-value> <domain-to-check> <expec
     fi
 
     # Bounded stop, then force-kill — never let cleanup wedge the rest of the run.
-    ( sudo_ env HOME="$HOME" "${extra_env[@]}" "$BIN" stop >/dev/null 2>&1 ) & local sp=$!
+    ( sudo_ env HOME="$HOME" "$BIN" stop >/dev/null 2>&1 ) & local sp=$!
+    ( sleep 10; kill -9 "$sp" 2>/dev/null ) >/dev/null 2>&1 &
+    wait "$sp" 2>/dev/null
+    kill -9 "$svc_pid" >/dev/null 2>&1
+    sudo_ pkill -9 -f http-echo.pl >/dev/null 2>&1
+    rm -rf "$work"
+}
+
+# --- cloud-tunnel helper: serve a tagged echo, start the daemon pointed at
+# staging, wait for the route to actually REGISTER via the cloud API (the
+# real readiness gate — the daemon connects out to the edge asynchronously),
+# approve it, then fetch the real public HTTPS URL. Keeps the daemon alive
+# through approval + fetch and stops it exactly once at the end.
+run_cloud_tunnel_test() { # <tunnel> <token>
+    local tunnel="$1" token="$2"
+    local work; work="$(mktemp -d)"
+    local svc_pid=""
+
+    sudo_ env PZ_TUNNEL="${tunnel}:80" perl "$LIB" "$STAGING_BODY" "$PORT" >"$work/svc.out" 2>&1 &
+    svc_pid=$!
+    local up=0
+    for _ in $(seq 1 30); do curl -sf "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && { up=1; break; }; sleep 0.5; done
+    if [ "$up" != 1 ]; then
+        echo "PHASE=cloud-service ok=false"
+        fails=$((fails + 1))
+        kill -9 "$svc_pid" >/dev/null 2>&1
+        rm -rf "$work"
+        return
+    fi
+    echo "PHASE=cloud-service ok=true port=$PORT tunnel=$tunnel"
+
+    sudo_ env HOME="$HOME" PZ_TUNNEL_API_URL="$API" PZ_TUNNEL_EDGE_URL="$EDGE" PZ_TUNNEL_BASE_DOMAIN="$STAGING_DOMAIN" \
+        "$BIN" start --no-browser >"$work/start.out" 2>&1
+    echo "PHASE=cloud-daemon-launched ok=true"
+
+    local reg=0
+    for _ in $(seq 1 45); do
+        curl -fsS -H "Authorization: Bearer $token" "$API/routes" 2>/dev/null | grep -q "\"$tunnel\"" && { reg=1; break; }
+        sleep 2
+    done
+    if [ "$reg" != 1 ]; then
+        echo "PHASE=cloud-route-registered ok=false"
+        [ -f "$HOME/.portzero/daemon/daemon.log" ] && tail -8 "$HOME/.portzero/daemon/daemon.log"
+        fails=$((fails + 1))
+    else
+        echo "PHASE=cloud-route-registered ok=true"
+        curl -fsS -X POST -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d '{}' \
+            "$API/routes/$tunnel/approve" >/dev/null 2>&1
+        local ok=0
+        for _ in $(seq 1 30); do
+            local b; b="$(curl -fsS --max-time 10 "https://$tunnel/" 2>/dev/null)"
+            [ "$b" = "$STAGING_BODY" ] && { ok=1; break; }
+            sleep 2
+        done
+        assert cloud-public-url test "$ok" = 1
+    fi
+
+    # Bounded stop, then force-kill — never let cleanup wedge the rest of the run.
+    ( sudo_ env HOME="$HOME" PZ_TUNNEL_API_URL="$API" PZ_TUNNEL_EDGE_URL="$EDGE" PZ_TUNNEL_BASE_DOMAIN="$STAGING_DOMAIN" \
+        "$BIN" stop >/dev/null 2>&1 ) & local sp=$!
     ( sleep 10; kill -9 "$sp" 2>/dev/null ) >/dev/null 2>&1 &
     wait "$sp" 2>/dev/null
     kill -9 "$svc_pid" >/dev/null 2>&1
@@ -268,21 +330,7 @@ else
                 sudo_ mkdir -p "$HOME/.portzero"
                 printf '%s' "$VER" | sudo_ tee "$HOME/.portzero/auth.json" >/dev/null
 
-                run_tunnel_test cloud "${TUNNEL}:80" "$TUNNEL" "$STAGING_BODY" \
-                    PZ_TUNNEL_API_URL="$API" PZ_TUNNEL_EDGE_URL="$EDGE" PZ_TUNNEL_BASE_DOMAIN="$STAGING_DOMAIN"
-
-                # cloud tunnels are only reachable via HTTPS at the public edge,
-                # not the plain http:// check run_tunnel_test already did — approve
-                # + fetch the real public URL too.
-                curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}' \
-                    "$API/routes/$TUNNEL/approve" >/dev/null 2>&1
-                ok=0
-                for _ in $(seq 1 30); do
-                    b="$(curl -fsS --max-time 10 "https://$TUNNEL/" 2>/dev/null)"
-                    [ "$b" = "$STAGING_BODY" ] && { ok=1; break; }
-                    sleep 2
-                done
-                assert cloud-public-url test "$ok" = 1
+                run_cloud_tunnel_test "$TUNNEL" "$TOKEN"
 
                 sudo_ rm -f "$HOME/.portzero/auth.json" 2>/dev/null
             fi
