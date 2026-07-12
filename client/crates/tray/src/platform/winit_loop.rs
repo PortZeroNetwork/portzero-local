@@ -16,7 +16,8 @@ use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
 
-use crate::controller::{Controller, Dispatch, REFRESH_INTERVAL};
+use crate::controller::Controller;
+use crate::engine::{Dispatch, REFRESH_INTERVAL};
 
 #[derive(Default)]
 struct TrayApp {

@@ -16,17 +16,20 @@ anyhow = "1"
 portzero-daemon = { path = "../daemon" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tray-icon = "0.19"
-muda = "0.15"
 
 [dev-dependencies]
 tempfile = "3"
 
-# Linux drives the tray from a GTK main loop (libappindicator / StatusNotifierItem).
+# Linux drives the tray from a pure-Rust ksni StatusNotifierItem service (SNI
+# over D-Bus via zbus). No GTK / libayatana-appindicator / libxdo — so the tray
+# adds no C GUI-toolkit dependency to the Linux packages. The `blocking` feature
+# gives us a synchronous handle so the tray needs no async runtime of its own.
 [target.'cfg(target_os = "linux")'.dependencies]
-gtk = "0.18"
+ksni = { version = "0.3", features = ["blocking"] }
 
 # Windows and macOS drive the tray from a winit event loop, which owns the
-# native message pump / run loop the tray icon needs.
+# native message pump / run loop the tray-icon crate (and its muda menu) need.
 [target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = "0.19"
+muda = "0.15"
 winit = "0.30"

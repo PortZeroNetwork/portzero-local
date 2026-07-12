@@ -1,14 +1,11 @@
-//! The tray menu — built once here and used unchanged on every platform, so the
-//! menu is identical across macOS, Windows, and Linux by construction (the
-//! platform layers only own the event loop, never the menu).
+//! The tray menu — its structure is built once here as a backend-neutral
+//! [`MenuSpec`], so the menu is identical across macOS, Windows, and Linux by
+//! construction. Each platform layer renders the same spec with its own toolkit
+//! (muda on Windows/macOS, ksni on Linux) and never re-derives the structure.
 //!
-//! Building the menu also produces a [`MenuModel`]: a map from each item's id to
-//! the [`Action`] it triggers, so the controller can dispatch a click without
-//! re-deriving what each item meant.
-
-use std::collections::HashMap;
-
-use muda::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
+//! Every actionable node carries both a stable id (used by the muda backend,
+//! whose clicks arrive as ids over a channel) and the [`Action`] it triggers
+//! (used directly by the ksni backend, whose clicks arrive as closures).
 
 use crate::actions::DASHBOARD_URL;
 use crate::state::{Health, Snapshot};
@@ -26,6 +23,37 @@ pub enum Action {
     ToggleHttps(bool),
 }
 
+/// One node in the backend-neutral menu tree.
+#[derive(Debug, Clone)]
+pub enum Node {
+    /// A non-interactive, disabled line of text (headers, issues, hints).
+    Label(String),
+    /// A visual separator.
+    Separator,
+    /// A clickable item that performs `action`.
+    Item {
+        id: String,
+        label: String,
+        enabled: bool,
+        action: Action,
+    },
+    /// A checkbox item that performs `action` (which sets the new value).
+    Check {
+        id: String,
+        label: String,
+        checked: bool,
+        action: Action,
+    },
+    /// A nested submenu.
+    Sub { label: String, children: Vec<Node> },
+}
+
+/// The full tray menu tree.
+#[derive(Debug, Clone)]
+pub struct MenuSpec {
+    pub nodes: Vec<Node>,
+}
+
 // Stable ids for the fixed items. Tunnel items get generated `tunnel:<n>` ids.
 const ID_START: &str = "daemon:start";
 const ID_STOP: &str = "daemon:stop";
@@ -36,14 +64,9 @@ const ID_REFRESH: &str = "app:refresh";
 const ID_QUIT: &str = "app:quit";
 const ID_DASHBOARD_DETAILS: &str = "open:dashboard-details";
 
-/// Maps menu-item ids to the action they perform.
-pub type MenuModel = HashMap<String, Action>;
-
-/// Build the full tray menu from a snapshot, returning the menu plus the id →
-/// action model the controller dispatches against.
-pub fn build(snapshot: &Snapshot) -> (Menu, MenuModel) {
-    let menu = Menu::new();
-    let mut model: MenuModel = HashMap::new();
+/// Build the full tray menu tree from a snapshot.
+pub fn build(snapshot: &Snapshot) -> MenuSpec {
+    let mut nodes: Vec<Node> = Vec::new();
 
     // Header — a disabled one-line status summary with a health glyph.
     let glyph = match snapshot.health {
@@ -51,163 +74,93 @@ pub fn build(snapshot: &Snapshot) -> (Menu, MenuModel) {
         Health::Degraded => "▲",
         Health::Down => "■",
     };
-    append_disabled(&menu, &format!("{glyph}  {}", snapshot.summary));
-    append_separator(&menu);
+    nodes.push(Node::Label(format!("{glyph}  {}", snapshot.summary)));
+    nodes.push(Node::Separator);
 
     // Dashboard.
-    append_action(
-        &menu,
-        &mut model,
+    nodes.push(action(
         ID_DASHBOARD,
         "Open Dashboard",
-        true,
         Action::OpenUrl(DASHBOARD_URL.to_string()),
-    );
-    append_separator(&menu);
+    ));
+    nodes.push(Node::Separator);
 
     // Daemon lifecycle — contextual to whether it is running.
     if snapshot.running {
-        append_action(
-            &menu,
-            &mut model,
-            ID_RESTART,
-            "Restart Daemon",
-            true,
-            Action::Restart,
-        );
-        append_action(
-            &menu,
-            &mut model,
-            ID_STOP,
-            "Stop Daemon",
-            true,
-            Action::Stop,
-        );
+        nodes.push(action(ID_RESTART, "Restart Daemon", Action::Restart));
+        nodes.push(action(ID_STOP, "Stop Daemon", Action::Stop));
     } else {
-        append_action(
-            &menu,
-            &mut model,
-            ID_START,
-            "Start Daemon",
-            true,
-            Action::Start,
-        );
+        nodes.push(action(ID_START, "Start Daemon", Action::Start));
     }
-    append_separator(&menu);
+    nodes.push(Node::Separator);
 
     // Tunnels submenu.
-    let tunnels = Submenu::new(format!("Tunnels ({})", snapshot.tunnels.len()), true);
-    let _ = menu.append(&tunnels);
+    let mut tunnels: Vec<Node> = Vec::new();
     if snapshot.tunnels.is_empty() {
-        append_disabled_sub(&tunnels, "No tunnels discovered yet");
+        tunnels.push(Node::Label("No tunnels discovered yet".to_string()));
     } else {
         for (i, t) in snapshot.tunnels.iter().enumerate() {
             let scheme = if t.https { "https" } else { "http" };
             let kind = if t.cloud { "cloud" } else { "local" };
-            let id = format!("tunnel:{i}");
-            let item = MenuItem::with_id(
-                MenuId(id.clone()),
-                format!("{}   ·   {scheme} · {kind}", t.domain),
-                true,
-                None,
-            );
-            let _ = tunnels.append(&item);
-            model.insert(id, Action::OpenUrl(t.url.clone()));
+            tunnels.push(Node::Item {
+                id: format!("tunnel:{i}"),
+                label: format!("{}   ·   {scheme} · {kind}", t.domain),
+                enabled: true,
+                action: Action::OpenUrl(t.url.clone()),
+            });
         }
     }
+    nodes.push(Node::Sub {
+        label: format!("Tunnels ({})", snapshot.tunnels.len()),
+        children: tunnels,
+    });
 
     // Global HTTPS policy toggle (affects plain-HTTP `.portzero.local` tunnels).
-    let https = CheckMenuItem::with_id(
-        MenuId(ID_HTTPS.to_string()),
-        "Enable HTTPS for HTTP tunnels",
-        true,
-        snapshot.https.enable_for_port_80,
-        None,
-    );
-    let _ = menu.append(&https);
     // Clicking flips the current value.
-    model.insert(
-        ID_HTTPS.to_string(),
-        Action::ToggleHttps(!snapshot.https.enable_for_port_80),
-    );
+    nodes.push(Node::Check {
+        id: ID_HTTPS.to_string(),
+        label: "Enable HTTPS for HTTP tunnels".to_string(),
+        checked: snapshot.https.enable_for_port_80,
+        action: Action::ToggleHttps(!snapshot.https.enable_for_port_80),
+    });
 
     // Issues submenu — only when there is something to show.
     if !snapshot.problems.is_empty() {
-        let issues = Submenu::new(format!("Issues ({})", snapshot.problems.len()), true);
-        let _ = menu.append(&issues);
+        let mut issues: Vec<Node> = Vec::new();
         for p in &snapshot.problems {
-            append_disabled_sub(&issues, &format!("⚠  {}", truncate(&p.summary, 70)));
+            issues.push(Node::Label(format!("⚠  {}", truncate(&p.summary, 70))));
             if !p.fix.is_empty() {
-                append_disabled_sub(&issues, &format!("      ↳ {}", truncate(&p.fix, 80)));
+                issues.push(Node::Label(format!("      ↳ {}", truncate(&p.fix, 80))));
             }
         }
-        append_separator_sub(&issues);
-        append_action_sub(
-            &issues,
-            &mut model,
+        issues.push(Node::Separator);
+        issues.push(action(
             ID_DASHBOARD_DETAILS,
             "Open dashboard for fixes →",
             Action::OpenUrl(DASHBOARD_URL.to_string()),
-        );
+        ));
+        nodes.push(Node::Sub {
+            label: format!("Issues ({})", snapshot.problems.len()),
+            children: issues,
+        });
     }
-    append_separator(&menu);
+    nodes.push(Node::Separator);
 
     // App controls.
-    append_action(
-        &menu,
-        &mut model,
-        ID_REFRESH,
-        "Refresh Now",
-        true,
-        Action::Refresh,
-    );
-    append_action(
-        &menu,
-        &mut model,
-        ID_QUIT,
-        "Quit PortZero Tray",
-        true,
-        Action::Quit,
-    );
+    nodes.push(action(ID_REFRESH, "Refresh Now", Action::Refresh));
+    nodes.push(action(ID_QUIT, "Quit PortZero Tray", Action::Quit));
 
-    (menu, model)
+    MenuSpec { nodes }
 }
 
-// ── small append helpers ────────────────────────────────────────────────────
-
-fn append_disabled(menu: &Menu, text: &str) {
-    let _ = menu.append(&MenuItem::new(text, false, None));
-}
-
-fn append_disabled_sub(sub: &Submenu, text: &str) {
-    let _ = sub.append(&MenuItem::new(text, false, None));
-}
-
-fn append_separator(menu: &Menu) {
-    let _ = menu.append(&PredefinedMenuItem::separator());
-}
-
-fn append_separator_sub(sub: &Submenu) {
-    let _ = sub.append(&PredefinedMenuItem::separator());
-}
-
-fn append_action(
-    menu: &Menu,
-    model: &mut MenuModel,
-    id: &str,
-    text: &str,
-    enabled: bool,
-    action: Action,
-) {
-    let item = MenuItem::with_id(MenuId(id.to_string()), text, enabled, None);
-    let _ = menu.append(&item);
-    model.insert(id.to_string(), action);
-}
-
-fn append_action_sub(sub: &Submenu, model: &mut MenuModel, id: &str, text: &str, action: Action) {
-    let item = MenuItem::with_id(MenuId(id.to_string()), text, true, None);
-    let _ = sub.append(&item);
-    model.insert(id.to_string(), action);
+/// Convenience for a simple enabled clickable item.
+fn action(id: &str, label: &str, action: Action) -> Node {
+    Node::Item {
+        id: id.to_string(),
+        label: label.to_string(),
+        enabled: true,
+        action,
+    }
 }
 
 /// Truncate to `n` chars with an ellipsis, on a char boundary.
@@ -219,6 +172,89 @@ fn truncate(s: &str, n: usize) -> String {
     out.push('…');
     out
 }
+
+// ── muda backend (Windows / macOS) ──────────────────────────────────────────
+//
+// Renders the neutral spec into a `muda::Menu` and the id → action map the
+// controller dispatches against. Linux uses ksni instead and never compiles
+// muda (which links GTK), so this is gated off there.
+#[cfg(not(target_os = "linux"))]
+mod muda_backend {
+    use std::collections::HashMap;
+
+    use muda::{
+        CheckMenuItem, IsMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+    };
+
+    use super::{Action, MenuSpec, Node};
+
+    /// Maps menu-item ids to the action they perform.
+    pub type MenuModel = HashMap<String, Action>;
+
+    /// Render the spec into a `muda::Menu` plus the id → action model.
+    pub fn to_muda(spec: &MenuSpec) -> (Menu, MenuModel) {
+        let menu = Menu::new();
+        let mut model = MenuModel::new();
+        for item in build_items(&spec.nodes, &mut model) {
+            let _ = menu.append(item.as_ref());
+        }
+        (menu, model)
+    }
+
+    fn build_items(nodes: &[Node], model: &mut MenuModel) -> Vec<Box<dyn IsMenuItem>> {
+        let mut items: Vec<Box<dyn IsMenuItem>> = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            match node {
+                Node::Label(text) => {
+                    items.push(Box::new(MenuItem::new(text.as_str(), false, None)));
+                }
+                Node::Separator => {
+                    items.push(Box::new(PredefinedMenuItem::separator()));
+                }
+                Node::Item {
+                    id,
+                    label,
+                    enabled,
+                    action,
+                } => {
+                    items.push(Box::new(MenuItem::with_id(
+                        MenuId(id.clone()),
+                        label.as_str(),
+                        *enabled,
+                        None,
+                    )));
+                    model.insert(id.clone(), action.clone());
+                }
+                Node::Check {
+                    id,
+                    label,
+                    checked,
+                    action,
+                } => {
+                    items.push(Box::new(CheckMenuItem::with_id(
+                        MenuId(id.clone()),
+                        label.as_str(),
+                        true,
+                        *checked,
+                        None,
+                    )));
+                    model.insert(id.clone(), action.clone());
+                }
+                Node::Sub { label, children } => {
+                    let sub = Submenu::new(label.as_str(), true);
+                    for child in build_items(children, model) {
+                        let _ = sub.append(child.as_ref());
+                    }
+                    items.push(Box::new(sub));
+                }
+            }
+        }
+        items
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub use muda_backend::{to_muda, MenuModel};
 
 #[cfg(test)]
 mod tests {

@@ -15,7 +15,11 @@
 //! it stays identical across macOS, Windows, and Linux.
 
 pub mod actions;
+// The muda/tray-icon controller is Windows/macOS only; Linux drives ksni
+// directly from `platform::linux` and never compiles muda (which links GTK).
+#[cfg(not(target_os = "linux"))]
 pub mod controller;
+pub mod engine;
 pub mod icon;
 pub mod menu;
 pub mod platform;

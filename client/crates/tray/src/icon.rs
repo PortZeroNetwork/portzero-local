@@ -1,10 +1,20 @@
 //! Programmatic tray icons — a filled status dot rendered to RGBA, so the tray
 //! ships no image assets and the colour always matches [`Health`] exactly.
+//!
+//! The renderer produces a backend-neutral [`RgbaImage`]; each platform converts
+//! it to its native icon type (`tray_icon::Icon` on Windows/macOS, `ksni::Icon`
+//! on Linux) so this module depends on no GUI toolkit.
 
 use crate::state::Health;
-use tray_icon::Icon;
 
 const SIZE: u32 = 32;
+
+/// A raw RGBA (8-bit, non-premultiplied, R,G,B,A byte order) image.
+pub struct RgbaImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
 
 /// RGB status colours, chosen for contrast on both light and dark menu bars.
 fn color(health: Health) -> (u8, u8, u8) {
@@ -17,11 +27,12 @@ fn color(health: Health) -> (u8, u8, u8) {
 
 /// Build the tray icon for a given health state: a filled circle with a soft
 /// 1px darker rim, on a transparent background.
-pub fn for_health(health: Health) -> Icon {
-    let rgba = draw_dot(color(health));
-    // `from_rgba` only fails on a size/length mismatch, which cannot happen for
-    // our fixed-size buffer; fall back is unreachable but avoids an unwrap.
-    Icon::from_rgba(rgba, SIZE, SIZE).expect("status icon has a valid RGBA buffer")
+pub fn image_for_health(health: Health) -> RgbaImage {
+    RgbaImage {
+        width: SIZE,
+        height: SIZE,
+        rgba: draw_dot(color(health)),
+    }
 }
 
 /// Render a centered filled disc into a `SIZE x SIZE` RGBA buffer.

@@ -3,8 +3,8 @@
 //! shared [`crate::menu`], [`crate::state`], and [`crate::controller`] modules,
 //! so the tray behaves identically on every platform.
 //!
-//! - Linux drives the tray from a GTK main loop (the tray uses
-//!   libappindicator / StatusNotifierItem, which require GTK).
+//! - Linux drives the tray from a pure-Rust ksni StatusNotifierItem service
+//!   (SNI over D-Bus, no GTK); ksni owns its own background service thread.
 //! - Windows and macOS drive it from a winit event loop, which owns the native
 //!   message pump / run loop the tray icon needs.
 
