@@ -188,6 +188,62 @@ function Sync-ActiveInstall {
     }
 }
 
+function Install-Tray {
+    param(
+        [string] $Cargo,
+        [string] $CargoBin
+    )
+
+    # System-tray companion: a small GUI showing daemon/tunnel health with
+    # start/restart/stop controls. Best-effort — a tray build or autostart
+    # failure never aborts the daemon install.
+    Write-Step "Building and installing the system-tray companion (portzero-tray)"
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Cargo install --path "client/crates/tray"
+        $trayBuilt = ($LASTEXITCODE -eq 0)
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if (-not $trayBuilt) {
+        Write-Warning "portzero-tray build failed; continuing without the tray."
+        return
+    }
+
+    $trayExe = Join-Path $CargoBin "portzero-tray.exe"
+    if (-not (Test-Path $trayExe)) {
+        Write-Warning "cargo completed but $trayExe was not created; skipping tray autostart."
+        return
+    }
+
+    # Autostart at login via a shortcut in the user's Startup folder.
+    try {
+        $startup = [Environment]::GetFolderPath("Startup")
+        if ($startup) {
+            $shortcut = Join-Path $startup "PortZero Tray.lnk"
+            $wshell = New-Object -ComObject WScript.Shell
+            $link = $wshell.CreateShortcut($shortcut)
+            $link.TargetPath = $trayExe
+            $link.Description = "PortZero daemon status and controls"
+            $link.Save()
+            Write-Step "Installed tray autostart shortcut at $shortcut"
+        }
+    }
+    catch {
+        Write-Warning "Could not create the tray autostart shortcut: $($_.Exception.Message)"
+    }
+
+    try {
+        Start-Process -FilePath $trayExe | Out-Null
+        Write-Step "Launched portzero-tray"
+    }
+    catch {
+        Write-Warning "Could not launch portzero-tray; it will start at your next login."
+    }
+}
+
 function Open-Browser {
     param([string] $Url)
 
@@ -258,6 +314,8 @@ Write-Step "Starting daemon"
 if ($LASTEXITCODE -ne 0) {
     Fail "portzero start failed."
 }
+
+Install-Tray -Cargo $cargo.Source -CargoBin $cargoBin
 
 Write-Host ""
 if (-not (Open-Browser -Url "http://portzero.local")) {

@@ -17,12 +17,37 @@ class Portzero < Formula
 
   def install
     bin.install "portzero"
+    # System-tray companion: a small GUI showing daemon/tunnel health with
+    # start/restart/stop controls. Present in the release tarball.
+    bin.install "portzero-tray" if File.exist?("portzero-tray")
   end
 
   def post_install
     # Generate the local CA certificate (writes to ~/Library/Application Support/PortZero/).
     # Idempotent — existing certs are kept. Does not require elevated privileges.
     system "#{bin}/portzero", "trust", "generate"
+
+    # Install a per-user LaunchAgent so the tray starts at login. Best-effort:
+    # never fail the install, and only load it if a GUI session is present.
+    return unless File.exist?("#{opt_bin}/portzero-tray")
+
+    require "fileutils"
+    agents_dir = File.expand_path("~/Library/LaunchAgents")
+    plist_path = "#{agents_dir}/cloud.portzero.tray.plist"
+    FileUtils.mkdir_p(agents_dir)
+    File.write(plist_path, <<~PLIST)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0"><dict>
+        <key>Label</key><string>cloud.portzero.tray</string>
+        <key>ProgramArguments</key>
+        <array><string>#{opt_bin}/portzero-tray</string></array>
+        <key>RunAtLoad</key><true/>
+        <key>KeepAlive</key><true/>
+      </dict></plist>
+    PLIST
+    quiet_system "/bin/launchctl", "unload", plist_path
+    quiet_system "/bin/launchctl", "load", plist_path
   end
 
   def caveats
@@ -44,6 +69,11 @@ class Portzero < Formula
       dashboard needs the static hosts entry.
 
       Once done, open http://portzero.local in your browser.
+
+      A system-tray companion (portzero-tray) is installed and set to start at
+      login via ~/Library/LaunchAgents/cloud.portzero.tray.plist. It shows
+      daemon/tunnel health and offers start/restart/stop controls. To stop it:
+        launchctl unload ~/Library/LaunchAgents/cloud.portzero.tray.plist
 
       Manual equivalents:
         sudo HOME="$HOME" portzero trust install

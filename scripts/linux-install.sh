@@ -275,6 +275,17 @@ if ! install -m 0755 "$src/portzero" "$install_dir/portzero" 2>/dev/null; then
 fi
 info "Installed portzero to $install_dir/portzero"
 
+# System-tray companion (portzero-tray): a small GUI showing daemon/tunnel
+# health with start/restart/stop controls. Shipped only in the tray-capable
+# release archives (amd64 Linux, both macOS arches); best-effort everywhere.
+if [ -f "$src/portzero-tray" ]; then
+    if install -m 0755 "$src/portzero-tray" "$install_dir/portzero-tray" 2>/dev/null; then
+        info "Installed portzero-tray to $install_dir/portzero-tray"
+    else
+        warn "Could not install portzero-tray to $install_dir (continuing without the tray)."
+    fi
+fi
+
 portzero_bin_dir="${HOME}/.portzero/bin"
 uninstall_helper="${portzero_bin_dir}/portzero-uninstall"
 uninstall_url="${RELEASES_URL}/latest/download/linux-uninstall.sh"
@@ -390,6 +401,27 @@ UNIT
         open_dashboard || true
     else
         warn "Could not start portzero automatically. Run later: portzero start"
+    fi
+
+    # Install the tray autostart entry and launch it if a desktop session is up.
+    tray_bin="$install_dir/portzero-tray"
+    if [ -x "$tray_bin" ]; then
+        info "Installing tray autostart (XDG) and launching it..."
+        mkdir -p "$HOME/.config/autostart"
+        {
+            printf '%s\n' '[Desktop Entry]'
+            printf '%s\n' 'Type=Application'
+            printf '%s\n' 'Name=PortZero Tray'
+            printf '%s\n' 'Comment=PortZero daemon status and controls'
+            printf '%s\n' "Exec=$tray_bin"
+            printf '%s\n' 'X-GNOME-Autostart-enabled=true'
+            printf '%s\n' 'NoDisplay=false'
+        } > "$HOME/.config/autostart/portzero-tray.desktop"
+        if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+            ( "$tray_bin" >/dev/null 2>&1 & )
+        else
+            info "No desktop session detected; the tray will start at your next login."
+        fi
     fi
 fi
 

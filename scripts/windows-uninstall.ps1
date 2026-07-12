@@ -80,6 +80,14 @@ $cargoBin = Get-CargoBinDir
 $cargoPortzeroExe = Join-Path $cargoBin "portzero.exe"
 $candidates = Get-PortzeroCandidates -CargoExe $cargoPortzeroExe
 
+Write-Step "Stopping the tray companion and removing its autostart shortcut"
+Get-Process -Name "portzero-tray" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+$startup = [Environment]::GetFolderPath("Startup")
+if ($startup) {
+    Remove-FileBestEffort -Path (Join-Path $startup "PortZero Tray.lnk")
+}
+
 Write-Step "Stopping daemon and removing autostart service"
 $null = Invoke-PortzeroBestEffort -Candidates $candidates -Arguments @("autostart", "disable")
 $null = Invoke-PortzeroBestEffort -Candidates $candidates -Arguments @("stop")
@@ -89,11 +97,13 @@ $null = Invoke-PortzeroBestEffort -Candidates $candidates -Arguments @("trust", 
 
 $cargo = Get-Command "cargo.exe" -ErrorAction SilentlyContinue
 if ($cargo) {
-    Write-Step "Uninstalling portzero-cli with cargo"
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
+        Write-Step "Uninstalling portzero-cli with cargo"
         & $cargo.Source uninstall portzero-cli 2>$null
+        Write-Step "Uninstalling portzero-tray with cargo"
+        & $cargo.Source uninstall portzero-tray 2>$null
     }
     finally {
         $ErrorActionPreference = $previousErrorActionPreference
@@ -101,8 +111,10 @@ if ($cargo) {
 }
 
 foreach ($candidate in $candidates) {
+    $candidateDir = Split-Path -Parent $candidate
     Remove-FileBestEffort -Path $candidate
-    Remove-FileBestEffort -Path (Join-Path (Split-Path -Parent $candidate) "wintun.dll")
+    Remove-FileBestEffort -Path (Join-Path $candidateDir "wintun.dll")
+    Remove-FileBestEffort -Path (Join-Path $candidateDir "portzero-tray.exe")
 }
 
 Write-Host "portzero uninstalled."
