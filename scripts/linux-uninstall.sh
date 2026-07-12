@@ -72,6 +72,21 @@ portzero_uninstall_candidates() {
         awk 'NF && !seen[$0]++'
 }
 
+portzero_tray_candidates() {
+    if [ -n "${PORTZERO_INSTALL_DIR:-}" ]; then
+        printf '%s\n' "${PORTZERO_INSTALL_DIR%/}/portzero-tray"
+    fi
+    if has_cmd portzero-tray; then
+        command -v portzero-tray
+    fi
+    printf '%s\n' \
+        "${HOME}/.local/bin/portzero-tray" \
+        "${HOME}/.cargo/bin/portzero-tray" \
+        "/usr/local/bin/portzero-tray" \
+        "/usr/bin/portzero-tray" |
+        awk 'NF && !seen[$0]++'
+}
+
 run_portzero_best_effort() {
     args="$1"
     for candidate in $(portzero_candidates); do
@@ -109,6 +124,12 @@ remove_hosts_pin() {
     trap - EXIT HUP INT TERM
 }
 
+info "Stopping the tray companion and removing its autostart entry"
+if has_cmd pkill; then
+    pkill -x portzero-tray >/dev/null 2>&1 || true
+fi
+remove_file "${HOME}/.config/autostart/portzero-tray.desktop"
+
 info "Stopping daemon and removing autostart service"
 run_portzero_best_effort "autostart disable" || true
 run_portzero_best_effort "stop" || true
@@ -137,6 +158,10 @@ remove_hosts_pin
 remove_file /etc/polkit-1/rules.d/50-portzero-resolved.rules
 
 for candidate in $(portzero_candidates); do
+    remove_file "$candidate"
+done
+
+for candidate in $(portzero_tray_candidates); do
     remove_file "$candidate"
 done
 

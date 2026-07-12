@@ -45,7 +45,9 @@ section = "net"
 priority = "optional"
 assets = [
     ["target/release/portzero", "usr/local/bin/portzero", "755"],
+    ["target/release/portzero-tray", "usr/local/bin/portzero-tray", "755"],
     ["../../../packaging/linux/portzero-daemon.service", "usr/lib/systemd/user/portzero-daemon.service", "644"],
+    ["../../../packaging/linux/portzero-tray.desktop", "etc/xdg/autostart/portzero-tray.desktop", "644"],
 ]
 maintainer-scripts = "../../../packaging/linux/deb"
 
@@ -58,7 +60,9 @@ vendor = "Loum Technologies"
 release = "1"
 assets = [
     { source = "../../../target/release/portzero", dest = "/usr/local/bin/portzero", mode = "0755" },
+    { source = "../../../target/release/portzero-tray", dest = "/usr/local/bin/portzero-tray", mode = "0755" },
     { source = "../../../packaging/linux/portzero-daemon.service", dest = "/usr/lib/systemd/user/portzero-daemon.service", mode = "0644" },
+    { source = "../../../packaging/linux/portzero-tray.desktop", dest = "/etc/xdg/autostart/portzero-tray.desktop", mode = "0644" },
 ]
 post_install_script = """
 if command -v setcap >/dev/null 2>&1; then
@@ -71,6 +75,8 @@ systemctl daemon-reload 2>/dev/null || true
 """
 pre_uninstall_script = """
 systemctl --user disable --now portzero-daemon 2>/dev/null || true
+# Stop any running tray companion; its autostart entry is removed with the package.
+pkill -x portzero-tray 2>/dev/null || true
 sed -i '/# portzero-local/d' /etc/hosts 2>/dev/null || true
 systemctl daemon-reload 2>/dev/null || true
 """

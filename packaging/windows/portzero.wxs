@@ -67,6 +67,18 @@
       <Component Id="PortzeroExeComponent" Guid="{06B6C8A5-C619-46F9-9D12-26735305D061}" Win64="yes">
         <File Id="PortzeroExe" Source="$(var.SourceDir)\portzero.exe" KeyPath="yes" />
       </Component>
+      <!-- System-tray companion: a small GUI showing daemon/tunnel health with
+           start/restart/stop controls. The HKLM Run value autostarts it for every
+           user at login; it is removed with the component on uninstall. -->
+      <Component Id="PortzeroTrayExeComponent" Guid="{E5BA3B5E-EC62-441F-BBCF-A0570A1CB1BF}" Win64="yes">
+        <File Id="PortzeroTrayExe" Source="$(var.SourceDir)\portzero-tray.exe" KeyPath="yes" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\Microsoft\Windows\CurrentVersion\Run"
+          Name="PortZeroTray"
+          Value="&quot;[#PortzeroTrayExe]&quot;"
+          Type="string" />
+      </Component>
       <Component Id="WintunDllComponent" Guid="{55DA79C9-8C87-4A76-99EB-A5D14160E3D3}" Win64="yes">
         <File Id="WintunDll" Source="$(var.SourceDir)\wintun.dll" KeyPath="yes" />
       </Component>
@@ -115,6 +127,7 @@
 
     <ComponentGroup Id="PortZeroComponents">
       <ComponentRef Id="PortzeroExeComponent" />
+      <ComponentRef Id="PortzeroTrayExeComponent" />
       <ComponentRef Id="WintunDllComponent" />
       <ComponentRef Id="Concrt140DllComponent" />
       <ComponentRef Id="Msvcp140DllComponent" />
