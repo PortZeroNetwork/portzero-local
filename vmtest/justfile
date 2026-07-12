@@ -35,12 +35,26 @@ vm-checkpoint vm name:
 vm-reset vm="windows" name="ready":
     vmkit reset "{{vm}}" "{{name}}"
 
-# Local overlay tunnel E2E (no cloud, no secrets): one platform, or all three
-# in series with a summary. Resets each VM to its "built" checkpoint first.
+# One VM reset per platform, covering everything the old separate local /
+# staging / lifecycle / upgrade flavors used to check across four separate
+# resets: install -> local-tunnel test -> upgrade -> cloud-tunnel test ->
+# uninstall, in a single pass (see vmkit.conf VMKIT_FLAVOR_COMBINED_* and
+# vmtest/scripts/combined-{linux,macos,windows}.{sh,ps1}). Installs the prior
+# released package if one is available (else the new one directly, skipping
+# the upgrade step), and SKIPs the cloud-tunnel step cleanly if no staging
+# seed token is available (or set COMBINED_SKIP_CLOUD=1 to skip it outright).
+# Resets each VM to its "built" checkpoint first.
 #   just vm-test            # all platforms, in series
 #   just vm-test linux
 [macos]
 vm-test platform="":
+    vmkit series combined "{{platform}}"
+
+# Ad-hoc single-flavor debugging: run just the local-overlay smoke, the
+# cloud-tunnel smoke, the install/uninstall lifecycle, or the prior->new
+# upgrade check in isolation, instead of the full combined flow `vm-test` runs.
+[macos]
+vm-test-local platform="":
     vmkit series local "{{platform}}"
 
 # Real cloud-tunnel E2E against staging (throwaway staging account per run).
@@ -51,14 +65,16 @@ vm-test-staging platform="":
     vmkit series staging "{{platform}}"
 
 # Full install -> verify -> UNINSTALL -> assert-clean lifecycle against the
-# REAL installer (.deb / signed MSI / brew+setup). Artifacts must be staged
-# where vmkit.conf's VMKIT_ARTIFACT_* point (vm-e2e.yml does this in CI).
+# REAL installer (.deb / signed MSI / brew+setup), in isolation (no upgrade,
+# no tunnel tests). Artifacts must be staged where vmkit.conf's
+# VMKIT_ARTIFACT_* point (vm-e2e.yml does this in CI).
 [macos]
 vm-test-lifecycle platform="":
     vmkit series lifecycle "{{platform}}"
 
-# Upgrade coverage: prior released version -> new build, assert the in-place
-# upgrade duplicated nothing. SKIPs cleanly when no prior artifact is available.
+# Upgrade coverage in isolation (no tunnel tests): prior released version ->
+# new build, assert the in-place upgrade duplicated nothing. SKIPs cleanly
+# when no prior artifact is available.
 [macos]
 vm-test-upgrade platform="":
     vmkit series upgrade "{{platform}}"

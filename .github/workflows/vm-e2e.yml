@@ -167,10 +167,10 @@ jobs:
           retention-days: 1
 
   vm-test:
-    name: vm-test + vm-test-staging (windows, linux, macos)
+    name: vm-test (windows, linux, macos)
     needs: [build-windows, build-linux, package-linux-deb, package-windows-msi]
     runs-on: [self-hosted, macOS]
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v5
 
@@ -230,40 +230,32 @@ jobs:
           name: portzero-msi
           path: vmtest/.downloaded-artifacts/windows
 
-      - name: vm-test (local overlay, no cloud/secrets — windows, linux, macos in series)
-        run: just vm-test
-
-      - name: vm-test-lifecycle (real install -> verify -> UNINSTALL -> assert-clean)
-        # The audit's highest-priority gap: proves uninstall removes the trusted
-        # CA, the .portzero.local DNS resolver/pin, the autostart service, and
-        # the TUN interface — no residue. Linux installs the real .deb, Windows
-        # the real MSI, macOS runs the privileged setup/teardown flow. macOS
-        # additionally exercises a real offline `brew install` of a formula
-        # generated from the host-built tarball (SKIPs if Homebrew isn't in the
-        # golden snapshot).
-        run: just vm-test-lifecycle
-
-      - name: vm-test-upgrade (prior version -> new version, assert no duplication)
-        # Prior-version upgrade dup-checks on all three guests: one hosts pin +
-        # unit (Linux), WiX <MajorUpgrade> single product/task/NRPT/adapter
-        # (Windows), single LaunchDaemon/resolver/keychain-CA/hosts pin (macOS).
-        # The prior artifact is fetched via gh, or the script SKIPs cleanly
-        # (never a false fail) when none is available (e.g. before the first
-        # release, or a pristine guest without gh). Linux upgrade is also
+      - name: vm-test (install -> local-tunnel -> upgrade -> cloud-tunnel -> uninstall, windows/linux/macos in series)
+        # One VM reset per platform now covers what four separate steps used to
+        # check across four separate resets: installs the real package (prior
+        # released version if available, else the new one directly), proves the
+        # real local overlay (.portzero.local via TUN) works, upgrades to the new
+        # version and asserts nothing got duplicated (the audit's highest-priority
+        # gap — trusted CA, DNS resolver/pin, autostart service, TUN interface all
+        # asserted GONE after uninstall), proves the real cloud tunnel works
+        # against staging, then uninstalls. See vmkit.conf VMKIT_FLAVOR_COMBINED_*
+        # and vmtest/scripts/combined-*.
+        #
+        # The cloud-tunnel step always runs here (a manual dispatch can pass
+        # staging=false to skip it via COMBINED_SKIP_CLOUD). NOTE: on push/PR
+        # `inputs.staging` is null, and GitHub's loose comparison treats
+        # null == false as EQUAL, so gate on the event name instead.
+        #
+        # Rotated seed token for the cloud-tunnel step: read from the same
+        # host-side file the interactive scripts already default to (this
+        # runner IS the host that owns that file — no GitHub secret needed).
+        # See VMKIT_SECRETS_HOST_DEFAULT in ./vmkit.conf.
+        #
+        # Prior-version artifacts for the upgrade step are fetched via gh, or
+        # the step SKIPs cleanly (never a false fail) when none is available
+        # (e.g. before the first release). Linux upgrade dup-checks are also
         # covered on hosted CI (ci.yml: lifecycle-upgrade-linux).
         env:
           GH_TOKEN: ${{ github.token }}
-        run: just vm-test-upgrade
-
-      - name: vm-test-staging (real cloud tunnel against staging — windows, linux, macos in series)
-        # Runs on every pull_request/push; a manual dispatch can pass
-        # staging=false to skip it. NOTE: on push/PR `inputs.staging` is null,
-        # and GitHub's loose comparison treats null == false as EQUAL, so the
-        # old `inputs.staging != false` silently skipped this leg on every
-        # push — gate on the event name instead.
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.staging }}
-        # Rotated seed token: read from the same host-side file the
-        # interactive scripts already default to (this runner IS the host
-        # that owns that file — no GitHub secret needed). See
-        # VMKIT_SECRETS_HOST_DEFAULT in ./vmkit.conf.
-        run: just vm-test-staging
+          COMBINED_SKIP_CLOUD: ${{ (github.event_name == 'workflow_dispatch' && !inputs.staging) && '1' || '' }}
+        run: just vm-test
