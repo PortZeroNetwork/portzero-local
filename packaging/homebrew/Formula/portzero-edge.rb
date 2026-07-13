@@ -1,5 +1,5 @@
 class PortzeroEdge < Formula
-  # Edge (prerelease) channel — builds cut off `develop` for testing installers.
+  # Edge (prerelease) channel — builds cut off `staging` for testing installers.
   # NOT a supported release. Stable users install `portzero`, never this. The
   # release workflow (.github/workflows/release.yml) seeds this file into the
   # tap from packaging/homebrew/Formula/portzero-edge.rb and fills in the

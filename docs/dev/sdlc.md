@@ -1,18 +1,25 @@
 # Software delivery lifecycle
 
-This repository uses a lightweight Git Flow model:
+This repository uses a Heroku-style, tag-addressed release model (the same one
+`portzero-cloud` uses):
 
-- `develop` is the default branch for day-to-day integration.
-- `release/current` is the release gate branch.
-- GitHub Actions CI runs when `release/current` is updated.
-- Publishing a GitHub Release is manual and runs from `release/current`.
+- `staging` is the single long-lived integration branch and the default branch.
+  Day-to-day work merges here via PR.
+- There is **no** `release/*` branch. A stable **release is an immutable
+  `vX.Y.Z` tag** — the release of record, browsable under Tags.
+- Cutting a stable release is a deliberate, gated action: you dispatch the
+  Release workflow and pick the version bump, then a required reviewer approves
+  the `release` GitHub Environment. That stamps the tag, and the tag push builds
+  and publishes the signed release.
+- GitHub Actions CI runs on PRs into `staging` (see
+  `.github/workflows/ci.yml`).
 
 ## Local validation before release
 
-Run the local checks before updating the release branch:
+Run the local checks on `staging` before cutting a release:
 
 ```bash
-git switch develop
+git switch staging
 git pull
 just verify
 just e2e
@@ -21,44 +28,36 @@ just e2e
 The pre-commit and pre-push hooks also run the fast local checks, but `just e2e`
 is intentionally manual because it needs root or Administrator privileges.
 
-## Start release validation
+## Cut a stable release
 
-Fast-forward `release/current` to the prepared `develop` tip and push it:
+A stable release is cut by the gated **Release** workflow, which picks the bump
+explicitly and pushes the `vX.Y.Z` tag from the `staging` tip:
 
-```bash
-git switch release/current
-git pull
-git merge --ff-only develop
-git push origin release/current
-```
+1. Go to **Actions → Release → Run workflow**, with `staging` selected as the
+   branch to run from.
+2. Set **channel** to `release` and pick the **bump** (`patch` / `minor` /
+   `major`).
+3. Run it. The `promote` job pauses on the `release` environment gate until a
+   **required reviewer** approves it — this is the release "button".
+4. On approval, `promote` computes the next `vX.Y.Z` from the latest stable tag
+   and pushes that tag from the `staging` tip.
 
-That push starts the CI workflow for `release/current`.
-
-Inspect or follow the workflow runs with:
-
-```bash
-gh run list --branch release/current
-gh run watch
-```
-
-## Publish a release manually
-
-After CI passes on `release/current`, trigger the release workflow manually:
-
-```bash
-gh workflow run release.yml --ref release/current
-```
-
-Then inspect or follow the release workflow:
+The tag push triggers the same workflow's tag build (`push: tags: v*`), which
+produces the **signed** stable artifacts and the GitHub Release. Inspect or
+follow the runs from the **Actions** tab, or with the GitHub CLI:
 
 ```bash
 gh run list --workflow Release
 gh run watch
 ```
 
-The release workflow computes the next version from the tip commit message on
-`release/current`:
+Because the version is decided at release time by the person cutting it, there
+is no commit-message marker to remember and nothing to compute from the tip
+commit — the bump you pick is the bump you get.
 
-- `BREAKING CHANGE` or `[major]` creates a major version bump.
-- `feat(...):` or `[minor]` creates a minor version bump.
-- Anything else creates a patch version bump.
+## Prereleases (edge channel)
+
+A prerelease is cut off `staging` by dispatching the same workflow with
+**channel** `edge` (the default). It is ungated and produces an **unsigned**
+build tagged/marked `prerelease: true`, so it never touches the stable install
+paths. See [prerelease-channel.md](prerelease-channel.md).

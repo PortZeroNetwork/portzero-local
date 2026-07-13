@@ -28,7 +28,7 @@ jobs:
 
       - name: Open tunnel(s) and wait for readiness
         id: tunnel
-        uses: PortZeroNetwork/portzero-local/tunnel-action@develop
+        uses: PortZeroNetwork/portzero-local/tunnel-action@staging
         with:
           tunnels: ci-${{ github.run_id }}--myapp.portzero.local
 
@@ -39,12 +39,12 @@ jobs:
 
       - name: Teardown
         if: always()
-        uses: PortZeroNetwork/portzero-local/tunnel-action@develop
+        uses: PortZeroNetwork/portzero-local/tunnel-action@staging
         with:
           mode: teardown
 ```
 
-> The `uses:` line above points at this repo's `develop` branch, where this
+> The `uses:` line above points at this repo's `staging` branch, where this
 > action currently lives (`tunnel-action/` at the repo root). Publishing a
 > dedicated `portzero/tunnel-action` repo — so consumers get a shorter
 > `portzero/tunnel-action@v1`-style reference — is a follow-up outside this
@@ -68,7 +68,7 @@ can stay plain HTTP:
     node server.js &
 
 - id: tunnel
-  uses: PortZeroNetwork/portzero-local/tunnel-action@develop
+  uses: PortZeroNetwork/portzero-local/tunnel-action@staging
   with:
     tunnels: ci-${{ github.run_id }}--myapp.portzero.local
 
@@ -134,8 +134,8 @@ self-hosted, reused runner).
 ## Status
 
 This action ships from `tunnel-action/` in the `PortZeroNetwork/portzero-local`
-repo (this repo), merged to `develop`. It is usable today via
-`uses: PortZeroNetwork/portzero-local/tunnel-action@develop` (or a release
+repo (this repo), merged to `staging`. It is usable today via
+`uses: PortZeroNetwork/portzero-local/tunnel-action@staging` (or a release
 tag once one exists). Mirroring it into a dedicated
 `portzero/tunnel-action` repo for a shorter `uses:` line is a follow-up human
 step, not done as part of this change — see `work/task-65.task.md`.

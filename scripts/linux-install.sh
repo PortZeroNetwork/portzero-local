@@ -312,7 +312,7 @@ info "Platform: ${target}"
 
 # --- Release channel ---
 # Default: stable. Set PORTZERO_CHANNEL=prerelease to install the newest
-# prerelease ("edge") build cut off develop, or pin an exact one with
+# prerelease ("edge") build cut off staging, or pin an exact one with
 # PORTZERO_VERSION (e.g. 0.2.0-rc.7). Prereleases are a testing channel: they
 # are never picked up by a stable install and never seen by the in-CLI update
 # check (which only follows GitHub's "latest", where prereleases don't appear).
@@ -549,7 +549,7 @@ esac
 
 echo ""
 info "Local tunnels (*.portzero.local) governed by the GNU General Public License v3.0:"
-info "  https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE"
+info "  https://github.com/PortZeroNetwork/portzero-local/blob/staging/LICENSE"
 info "Cloud features governed by https://portzero.net/terms"
 
 echo ""

@@ -1,8 +1,8 @@
 # Prerelease ("edge") channel
 
-Full, signed installers can be cut off `develop` for testing **without** any
-stable user detecting, being offered, or receiving them. This is the edge
-channel.
+Full installers can be cut off `staging` for testing **without** any stable
+user detecting, being offered, or receiving them. This is the edge channel.
+(Edge builds ship **unsigned** — see below.)
 
 ## The one guarantee
 
@@ -20,15 +20,16 @@ marked `prerelease: true`**. In this repo that covers:
 So the whole design rests on one fact: **edge releases are marked
 `prerelease: true`** (and `make_latest: false`). Stable is untouched by them.
 
-Edge builds are built from unmodified `develop` source, so they connect to the
-**production** portzero.cloud, exactly like stable — staging is only ever used
-inside the release workflow's interop *tests*, never compiled into a binary.
+Edge builds are built from unmodified `staging` source, so they connect to the
+**production** portzero.cloud, exactly like stable — the staging *cloud* is only
+ever used inside the release workflow's interop *tests*, never compiled into a
+binary.
 
 ## Cutting an edge build
 
-Run the **Release** workflow via *Actions → Release → Run workflow* on the ref
-you want (normally `develop`). A `workflow_dispatch` run always produces a
-prerelease:
+Run the **Release** workflow via *Actions → Release → Run workflow* off
+`staging` with **channel** set to `edge` (the default). An edge
+`workflow_dispatch` run always produces a prerelease:
 
 - version `X.Y.Z-rc.<run-number>` (the `X.Y.Z` is the next stable version; the
   `-rc.N` SemVer suffix sorts *below* it, so it can never look newer than
@@ -38,13 +39,13 @@ prerelease:
 - the same full matrix as stable — macOS/Linux binaries, `.deb`, `.rpm`,
   Windows `.exe`/`.msi`, tarballs. **Windows artifacts are unsigned** on edge:
   the Azure Artifact Signing federated-identity credential only trusts the
-  stable release refs, not `develop`, so all signing steps are skipped for
-  prereleases (see below);
+  stable release tags (`refs/tags/v*`), not the `staging` dispatch ref, so all
+  signing steps are skipped for prereleases (see below);
 - the Homebrew **edge** formula (`portzero-edge`) bumped in the tap.
 
-Pushes to `release/*` still produce normal stable releases; nothing there
-changed except that prerelease tags are now excluded from the stable version
-calculation.
+Stable releases are cut by pushing a `vX.Y.Z` tag (the gated `promote` job) and
+are unaffected by edge runs — prerelease tags are excluded from the stable
+version calculation. See [sdlc.md](sdlc.md#cut-a-stable-release).
 
 ## Installing an edge build (opt-in, per platform)
 
@@ -94,9 +95,12 @@ winget is intentionally **not** used for edge (winget has no prerelease lane, so
 only stable is ever submitted there).
 
 Edge Windows artifacts are **unsigned** (see above), so SmartScreen / Defender
-will warn on first run — choose *More info → Run anyway*. If a build needs to be
-signed for testing, add `refs/heads/develop` to the Azure federated-identity
-credential's subject instead of relying on the edge channel.
+will warn on first run — choose *More info → Run anyway*. Signing is authorized
+by the Azure federated-identity credential, whose subject is pegged to the
+stable release tags (`refs/tags/v*`). If an edge build genuinely needs to be
+signed for testing, add the `staging` ref (`refs/heads/staging`) to that
+credential's subject instead of relying on the edge channel — but prefer cutting
+a real stable tag.
 
 ## Why these choices
 

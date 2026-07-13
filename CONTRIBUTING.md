@@ -10,10 +10,10 @@ Thank you for your interest in contributing to Port Zero Local!
 
 ## Pull Request Process
 
-1. Fork the repository and create a feature branch from `develop`.
+1. Fork the repository and create a feature branch from `staging`.
 2. Make your changes.
 3. Ensure tests and checks pass (`just` is the primary task runner; see docs).
-4. Open a Pull Request against the `develop` branch.
+4. Open a Pull Request against the `staging` branch.
 5. Address any review feedback.
 
 ## Code of Conduct
