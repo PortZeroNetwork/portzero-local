@@ -1,11 +1,17 @@
 name: Release
 
 on:
-  # Release is triggered only by pushes to release/* (typically the merge commit
-  # after a PR is merged). No workflow_run or manual dispatch.
+  # Stable releases are triggered by pushes to release/* (typically the merge
+  # commit after a PR is merged).
   push:
     branches:
       - 'release/*'
+  # Prereleases (the "edge" testing channel) are cut manually off any ref —
+  # typically `develop`. A workflow_dispatch run always produces a GitHub
+  # Release marked `prerelease: true`, so it never becomes GitHub's "latest",
+  # is never seen by the in-CLI update check, and never lands on the stable
+  # install paths. See docs/dev/prerelease-channel.md.
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -21,6 +27,8 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      formula: ${{ steps.version.outputs.formula }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -29,7 +37,10 @@ jobs:
       - name: Generate version
         id: version
         run: |
-          LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -1)
+          # Only stable tags (vX.Y.Z) drive the auto-increment. Prerelease tags
+          # (vX.Y.Z-rc.N) are excluded so they never perturb the next stable
+          # version — a prerelease cut off develop must not bump stable.
+          LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v -- '-' | sort -V | tail -1)
           LATEST_TAG="${LATEST_TAG:-v0.0.0}"
 
           MAJOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f1)
@@ -45,7 +56,22 @@ jobs:
             PATCH=$((PATCH + 1))
           fi
 
-          VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          BASE="${MAJOR}.${MINOR}.${PATCH}"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Prerelease / edge channel: SemVer prerelease suffix keeps it
+            # ordered *below* the eventual stable BASE (rc.N < BASE) for both
+            # GitHub and the CLI's own version comparator. github.run_number
+            # makes successive prereleases monotonic and unique.
+            VERSION="${BASE}-rc.${GITHUB_RUN_NUMBER}"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "formula=portzero-edge" >> "$GITHUB_OUTPUT"
+          else
+            VERSION="${BASE}"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "formula=portzero" >> "$GITHUB_OUTPUT"
+          fi
+
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -674,46 +700,85 @@ jobs:
           echo "{\"version\":\"${{ needs.version.outputs.version }}\",\"commit\":\"${{ github.sha }}\"}" \
             > artifacts/version.json
 
+      - name: Compose release notes
+        run: |
+          if [ "${{ needs.version.outputs.prerelease }}" = "true" ]; then
+            # Edge channel: intentionally NOT the stable brew/curl commands, so a
+            # copy-paste from this page can only ever install the edge build.
+            cat > artifacts/NOTES.md <<'EOF'
+          ## Prerelease (edge channel) — for testing only
+
+          > This is an **unstable build cut off `develop`** for testing installers.
+          > It is not a supported release. Stable users are never directed or
+          > updated here. It talks to the **production** portzero.cloud, same as
+          > stable. See [docs/dev/prerelease-channel.md](https://github.com/PortZeroNetwork/portzero-local/blob/develop/docs/dev/prerelease-channel.md).
+
+          **macOS (Homebrew — edge formula)**
+          ```sh
+          brew tap PortZeroNetwork/portzero
+          brew install portzeronetwork/portzero/portzero-edge
+          ```
+
+          **Linux**
+          ```sh
+          curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | PORTZERO_CHANNEL=prerelease sh
+          ```
+
+          **Windows**
+
+          Download the `.msi` from the assets below and run it manually.
+
+          ---
+          EOF
+          else
+            cat > artifacts/NOTES.md <<'EOF'
+          ## Install
+
+          > **Local** (`*.portzero.local`) is free, open-source software under the [GNU GPL v3.0](https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE).
+          > **Cloud** features are governed by the [Port Zero Terms of Service](https://portzero.net/terms).
+
+          **macOS (Homebrew)**
+          ```sh
+          brew tap PortZeroNetwork/portzero
+          brew trust portzeronetwork/portzero
+          brew install portzero
+          ```
+
+          **Linux**
+          ```sh
+          curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | sh
+          ```
+
+          Uninstall:
+          ```sh
+          ~/.portzero/bin/portzero-uninstall
+          ```
+          Or run the release asset directly:
+          ```sh
+          curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-uninstall.sh | sh
+          ```
+
+          **Windows (winget)**
+
+          Download the `.msi` from the assets below and run it manually.
+
+          The installer and daemon perform local setup automatically where supported.
+          After installing, open http://portzero.local in your browser.
+
+          ---
+          EOF
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           generate_release_notes: true
-          body: |
-            ## Install
-
-            > **Local** (`*.portzero.local`) is free, open-source software under the [GNU GPL v3.0](https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE).
-            > **Cloud** features are governed by the [Port Zero Terms of Service](https://portzero.net/terms).
-
-            **macOS (Homebrew)**
-            ```sh
-            brew tap PortZeroNetwork/portzero
-            brew trust portzeronetwork/portzero
-            brew install portzero
-            ```
-
-            **Linux**
-            ```sh
-            curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | sh
-            ```
-
-            Uninstall:
-            ```sh
-            ~/.portzero/bin/portzero-uninstall
-            ```
-            Or run the release asset directly:
-            ```sh
-            curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-uninstall.sh | sh
-            ```
-
-            **Windows (winget)**
-            
-            Download the `.msi` from the assets below and run it manually.
-
-            The installer and daemon perform local setup automatically where supported.
-            After installing, open http://portzero.local in your browser.
-
-            ---
+          prerelease: ${{ needs.version.outputs.prerelease }}
+          # A prerelease must never become GitHub's "latest" — that endpoint is
+          # what the CLI update check and the stable install scripts follow.
+          make_latest: ${{ needs.version.outputs.prerelease == 'true' && 'false' || 'true' }}
+          body_path: artifacts/NOTES.md
           files: |
             artifacts/*.tar.gz
             artifacts/*.zip
@@ -781,6 +846,12 @@ jobs:
           pattern: sha256-portzero-darwin-*
           merge-multiple: true
 
+      - name: Checkout portzero-local (edge formula template)
+        if: ${{ needs.version.outputs.prerelease == 'true' }}
+        uses: actions/checkout@v5
+        with:
+          path: src
+
       - name: Checkout tap repository
         uses: actions/checkout@v5
         with:
@@ -791,23 +862,34 @@ jobs:
       - name: Update formula
         env:
           VERSION: ${{ needs.version.outputs.version }}
+          FORMULA: ${{ needs.version.outputs.formula }}
         run: |
           AARCH64_SHA256=$(cat portzero-darwin-arm64.sha256)
           X86_64_SHA256=$(cat portzero-darwin-amd64.sha256)
 
-          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" tap/Formula/portzero.rb
-          sed -i "s/sha256 \"[^\"]*\" # arm64/sha256 \"${AARCH64_SHA256}\" # arm64/" tap/Formula/portzero.rb
-          sed -i "s/sha256 \"[^\"]*\" # x86_64/sha256 \"${X86_64_SHA256}\" # x86_64/" tap/Formula/portzero.rb
+          TARGET="tap/Formula/${FORMULA}.rb"
+
+          if [ "${FORMULA}" = "portzero-edge" ]; then
+            # Seed the edge formula from the in-repo template (single source of
+            # truth for its shape) so the tap does not have to carry it by hand.
+            mkdir -p tap/Formula
+            cp "src/packaging/homebrew/Formula/portzero-edge.rb" "$TARGET"
+          fi
+
+          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" "$TARGET"
+          sed -i "s/sha256 \"[^\"]*\" # arm64/sha256 \"${AARCH64_SHA256}\" # arm64/" "$TARGET"
+          sed -i "s/sha256 \"[^\"]*\" # x86_64/sha256 \"${X86_64_SHA256}\" # x86_64/" "$TARGET"
 
       - name: Commit and push
         env:
           VERSION: ${{ needs.version.outputs.version }}
+          FORMULA: ${{ needs.version.outputs.formula }}
         run: |
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/portzero.rb
-          git diff --staged --quiet || git commit -m "portzero v${VERSION}"
+          git add "Formula/${FORMULA}.rb"
+          git diff --staged --quiet || git commit -m "${FORMULA} v${VERSION}"
           git push
 
   verify-homebrew-artifacts:
@@ -833,9 +915,10 @@ jobs:
       - name: Verify formula url resolves and sha256 matches
         env:
           VERSION: ${{ needs.version.outputs.version }}
+          FORMULA_NAME: ${{ needs.version.outputs.formula }}
         run: |
           set -uo pipefail
-          FORMULA=tap/Formula/portzero.rb
+          FORMULA="tap/Formula/${FORMULA_NAME}.rb"
           test -f "$FORMULA" || { echo "RESULT=FAIL formula not found at $FORMULA"; exit 1; }
           fail=0
 

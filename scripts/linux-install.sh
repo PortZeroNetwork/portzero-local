@@ -45,6 +45,41 @@ find_cmd() {
 }
 has_cmd() { find_cmd "$1" >/dev/null 2>&1; }
 
+# Resolve the newest prerelease tag from the GitHub Releases API.
+# Prints the tag (e.g. v0.2.0-rc.7) on stdout. Return codes:
+#   0  a tag was printed (or the feed had no prerelease — empty stdout)
+#   1  could not reach the API
+#   2  no JSON parser available (need jq or python3)
+resolve_prerelease_tag() {
+    api="https://api.github.com/repos/${REPO}/releases?per_page=30"
+    body=""
+    if has_cmd curl; then
+        body="$(curl -fsSL -H 'Accept: application/vnd.github+json' "$api" 2>/dev/null)" || body=""
+    elif has_cmd wget; then
+        body="$(wget -qO- --header='Accept: application/vnd.github+json' "$api" 2>/dev/null)" || body=""
+    fi
+    [ -n "$body" ] || return 1
+
+    if has_cmd jq; then
+        printf '%s' "$body" | jq -r \
+            'map(select(.prerelease == true and .draft == false)) | .[0].tag_name // empty'
+        return 0
+    fi
+    if has_cmd python3; then
+        printf '%s' "$body" | python3 -c 'import sys, json
+try:
+    releases = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for r in releases:
+    if r.get("prerelease") and not r.get("draft"):
+        print(r.get("tag_name", ""))
+        break'
+        return 0
+    fi
+    return 2
+}
+
 install_linux_certutil() {
     if has_cmd certutil; then
         return 0
@@ -275,8 +310,52 @@ fi
 printf "${BOLD}portzero installer${RESET}\n\n"
 info "Platform: ${target}"
 
+# --- Release channel ---
+# Default: stable. Set PORTZERO_CHANNEL=prerelease to install the newest
+# prerelease ("edge") build cut off develop, or pin an exact one with
+# PORTZERO_VERSION (e.g. 0.2.0-rc.7). Prereleases are a testing channel: they
+# are never picked up by a stable install and never seen by the in-CLI update
+# check (which only follows GitHub's "latest", where prereleases don't appear).
+channel="${PORTZERO_CHANNEL:-stable}"
+case "$channel" in
+    stable)
+        download_base="${RELEASES_URL}/latest/download"
+        ;;
+    prerelease|pre|edge)
+        if [ -n "${PORTZERO_VERSION:-}" ]; then
+            pre_tag="${PORTZERO_VERSION}"
+            case "$pre_tag" in v*) : ;; *) pre_tag="v${pre_tag}" ;; esac
+        else
+            pre_tag="$(resolve_prerelease_tag)"
+            case $? in
+                1)
+                    error "Could not reach the GitHub Releases API to find a prerelease."
+                    echo "  Pin one explicitly: PORTZERO_VERSION=0.2.0-rc.1 PORTZERO_CHANNEL=prerelease sh" >&2
+                    exit 1
+                    ;;
+                2)
+                    error "Auto-resolving the latest prerelease needs 'jq' or 'python3'."
+                    echo "  Install one, or pin a build: PORTZERO_VERSION=0.2.0-rc.1 PORTZERO_CHANNEL=prerelease sh" >&2
+                    exit 1
+                    ;;
+            esac
+        fi
+        if [ -z "$pre_tag" ]; then
+            error "No prerelease build found to install."
+            echo "  Pin one explicitly: PORTZERO_VERSION=0.2.0-rc.1 PORTZERO_CHANNEL=prerelease sh" >&2
+            exit 1
+        fi
+        warn "Installing PRERELEASE build ${pre_tag} (testing channel; talks to production portzero.cloud, same as stable)."
+        download_base="${RELEASES_URL}/download/${pre_tag}"
+        ;;
+    *)
+        error "Unknown PORTZERO_CHANNEL: '${channel}' (use 'stable' or 'prerelease')."
+        exit 1
+        ;;
+esac
+
 # --- Download ---
-url="${RELEASES_URL}/latest/download/${archive}"
+url="${download_base}/${archive}"
 info "Downloading ${url}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -315,7 +394,7 @@ fi
 
 portzero_bin_dir="${HOME}/.portzero/bin"
 uninstall_helper="${portzero_bin_dir}/portzero-uninstall"
-uninstall_url="${RELEASES_URL}/latest/download/linux-uninstall.sh"
+uninstall_url="${download_base}/linux-uninstall.sh"
 info "Downloading ${uninstall_url}"
 if has_cmd curl; then
     if curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/linux-uninstall.sh" "$uninstall_url"; then
