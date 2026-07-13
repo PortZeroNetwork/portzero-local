@@ -66,6 +66,9 @@ pub enum Issue {
         reason: String,
         /// Best-effort description of the owning context (cwd / container).
         context: String,
+        /// Owning process id, when the source is a process (0/None for containers).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pid: Option<u32>,
     },
     /// A `PZ_TUNNEL` template misused the `{local-username}`/`{cloud-username}`
     /// placeholders — either `{local-username}` was used in a cloud tunnel
@@ -82,6 +85,9 @@ pub enum Issue {
         /// Whether the fix is to run `portzero login` — lets the UI offer a
         /// one-click "Log in" button instead of just printing guidance text.
         requires_login: bool,
+        /// Owning process id, when the source is a process (0/None for containers).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pid: Option<u32>,
     },
     /// A `PZ_TUNNEL` template resolved to a name that is still broken: it either
     /// carries an unresolved `{token}` (e.g. `{pr}` used outside a pull request,
@@ -97,6 +103,9 @@ pub enum Issue {
         reason: String,
         /// Best-effort description of the owning context (cwd / container).
         context: String,
+        /// Owning process id, when the source is a process (0/None for containers).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pid: Option<u32>,
     },
 }
 
@@ -140,6 +149,18 @@ impl Issue {
                 "PZ_TUNNEL template \"{}\" resolved to an invalid name \"{}\" ({})",
                 template, resolved, context
             ),
+        }
+    }
+
+    /// Owning process id, when known — lets the UI show which process to look
+    /// at without parsing it back out of `summary()`/`fix_hint()` text.
+    pub fn pid(&self) -> Option<u32> {
+        match self {
+            Issue::LegacyListener { pid, .. } => Some(*pid),
+            Issue::InvalidCloudTunnelScope { pid, .. }
+            | Issue::InvalidUsernamePlaceholder { pid, .. }
+            | Issue::InvalidResolvedName { pid, .. } => *pid,
+            Issue::DuplicateName { .. } | Issue::DockerPortConflict { .. } => None,
         }
     }
 
@@ -212,6 +233,80 @@ impl IssuesState {
     pub fn from_json(s: &str) -> Self {
         serde_json::from_str(s).unwrap_or_default()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Unified problem list (issues.json + diagnostics.json)
+// ---------------------------------------------------------------------------
+
+/// A single problem the daemon wants to surface to the user, regardless of
+/// whether it came from passive discovery (`issues.json`) or an active
+/// diagnostics run (`diagnostics.json`). This is the single source of truth
+/// the tray, dashboard, and `/status.json` all render from — keeping the two
+/// origins separate at the UI layer just recreates the "issues vs.
+/// diagnostics" confusion this type exists to remove.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Problem {
+    pub severity: crate::diagnostics::Severity,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix_command: Option<String>,
+    /// Owning process id, when this problem traces back to a single process
+    /// (e.g. a misconfigured `PZ_TUNNEL` or a legacy listener). `None` for
+    /// problems with no single owning process (duplicate names, environment
+    /// checks, DNS probes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    pub needs_login: bool,
+}
+
+/// Flatten `issues.json` + `diagnostics.json` into one severity-ranked list.
+/// Informational diagnostics (probe_ok, "not logged in", VPN present, …) are
+/// status noise, not problems, and are skipped.
+pub fn collect_problems(
+    issues: &IssuesState,
+    diagnostics: Option<&crate::diagnostics::DiagnosticsReport>,
+) -> Vec<Problem> {
+    let mut problems: Vec<Problem> = issues
+        .issues
+        .iter()
+        .map(|issue| Problem {
+            // issues.json problems carry no severity of their own; treat them
+            // as errors so they rank above informational diagnostics.
+            severity: crate::diagnostics::Severity::Error,
+            title: issue.summary(),
+            detail: None,
+            fix: Some(issue.fix_hint()),
+            fix_command: None,
+            pid: issue.pid(),
+            needs_login: issue.needs_login(),
+        })
+        .collect();
+
+    if let Some(report) = diagnostics {
+        problems.extend(
+            report
+                .issues
+                .iter()
+                .filter(|d| d.severity != crate::diagnostics::Severity::Info)
+                .map(|d| Problem {
+                    severity: d.severity.clone(),
+                    title: d.title.clone(),
+                    detail: Some(d.detail.clone()),
+                    fix: d.fix.as_ref().map(|f| f.description.clone()),
+                    fix_command: d.fix.as_ref().and_then(|f| f.command.clone()),
+                    pid: None,
+                    needs_login: false,
+                }),
+        );
+    }
+
+    problems.sort_by(|a, b| a.severity.cmp(&b.severity));
+    problems
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +672,7 @@ mod tests {
                     Run `portzero whoami` to find your username."
                     .to_string(),
                 context: "pid 1234".to_string(),
+                pid: Some(1234),
             }],
         };
         let parsed = IssuesState::from_json(&state.to_json());
@@ -587,6 +683,7 @@ mod tests {
         assert!(issue.summary().contains("pid 1234"));
         assert!(issue.fix_hint().contains("portzero whoami"));
         assert!(issue.fix_hint().contains("<username>"));
+        assert_eq!(issue.pid(), Some(1234));
     }
 
     #[test]
@@ -673,5 +770,68 @@ mod tests {
     fn test_read_issues_missing_file() {
         let state = read_issues(std::path::Path::new("/nonexistent/issues.json"));
         assert!(state.is_empty());
+    }
+
+    #[test]
+    fn test_collect_problems_combines_and_ranks_by_severity() {
+        use crate::diagnostics::{Diagnostic, DiagnosticsReport, Fix, FixKind, Severity};
+
+        let issues = IssuesState {
+            issues: vec![Issue::LegacyListener {
+                port: 5432,
+                pid: 4321,
+                context: "(~/work/api)".to_string(),
+            }],
+        };
+        let report = DiagnosticsReport {
+            generated_at: "2026-07-11T00:00:00Z".to_string(),
+            checks_run: 3,
+            issues: vec![
+                Diagnostic {
+                    id: "binary_missing".into(),
+                    severity: Severity::Critical,
+                    category: "binary".into(),
+                    title: "Binary missing".to_string(),
+                    detail: "detail".to_string(),
+                    fix: Some(Fix {
+                        kind: FixKind::Manual,
+                        description: "Reinstall".to_string(),
+                        command: Some("portzero install".to_string()),
+                    }),
+                },
+                Diagnostic {
+                    id: "dns_probe_ok".into(),
+                    severity: Severity::Info,
+                    category: "dns".into(),
+                    title: "portzero.local resolution works".to_string(),
+                    detail: "ok".to_string(),
+                    fix: None,
+                },
+            ],
+        };
+
+        let problems = collect_problems(&issues, Some(&report));
+
+        // Info-level diagnostics are filtered out; the legacy-listener issue
+        // and the critical diagnostic both survive.
+        assert_eq!(problems.len(), 2);
+        // Sorted severity-first: Critical before the (assumed) Error-ranked issue.
+        assert_eq!(problems[0].severity, Severity::Critical);
+        assert_eq!(problems[0].title, "Binary missing");
+        assert_eq!(problems[0].fix_command.as_deref(), Some("portzero install"));
+
+        let legacy = problems
+            .iter()
+            .find(|p| p.title.contains("5432"))
+            .expect("legacy listener problem present");
+        assert_eq!(legacy.pid, Some(4321));
+        assert_eq!(legacy.severity, Severity::Error);
+
+        assert!(
+            !problems
+                .iter()
+                .any(|p| p.title.contains("resolution works")),
+            "informational diagnostics must be filtered out"
+        );
     }
 }

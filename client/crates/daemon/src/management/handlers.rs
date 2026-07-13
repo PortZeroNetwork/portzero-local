@@ -905,7 +905,7 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
       <a href="#api">API</a>
       <a href="#examples">Examples</a>
       <a href="#tunnels">Tunnels</a>
-      <a href="#diagnostics">Diagnostics</a>
+      <a href="#issues">Issues</a>
     </div>
     <span class="meta" id="hdr-meta"></span>
   </nav>
@@ -1096,23 +1096,25 @@ function cloudStatusBadge(status){
   return '<span style="display:inline-block;padding:1px 8px;border-radius:10px;background:#e0f5e6;color:#1a7f37;font-size:12px">published</span>';
 }
 
-function renderIssue(i){
+function renderProblem(p){
+  const sev=(p.severity||'error').toLowerCase();
   let fixBtn='';
-  if(i.needs_login) fixBtn='<a class="button" href="/login">Log in (still free)</a>';
-  return '<div class="diag diag-warning"><div class="diag-title"><span class="sev-warning">[WARNING]</span> '+esc(i.summary)+'</div>'
-    +'<div class="diag-fix">'+esc(i.fix_hint)+' '+fixBtn+'</div></div>';
-}
-
-function renderDiag(d){
-  const sev=d.severity.toLowerCase();
+  if(p.needs_login) fixBtn=' <a class="button" href="/login">Log in (still free)</a>';
+  let title=esc(p.title);
+  // Some issue summaries already spell out "pid N" inline; only append the
+  // badge when the title doesn't already mention this pid.
+  if(p.pid && p.title.indexOf('pid '+p.pid)===-1) title+=' <span class="diag-pid">(pid '+esc(p.pid)+')</span>';
   let fix='';
-  if(d.fix){
-    fix='<div class="diag-fix">'+esc(d.fix.description);
-    if(d.fix.command) fix+=' - <code>'+esc(d.fix.command)+'</code>';
-    fix+='</div>';
+  if(p.fix){
+    fix='<div class="diag-fix">'+esc(p.fix);
+    if(p.fix_command) fix+=' - <code>'+esc(p.fix_command)+'</code>';
+    fix+=fixBtn+'</div>';
+  } else if(fixBtn){
+    fix='<div class="diag-fix">'+fixBtn+'</div>';
   }
-  return '<div class="diag diag-'+sev+'"><div class="diag-title"><span class="sev-'+sev+'">['+sev.toUpperCase()+']</span> '+esc(d.title)+'</div>'
-    +'<div class="diag-detail">'+esc(d.detail)+'</div>'+fix+'</div>';
+  const detail=p.detail?'<div class="diag-detail">'+esc(p.detail)+'</div>':'';
+  return '<div class="diag diag-'+sev+'"><div class="diag-title"><span class="sev-'+sev+'">['+sev.toUpperCase()+']</span> '+title+'</div>'
+    +detail+fix+'</div>';
 }
 
 function render(d){
@@ -1197,20 +1199,11 @@ function render(d){
   html+='</div></section>';
 
   html+='<section class="section" id="issues"><div class="section-head"><h2>Issues</h2></div>';
-  if(!d.issues||d.issues.length===0){
-    html+='<p class="no-issues">no issues detected</p>';
+  if(!d.problems||d.problems.length===0){
+    const ran=d.diagnostics_checks_run;
+    html+='<p class="no-issues">no issues detected'+(ran?' ('+ran+' checks passed)':'')+'</p>';
   } else {
-    d.issues.forEach(function(i){html+=renderIssue(i);});
-  }
-  html+='</section>';
-
-  html+='<section class="section" id="diagnostics"><div class="section-head"><h2>Diagnostics</h2></div>';
-  const diags=d.diagnostics&&d.diagnostics.issues;
-  if(!diags||diags.length===0){
-    const ran=d.diagnostics?d.diagnostics.checks_run:0;
-    html+='<p class="no-issues">all '+(ran||'')+' checks passed</p>';
-  } else {
-    diags.forEach(function(i){html+=renderDiag(i);});
+    d.problems.forEach(function(p){html+=renderProblem(p);});
   }
   html+='</section>';
 
@@ -1338,17 +1331,17 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
 
     add_duplicate_route_alerts(&mut local_services, &mut cloud_routes);
 
-    let issues_json: Vec<serde_json::Value> = issues
-        .issues
-        .iter()
-        .map(|i| {
-            serde_json::json!({
-                "summary": i.summary(),
-                "fix_hint": i.fix_hint(),
-                "needs_login": i.needs_login(),
-            })
-        })
-        .collect();
+    // A single ranked list of problems, combining issues.json (passively
+    // detected duplicate names / port conflicts / misconfigured tunnels) and
+    // diagnostics.json (the on-demand Binary/Network/DNS/TLS/Auth/System
+    // health-check report) — the same list the tray renders from, so
+    // "issues" and "diagnostics" don't read as two different things.
+    let problems_json: Vec<serde_json::Value> =
+        crate::notify::collect_problems(&issues, diagnostics.as_ref())
+            .iter()
+            .map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null))
+            .collect();
+    let diagnostics_checks_run = diagnostics.as_ref().map(|r| r.checks_run);
 
     let https_policy = crate::discovery_loop::DaemonConfig::load().overlay_https;
 
@@ -1365,8 +1358,8 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
         "cloud_routes": cloud_routes,
         "management_registrations": management_registrations,
         "management_registrations_feature_stability": "unstable",
-        "issues": issues_json,
-        "diagnostics": diagnostics,
+        "problems": problems_json,
+        "diagnostics_checks_run": diagnostics_checks_run,
         "languages": detected_languages(),
         "environment": detected_environment(),
         "getting_started": getting_started_manifest(),
@@ -1448,6 +1441,7 @@ mod tests {
                 domain: "myservice.portzero.cloud".to_string(),
                 reason: "missing username scope".to_string(),
                 context: "pid 42".to_string(),
+                pid: Some(42),
             }],
         };
         crate::notify::write_issues(&dir.path().join("issues.json"), &state);

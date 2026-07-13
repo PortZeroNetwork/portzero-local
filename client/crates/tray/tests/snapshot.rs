@@ -100,20 +100,20 @@ fn reads_running_daemon_with_tunnels_and_issues() {
     // The duplicate-name issue (issues.json) and the DNS warning (diagnostics.json)
     // both surface; the informational diagnostic is filtered out.
     assert!(
-        snap.problems.iter().any(|p| p.summary.contains("db")),
+        snap.problems.iter().any(|p| p.title.contains("db")),
         "duplicate-name issue should surface"
     );
     assert!(
         snap.problems
             .iter()
-            .any(|p| p.summary.contains("not resolving")),
+            .any(|p| p.title.contains("not resolving")),
         "tunnel DNS warning should surface"
     );
     assert!(
         !snap
             .problems
             .iter()
-            .any(|p| p.summary.contains("resolution works")),
+            .any(|p| p.title.contains("resolution works")),
         "informational diagnostics must be filtered out"
     );
 

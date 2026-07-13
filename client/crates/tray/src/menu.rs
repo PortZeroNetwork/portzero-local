@@ -124,13 +124,22 @@ pub fn build(snapshot: &Snapshot) -> MenuSpec {
         action: Action::ToggleHttps(!snapshot.https.enable_for_port_80),
     });
 
-    // Issues submenu — only when there is something to show.
+    // Issues submenu — only when there is something to show. Combines
+    // issues.json and diagnostics.json problems into one list (see
+    // `notify::collect_problems`) so the tray, dashboard, and /status.json
+    // all agree on what an "issue" is.
     if !snapshot.problems.is_empty() {
         let mut issues: Vec<Node> = Vec::new();
         for p in &snapshot.problems {
-            issues.push(Node::Label(format!("⚠  {}", truncate(&p.summary, 70))));
-            if !p.fix.is_empty() {
-                issues.push(Node::Label(format!("      ↳ {}", truncate(&p.fix, 80))));
+            let title = if let Some(pid) = p.pid {
+                format!("{} (pid {pid})", p.title)
+            } else {
+                p.title.clone()
+            };
+            issues.push(Node::Label(format!("⚠  {}", truncate(&title, 70))));
+            let fix = p.fix_command.as_deref().or(p.fix.as_deref());
+            if let Some(fix) = fix {
+                issues.push(Node::Label(format!("      ↳ {}", truncate(fix, 80))));
             }
         }
         issues.push(Node::Separator);

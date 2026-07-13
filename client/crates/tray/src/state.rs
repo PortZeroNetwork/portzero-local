@@ -10,7 +10,8 @@
 use portzero_daemon::diagnostics::{self, Severity};
 use portzero_daemon::discovery_loop::{read_daemon_pid, DaemonConfig};
 use portzero_daemon::net::stack::OverlayHttpsPolicy;
-use portzero_daemon::notify::read_issues;
+pub use portzero_daemon::notify::Problem;
+use portzero_daemon::notify::{collect_problems, read_issues};
 use portzero_daemon::route_table::{OverlayState, RouteTable};
 
 /// Infrastructure names that live in `overlay.json`-adjacent state but are not
@@ -40,16 +41,6 @@ pub struct Tunnel {
     /// True for cloud (`*.tunnel.portzero.cloud`) tunnels, false for local
     /// `.portzero.local` overlay tunnels.
     pub cloud: bool,
-}
-
-/// A problem to surface in the "Issues" submenu, flattened from both
-/// `issues.json` (tunnel / name problems) and `diagnostics.json` (environment /
-/// setup problems, including non-resolving tunnels) into one ranked list.
-#[derive(Debug, Clone)]
-pub struct Problem {
-    pub summary: String,
-    pub fix: String,
-    pub severity: Severity,
 }
 
 /// The full snapshot the tray renders from.
@@ -102,38 +93,12 @@ impl Snapshot {
         tunnels.sort_by(|a, b| a.domain.cmp(&b.domain));
         tunnels.dedup();
 
-        // Flatten issues.json + diagnostics.json into one problem list.
-        let mut problems = Vec::new();
-        for issue in read_issues(&config.issues_path()).issues {
-            problems.push(Problem {
-                summary: issue.summary(),
-                fix: issue.fix_hint(),
-                // issues.json problems have no severity of their own; treat them
-                // as errors so they rank above informational diagnostics.
-                severity: Severity::Error,
-            });
-        }
+        // issues.json + diagnostics.json, flattened into one ranked list — the
+        // same list the dashboard and `/status.json` render, so "Issues" means
+        // the same thing everywhere.
+        let issues = read_issues(&config.issues_path());
         let report = diagnostics::load_report(&config.state_dir);
-        if let Some(report) = &report {
-            for d in &report.issues {
-                // Informational diagnostics (probe_ok, "not logged in", VPN
-                // present, …) are status noise, not problems — skip them.
-                if d.severity == Severity::Info {
-                    continue;
-                }
-                let fix = d
-                    .fix
-                    .as_ref()
-                    .map(|f| f.command.clone().unwrap_or_else(|| f.description.clone()))
-                    .unwrap_or_default();
-                problems.push(Problem {
-                    summary: d.title.clone(),
-                    fix,
-                    severity: d.severity.clone(),
-                });
-            }
-        }
-        problems.sort_by(|a, b| a.severity.cmp(&b.severity));
+        let problems = collect_problems(&issues, report.as_ref());
 
         let critical = count_sev(&problems, Severity::Critical);
         let errors = count_sev(&problems, Severity::Error);

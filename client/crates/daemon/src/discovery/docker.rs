@@ -179,6 +179,7 @@ fn container_service_from_inspect_line(
             reason: e,
             context: format!("container {name}"),
             requires_login: is_local,
+            pid: Some(container_pid).filter(|&p| p != 0),
         });
         return Ok(None);
     }
@@ -211,6 +212,7 @@ fn container_service_from_inspect_line(
             resolved: domain.clone(),
             reason: e,
             context: format!("container {name}"),
+            pid: Some(container_pid).filter(|&p| p != 0),
         });
         return Ok(None);
     }
@@ -227,6 +229,7 @@ fn container_service_from_inspect_line(
             domain,
             reason: e,
             context: format!("container {name}"),
+            pid: Some(container_pid).filter(|&p| p != 0),
         });
         return Ok(None);
     }

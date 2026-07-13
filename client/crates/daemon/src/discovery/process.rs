@@ -70,6 +70,7 @@ pub(super) fn scan_processes(
                     reason: e,
                     context: format!("pid {pid_u32}"),
                     requires_login: is_local,
+                    pid: Some(pid_u32),
                 });
                 continue;
             }
@@ -112,6 +113,7 @@ pub(super) fn scan_processes(
                     resolved: domain.clone(),
                     reason: e,
                     context: format!("pid {pid_u32}"),
+                    pid: Some(pid_u32),
                 });
                 continue;
             }
@@ -129,6 +131,7 @@ pub(super) fn scan_processes(
                     domain,
                     reason: e,
                     context: format!("pid {pid_u32}"),
+                    pid: Some(pid_u32),
                 });
                 continue;
             }
@@ -248,6 +251,7 @@ pub(super) fn scan_processes_windows(
                 reason: e,
                 context: format!("pid {pid_u32}"),
                 requires_login: is_local,
+                pid: Some(pid_u32),
             });
             continue;
         }
@@ -289,6 +293,7 @@ pub(super) fn scan_processes_windows(
                 resolved: domain.clone(),
                 reason: e,
                 context: format!("pid {pid_u32}"),
+                pid: Some(pid_u32),
             });
             continue;
         }
@@ -305,6 +310,7 @@ pub(super) fn scan_processes_windows(
                 domain,
                 reason: e,
                 context: format!("pid {pid_u32}"),
+                pid: Some(pid_u32),
             });
             continue;
         }
