@@ -14,12 +14,12 @@ on:
   pull_request:
     branches:
       - '**'
-  # Also on every develop push, so a discovery/trust regression surfaces on
+  # Also on every staging push, so a discovery/trust regression surfaces on
   # the branch itself rather than only on the next PR (this job caught the
   # discovery-loop wedge that PR-only runs mis-attributed to an innocent PR).
   push:
     branches:
-      - develop
+      - staging
 
 env:
   CARGO_TERM_COLOR: always

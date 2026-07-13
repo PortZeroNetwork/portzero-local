@@ -1,17 +1,47 @@
 name: Release
 
+# Heroku-style, tag-addressed release model (mirrors portzero-cloud):
+#
+#   * A STABLE release is the immutable `vX.Y.Z` tag — the release of record.
+#     Pushing such a tag triggers the SIGNED build below. There is no
+#     `release/*` branch; the tag is what "is released", browsable under Tags.
+#
+#   * Cutting a stable release is a deliberate, gated act: dispatch this
+#     workflow with `channel: release` and a `bump` (patch/minor/major), then
+#     approve the `release` environment gate (a required reviewer). The
+#     `promote` job computes the next `vX.Y.Z` from the latest stable tag and
+#     pushes it from the `staging` tip; that tag push is what starts the signed
+#     build.
+#
+#   * The prerelease ("edge") channel stays an ungated manual dispatch
+#     (`channel: edge`, the default) cut off `staging`. An edge run always
+#     produces a GitHub Release marked `prerelease: true`, so it never becomes
+#     GitHub's "latest", is never seen by the in-CLI update check, never lands
+#     on the stable install paths, and ships UNSIGNED. See
+#     docs/dev/prerelease-channel.md.
 on:
-  # Stable releases are triggered by pushes to release/* (typically the merge
-  # commit after a PR is merged).
+  # Stable releases are triggered by pushing an immutable vX.Y.Z tag (stamped
+  # by the gated `promote` job below, off the `staging` tip).
   push:
-    branches:
-      - 'release/*'
-  # Prereleases (the "edge" testing channel) are cut manually off any ref —
-  # typically `develop`. A workflow_dispatch run always produces a GitHub
-  # Release marked `prerelease: true`, so it never becomes GitHub's "latest",
-  # is never seen by the in-CLI update check, and never lands on the stable
-  # install paths. See docs/dev/prerelease-channel.md.
-  workflow_dispatch: {}
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'edge = ungated unsigned prerelease off staging. release = gated promote: cut the next vX.Y.Z stable tag (approve the `release` environment).'
+        type: choice
+        default: edge
+        options:
+          - edge
+          - release
+      bump:
+        description: 'Semver bump for the stable tag stamped by a `release` promote. Ignored for edge.'
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -21,8 +51,56 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  promote:
+    name: Promote to Release (cut vX.Y.Z tag)
+    # The gated "Release" button: only a `channel: release` dispatch runs this,
+    # and only after the `release` environment's required reviewer approves.
+    if: github.event_name == 'workflow_dispatch' && inputs.channel == 'release'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      # Deploy the ref this workflow was dispatched from (normally `staging`).
+      # fetch-depth: 0 brings all tags so the bump can find the latest vX.Y.Z.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Stamp release tag
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          # Latest stable vX.Y.Z tag across history; default v0.0.0 if none.
+          # Prerelease tags (vX.Y.Z-rc.N) are excluded so an edge cut never
+          # perturbs the next stable bump.
+          LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v -- '-' | sort -V | tail -1)
+          LATEST_TAG="${LATEST_TAG:-v0.0.0}"
+          MAJOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST_TAG" | cut -d. -f2)
+          PATCH=$(echo "$LATEST_TAG" | cut -d. -f3)
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+          TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "Stamping $TAG on $(git rev-parse --short HEAD) (was $LATEST_TAG)"
+          # Annotated tags need a tagger identity; the default checkout sets none.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          # Uses the checkout's default GITHUB_TOKEN; contents: write authorizes
+          # the tag push, which in turn triggers this workflow's tag build.
+          git push origin "$TAG"
+
   version:
     name: Determine Version
+    # Runs for the stable tag build and for edge dispatches — but NOT for a
+    # `release` promote dispatch (that only cuts the tag; the tag push then
+    # starts a fresh run). Skipping it here cascades to skip every build job.
+    if: github.event_name != 'workflow_dispatch' || inputs.channel == 'edge'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -37,43 +115,46 @@ jobs:
       - name: Generate version
         id: version
         run: |
-          # Only stable tags (vX.Y.Z) drive the auto-increment. Prerelease tags
-          # (vX.Y.Z-rc.N) are excluded so they never perturb the next stable
-          # version — a prerelease cut off develop must not bump stable.
-          LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v -- '-' | sort -V | tail -1)
-          LATEST_TAG="${LATEST_TAG:-v0.0.0}"
-
-          MAJOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f1)
-          MINOR=$(echo "$LATEST_TAG" | cut -d. -f2)
-          PATCH=$(echo "$LATEST_TAG" | cut -d. -f3)
-
-          COMMIT_MSG=$(git log -1 --pretty=%B)
-          if echo "$COMMIT_MSG" | grep -qE "BREAKING CHANGE|\[major\]"; then
-            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-          elif echo "$COMMIT_MSG" | grep -qE "^feat(\([^)]+\))?:|\[minor\]"; then
-            MINOR=$((MINOR + 1)); PATCH=0
-          else
-            PATCH=$((PATCH + 1))
-          fi
-
-          BASE="${MAJOR}.${MINOR}.${PATCH}"
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Prerelease / edge channel: SemVer prerelease suffix keeps it
-            # ordered *below* the eventual stable BASE (rc.N < BASE) for both
-            # GitHub and the CLI's own version comparator. github.run_number
-            # makes successive prereleases monotonic and unique.
-            VERSION="${BASE}-rc.${GITHUB_RUN_NUMBER}"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "formula=portzero-edge" >> "$GITHUB_OUTPUT"
-          else
-            VERSION="${BASE}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Stable build: the version IS the tag that triggered this run
+            # (stamped by the gated `promote` job), not a recomputation.
+            TAG="${GITHUB_REF_NAME}"
+            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "formula=portzero" >> "$GITHUB_OUTPUT"
-          fi
+          else
+            # Prerelease / edge channel (workflow_dispatch off staging). The
+            # BASE is derived from the latest stable tag + the tip commit's
+            # markers, exactly as before. Only stable tags (vX.Y.Z) drive the
+            # auto-increment; prerelease tags (vX.Y.Z-rc.N) are excluded so they
+            # never perturb the next stable version.
+            LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v -- '-' | sort -V | tail -1)
+            LATEST_TAG="${LATEST_TAG:-v0.0.0}"
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+            MAJOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f1)
+            MINOR=$(echo "$LATEST_TAG" | cut -d. -f2)
+            PATCH=$(echo "$LATEST_TAG" | cut -d. -f3)
+
+            COMMIT_MSG=$(git log -1 --pretty=%B)
+            if echo "$COMMIT_MSG" | grep -qE "BREAKING CHANGE|\[major\]"; then
+              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+            elif echo "$COMMIT_MSG" | grep -qE "^feat(\([^)]+\))?:|\[minor\]"; then
+              MINOR=$((MINOR + 1)); PATCH=0
+            else
+              PATCH=$((PATCH + 1))
+            fi
+
+            # SemVer prerelease suffix keeps it ordered *below* the eventual
+            # stable BASE (rc.N < BASE) for both GitHub and the CLI's own version
+            # comparator. github.run_number makes successive prereleases
+            # monotonic and unique.
+            VERSION="${MAJOR}.${MINOR}.${PATCH}-rc.${GITHUB_RUN_NUMBER}"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "formula=portzero-edge" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
     name: Build ${{ matrix.archive_name }}
@@ -279,10 +360,12 @@ jobs:
           }
 
       - name: Azure login for Artifact Signing
-        # Skip signing for prereleases: the Azure federated-identity credential
-        # only trusts the stable release refs, not develop (workflow_dispatch),
-        # and edge builds are for testing rather than distribution.
-        if: matrix.archive_ext == 'zip' && needs.version.outputs.prerelease != 'true'
+        # Sign only the SIGNED stable path — a genuine vX.Y.Z tag build. The
+        # Azure federated-identity credential trusts `refs/tags/v*`, not the
+        # edge (workflow_dispatch) refs, and edge builds are for testing rather
+        # than distribution. Gating on the tag ref means no dispatch can ever
+        # reach the signing steps regardless of inputs.
+        if: matrix.archive_ext == 'zip' && startsWith(github.ref, 'refs/tags/v')
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -290,7 +373,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign Windows EXE
-        if: matrix.archive_ext == 'zip' && needs.version.outputs.prerelease != 'true'
+        if: matrix.archive_ext == 'zip' && startsWith(github.ref, 'refs/tags/v')
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
@@ -305,7 +388,7 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Verify Windows EXE signature
-        if: matrix.archive_ext == 'zip' && needs.version.outputs.prerelease != 'true'
+        if: matrix.archive_ext == 'zip' && startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           function Get-SigntoolPath {
@@ -504,10 +587,10 @@ jobs:
             "portzero.wixobj"
 
       - name: Azure login for Artifact Signing
-        # Skip MSI signing for prereleases — the Azure federated-identity
-        # credential only trusts the stable release refs, not develop
-        # (workflow_dispatch). Edge MSIs ship unsigned for testing.
-        if: ${{ needs.version.outputs.prerelease != 'true' }}
+        # Sign only the SIGNED stable path — a genuine vX.Y.Z tag build. The
+        # Azure federated-identity credential trusts `refs/tags/v*`, not the
+        # edge (workflow_dispatch) refs. Edge MSIs ship unsigned for testing.
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -515,7 +598,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign MSI
-        if: ${{ needs.version.outputs.prerelease != 'true' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
@@ -528,7 +611,7 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Verify MSI signature
-        if: ${{ needs.version.outputs.prerelease != 'true' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         shell: pwsh
         run: |
           $msi = Get-ChildItem -Filter "portzero-*.msi" | Select-Object -First 1
@@ -717,10 +800,10 @@ jobs:
             cat > artifacts/NOTES.md <<'EOF'
           ## Prerelease (edge channel) — for testing only
 
-          > This is an **unstable build cut off `develop`** for testing installers.
+          > This is an **unstable build cut off `staging`** for testing installers.
           > It is not a supported release. Stable users are never directed or
           > updated here. It talks to the **production** portzero.cloud, same as
-          > stable. See [docs/dev/prerelease-channel.md](https://github.com/PortZeroNetwork/portzero-local/blob/develop/docs/dev/prerelease-channel.md).
+          > stable. See [docs/dev/prerelease-channel.md](https://github.com/PortZeroNetwork/portzero-local/blob/staging/docs/dev/prerelease-channel.md).
 
           **macOS (Homebrew — edge formula)**
           ```sh
@@ -743,7 +826,7 @@ jobs:
             cat > artifacts/NOTES.md <<'EOF'
           ## Install
 
-          > **Local** (`*.portzero.local`) is free, open-source software under the [GNU GPL v3.0](https://github.com/PortZeroNetwork/portzero-local/blob/develop/LICENSE).
+          > **Local** (`*.portzero.local`) is free, open-source software under the [GNU GPL v3.0](https://github.com/PortZeroNetwork/portzero-local/blob/staging/LICENSE).
           > **Cloud** features are governed by the [Port Zero Terms of Service](https://portzero.net/terms).
 
           **macOS (Homebrew)**

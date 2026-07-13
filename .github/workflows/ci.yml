@@ -1,11 +1,11 @@
 name: CI
 
 on:
-  # CI runs before release branch updates, not after them. Use branch
-  # protection rules on `release/*` to require these checks before merge.
+  # CI gates PRs into the long-lived integration branch. Use branch protection
+  # rules on `staging` to require these checks before merge.
   pull_request:
     branches:
-      - 'release/*'
+      - staging
   # Manual dispatch for running one job group and/or one runner OS in
   # isolation — e.g. re-running only the Windows real-TUN E2E entry while
   # debugging a hang, without paying for the full matrix.
