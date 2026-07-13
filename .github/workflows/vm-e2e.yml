@@ -85,7 +85,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p portzero-cli --bin portzero
+      - run: cargo build --release --bin portzero --bin portzero-tray
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
       - name: Build .deb
@@ -104,7 +104,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p portzero-cli --bin portzero
+      - run: cargo build --release --bin portzero --bin portzero-tray
       # Assemble the MSI SourceDir exactly as release.yml's "Package (Windows)"
       # does (wintun + VC++ redistributable DLLs the .wxs lists as components),
       # then build an UNSIGNED MSI. Signing is release-only; msiexec installs an
@@ -120,6 +120,7 @@ jobs:
           $staging = "portzero-windows-amd64"
           New-Item -ItemType Directory -Force -Path $staging | Out-Null
           Copy-Item "target\release\portzero.exe" "$staging\"
+          Copy-Item "target\release\portzero-tray.exe" "$staging\"
 
           if (-not (Test-Path "wintun.zip")) {
             Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "wintun.zip" -TimeoutSec 60

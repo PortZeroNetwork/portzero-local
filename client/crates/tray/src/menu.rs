@@ -182,9 +182,7 @@ fn truncate(s: &str, n: usize) -> String {
 mod muda_backend {
     use std::collections::HashMap;
 
-    use muda::{
-        CheckMenuItem, IsMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu,
-    };
+    use muda::{CheckMenuItem, IsMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 
     use super::{Action, MenuSpec, Node};
 

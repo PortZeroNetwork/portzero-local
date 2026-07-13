@@ -113,7 +113,12 @@ fn listeners_by_pid(sys: &System) -> Vec<(u32, Vec<ListeningPort>)> {
 
 /// Group the stdout of a system-wide `lsof -iTCP -sTCP:LISTEN -nP` (PID in
 /// column 2) into pid → listening ports. Pure, so it is unit-testable.
+///
+/// Only called in production on macOS (`listeners_by_pid` above); kept
+/// compiling on Linux too so its parsing logic gets unit-tested on every CI
+/// runner, not just the macOS one.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(super) fn group_lsof_system_stdout(stdout: &str) -> Vec<(u32, Vec<ListeningPort>)> {
     let mut by_pid: std::collections::BTreeMap<u32, Vec<ListeningPort>> =
         std::collections::BTreeMap::new();
