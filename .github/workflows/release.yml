@@ -279,7 +279,10 @@ jobs:
           }
 
       - name: Azure login for Artifact Signing
-        if: matrix.archive_ext == 'zip'
+        # Skip signing for prereleases: the Azure federated-identity credential
+        # only trusts the stable release refs, not develop (workflow_dispatch),
+        # and edge builds are for testing rather than distribution.
+        if: matrix.archive_ext == 'zip' && needs.version.outputs.prerelease != 'true'
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -287,7 +290,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign Windows EXE
-        if: matrix.archive_ext == 'zip'
+        if: matrix.archive_ext == 'zip' && needs.version.outputs.prerelease != 'true'
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
@@ -302,7 +305,7 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Verify Windows EXE signature
-        if: matrix.archive_ext == 'zip'
+        if: matrix.archive_ext == 'zip' && needs.version.outputs.prerelease != 'true'
         shell: pwsh
         run: |
           function Get-SigntoolPath {
@@ -501,6 +504,10 @@ jobs:
             "portzero.wixobj"
 
       - name: Azure login for Artifact Signing
+        # Skip MSI signing for prereleases — the Azure federated-identity
+        # credential only trusts the stable release refs, not develop
+        # (workflow_dispatch). Edge MSIs ship unsigned for testing.
+        if: ${{ needs.version.outputs.prerelease != 'true' }}
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -508,6 +515,7 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign MSI
+        if: ${{ needs.version.outputs.prerelease != 'true' }}
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
@@ -520,6 +528,7 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Verify MSI signature
+        if: ${{ needs.version.outputs.prerelease != 'true' }}
         shell: pwsh
         run: |
           $msi = Get-ChildItem -Filter "portzero-*.msi" | Select-Object -First 1

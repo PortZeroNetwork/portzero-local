@@ -35,8 +35,11 @@ prerelease:
   stable);
 - a GitHub Release tagged `vX.Y.Z-rc.N` with `prerelease: true`,
   `make_latest: false`;
-- the same full matrix as stable — signed macOS/Windows/Linux binaries, `.deb`,
-  `.rpm`, signed `.msi`, tarballs;
+- the same full matrix as stable — macOS/Linux binaries, `.deb`, `.rpm`,
+  Windows `.exe`/`.msi`, tarballs. **Windows artifacts are unsigned** on edge:
+  the Azure Artifact Signing federated-identity credential only trusts the
+  stable release refs, not `develop`, so all signing steps are skipped for
+  prereleases (see below);
 - the Homebrew **edge** formula (`portzero-edge`) bumped in the tap.
 
 Pushes to `release/*` still produce normal stable releases; nothing there
@@ -86,9 +89,14 @@ Reinstalling with no channel set returns the machine to stable on the next run.
 
 ### Windows — MSI
 
-Download the signed `.msi` from the prerelease's GitHub Release page and run it.
+Download the `.msi` from the prerelease's GitHub Release page and run it.
 winget is intentionally **not** used for edge (winget has no prerelease lane, so
 only stable is ever submitted there).
+
+Edge Windows artifacts are **unsigned** (see above), so SmartScreen / Defender
+will warn on first run — choose *More info → Run anyway*. If a build needs to be
+signed for testing, add `refs/heads/develop` to the Azure federated-identity
+credential's subject instead of relying on the edge channel.
 
 ## Why these choices
 
