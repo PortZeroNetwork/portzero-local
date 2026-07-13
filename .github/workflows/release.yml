@@ -107,6 +107,8 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       formula: ${{ steps.version.outputs.formula }}
+      msi_version: ${{ steps.version.outputs.msi_version }}
+      rpm_version: ${{ steps.version.outputs.rpm_version }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -119,7 +121,8 @@ jobs:
             # Stable build: the version IS the tag that triggered this run
             # (stamped by the gated `promote` job), not a recomputation.
             TAG="${GITHUB_REF_NAME}"
-            echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+            VERSION="${TAG#v}"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
             echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "formula=portzero" >> "$GITHUB_OUTPUT"
@@ -155,6 +158,25 @@ jobs:
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             echo "formula=portzero-edge" >> "$GITHUB_OUTPUT"
           fi
+
+          # Neither RPM nor MSI version fields accept SemVer prerelease syntax
+          # (a bare '-'), so derive package-format-safe versions from VERSION
+          # here rather than teaching every downstream job the same rules.
+          BASE_VERSION="${VERSION%%-*}"
+          if [[ "$VERSION" == *-* ]]; then
+            # rpm forbids '-' but treats '~' as a "sorts before" separator,
+            # which is exactly the semantics of a prerelease suffix.
+            RPM_VERSION="${VERSION//-/\~}"
+            # WiX ProductVersion must be a bare x.x.x.x integer quad; fold the
+            # prerelease info into the 4th field via the run number so
+            # successive edge builds still install as upgrades.
+            MSI_VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"
+          else
+            RPM_VERSION="$VERSION"
+            MSI_VERSION="${BASE_VERSION}.0"
+          fi
+          echo "rpm_version=${RPM_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "msi_version=${MSI_VERSION}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.archive_name }}
@@ -496,7 +518,10 @@ jobs:
         run: cargo deb -p portzero-cli --no-build
 
       - name: Build .rpm package
-        run: cargo generate-rpm
+        # cargo-generate-rpm defaults to package.version, which is a bare
+        # SemVer string (e.g. "1.0.4-rc.107") — invalid as an RPM version
+        # since RPM forbids '-'. Override with the '~'-prerelease form.
+        run: cargo generate-rpm -s 'version = "${{ needs.version.outputs.rpm_version }}"'
         working-directory: client/crates/cli
 
       - name: Upload .deb
@@ -577,7 +602,7 @@ jobs:
           }
 
           & $candle.FullName `
-            "-dProductVersion=${{ needs.version.outputs.version }}" `
+            "-dProductVersion=${{ needs.version.outputs.msi_version }}" `
             "-dSourceDir=$sourceDir" `
             -out "portzero.wixobj" `
             "packaging\windows\portzero.wxs"
