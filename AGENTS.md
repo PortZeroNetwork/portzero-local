@@ -144,3 +144,37 @@ with "refactor thread" in the subject. View pre-refactor history with
   `Cloud tunnel` when that wording is clearer.
 - Avoid `service` in user-facing copy unless it is the most precise term in the
   local context.
+
+### CI: self-hosted macOS runner and Parallels VMs
+
+The org has exactly one self-hosted macOS runner, and it is a developer's
+personal MacBook Pro — not a throwaway/ephemeral box. It also hosts the
+Parallels VMs used for VM-based E2E testing (see `vmtest/README.md` and
+`.github/workflows/vm-e2e.yml`), driven through `vmkit`
+(`portzeronetwork/portzero/vmkit` tap).
+
+**Never add a workflow step that runs `sudo` (or anything else host-mutating
+— installing system packages, modifying trust stores, etc.) directly on that
+self-hosted runner.** Unprivileged steps (`cargo build`, `cargo test`
+without elevated privileges, `cargo clippy`, etc.) are fine there — that's
+what the persistent Cargo cache under `~/ci-cache/` is for (see the `check`
+job's macOS-only cache steps, if re-added; as of this writing `check`'s
+macOS leg runs on GitHub-hosted `macos-15`, so no self-hosted macOS runner
+is currently in `ci.yml` at all).
+
+Anything on macOS that needs `sudo` or otherwise mutates host state must run
+in one of these two places instead:
+
+1. **GitHub-hosted `macos-15` runners** — for privileged steps that don't
+   need real hardware/VM integration (e.g. `ci.yml`'s `e2e` job's real-TUN
+   test). These are disposable GitHub-managed VMs, so `sudo` there is safe.
+2. **Inside a Parallels guest, via `vmkit`** — for hardware-in-the-loop
+   coverage (real installers, real trust stores, real TUN/wintun adapters)
+   that specifically needs a full guest OS. See `vm-e2e.yml`: the
+   self-hosted runner only builds artifacts and drives `vmkit`/`just
+   vm-test`; the privileged/mutating work happens inside the guest, not on
+   the host.
+
+If you're tempted to move a privileged step onto the self-hosted runner to
+save GitHub Actions minutes, don't — route it to a GitHub-hosted runner or
+into a Parallels guest instead, even if that costs more Actions minutes.
