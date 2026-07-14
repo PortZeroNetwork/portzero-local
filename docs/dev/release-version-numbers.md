@@ -1,8 +1,9 @@
 # Release version numbers
 
 The stable version is decided **at release time** by the person cutting the
-release, not inferred from a commit message. In the gated **Release** workflow
-(`.github/workflows/release.yml`, `promote` job) you pick a `bump` —
+release, not inferred from a commit message. In the gated **Promote to
+Production** workflow (`.github/workflows/promote-production.yml`, `promote`
+job) you pick a `bump` —
 `patch` / `minor` / `major` — and the next `vX.Y.Z` is computed from the latest
 stable tag and stamped as an immutable tag. See
 [sdlc.md](sdlc.md#cut-a-stable-release) for the full flow.

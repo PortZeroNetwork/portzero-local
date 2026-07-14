@@ -8,9 +8,11 @@ This repository uses a Heroku-style, tag-addressed release model (the same one
 - There is **no** `release/*` branch. A stable **release is an immutable
   `vX.Y.Z` tag** — the release of record, browsable under Tags.
 - Cutting a stable release is a deliberate, gated action: you dispatch the
-  Release workflow and pick the version bump, then a required reviewer approves
-  the `release` GitHub Environment. That stamps the tag, and the tag push builds
-  and publishes the signed release.
+  **Promote to Production** workflow and pick the version bump, then a required
+  reviewer approves the `production` GitHub Environment. That stamps the tag,
+  and the tag push builds and publishes the signed release. (Naming: see
+  [docs/release-conventions.md](../release-conventions.md) — the same workflow
+  name, inputs, and gate as `portzero-cloud`.)
 - GitHub Actions CI runs on PRs into `staging` (see
   `.github/workflows/ci.yml`).
 
@@ -30,21 +32,21 @@ is intentionally manual because it needs root or Administrator privileges.
 
 ## Cut a stable release
 
-A stable release is cut by the gated **Release** workflow, which picks the bump
-explicitly and pushes the `vX.Y.Z` tag from the `staging` tip:
+A stable release is cut by the gated **Promote to Production** workflow
+(`.github/workflows/promote-production.yml`), which picks the bump explicitly
+and pushes the `vX.Y.Z` tag from the `staging` tip:
 
-1. Go to **Actions → Release → Run workflow**, with `staging` selected as the
-   branch to run from.
-2. Set **channel** to `release` and pick the **bump** (`patch` / `minor` /
-   `major`).
-3. Run it. The `promote` job pauses on the `release` environment gate until a
-   **required reviewer** approves it — this is the release "button".
+1. Go to **Actions → Promote to Production → Run workflow**, with `staging`
+   selected as the branch to run from (or set **ref** explicitly).
+2. Pick the **bump** (`patch` / `minor` / `major`).
+3. Run it. The `promote` job pauses on the `production` environment gate until
+   a **required reviewer** approves it — this is the release "button".
 4. On approval, `promote` computes the next `vX.Y.Z` from the latest stable tag
-   and pushes that tag from the `staging` tip.
+   and pushes that tag from the chosen ref.
 
-The tag push triggers the same workflow's tag build (`push: tags: v*`), which
-produces the **signed** stable artifacts and the GitHub Release. Inspect or
-follow the runs from the **Actions** tab, or with the GitHub CLI:
+The tag push triggers the **Release** workflow's tag build (`push: tags: v*`),
+which produces the **signed** stable artifacts and the GitHub Release. Inspect
+or follow the runs from the **Actions** tab, or with the GitHub CLI:
 
 ```bash
 gh run list --workflow Release
@@ -91,7 +93,9 @@ git push origin vX.Y.Z              # re-push the SAME tag on the SAME commit �
 
 If that still doesn't fire, the tag push is being made with a token that can't
 trigger workflows — push the tag from a PAT / GitHub App token instead of the
-default `GITHUB_TOKEN`, or just cut the next patch with a fresh `promote`.
+default `GITHUB_TOKEN` (see the trigger-safe tag push snippet in
+[docs/release-conventions.md](../release-conventions.md)), or just cut the next
+patch with a fresh promote.
 
 ### A bad release actually shipped (roll back)
 
@@ -107,10 +111,16 @@ You do **not** delete or move the tag to undo a release. Two steps:
    the linchpin.)
    - **Homebrew is separate:** `update-homebrew` already pushed the bad version
      into the tap's stable `portzero` formula, and the toggle above does **not**
-     revert it. Until the roll-forward release bumps it again, either revert the
-     offending commit in the `homebrew-portzero` tap by hand, or accept that
-     `brew install portzero` serves the bad version in the meantime.
-2. **Roll forward.** Fix on `staging`, then cut a **new patch** release the
+     revert it. Until a re-publish or roll-forward release bumps it again,
+     either revert the offending commit in the `homebrew-portzero` tap by hand,
+     or accept that `brew install portzero` serves the bad version meanwhile.
+2. **Re-publish the last good release (roll back).** Dispatch **Promote to
+   Production** with **ref** = the last good `vX.Y.Z` tag and **bump** =
+   `none`. That re-runs the Release build for that tag: the old release
+   becomes `latest` again and `update-homebrew` re-pins the stable formula to
+   it. (Only works for tags cut after the `channel: stable` re-publish path
+   existed; older tags: re-run their original Release run from the Actions UI.)
+3. **Roll forward.** Fix on `staging`, then cut a **new patch** release the
    normal way (Cut a stable release, above). The higher `vX.Y.Z` becomes
    `latest` and supersedes the bad one everywhere.
 

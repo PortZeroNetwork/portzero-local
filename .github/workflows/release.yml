@@ -1,19 +1,25 @@
 name: Release
 
-# Heroku-style, tag-addressed release model (mirrors portzero-cloud):
+# Heroku-style, tag-addressed release model (mirrors portzero-cloud; see
+# docs/release-conventions.md):
 #
 #   * A STABLE release is the immutable `vX.Y.Z` tag — the release of record.
 #     Pushing such a tag triggers the SIGNED build below. There is no
 #     `release/*` branch; the tag is what "is released", browsable under Tags.
 #
-#   * Cutting a stable release is a deliberate, gated act: dispatch this
-#     workflow with `channel: release` and a `bump` (patch/minor/major), then
-#     approve the `release` environment gate (a required reviewer). The
-#     `promote` job computes the next `vX.Y.Z` from the latest stable tag and
-#     pushes it from the `staging` tip; that tag push is what starts the signed
-#     build.
+#   * Cutting a stable release is a deliberate, gated act: dispatch the
+#     `Promote to Production` workflow (promote-production.yml) with a `bump`,
+#     then approve the `production` environment gate (a required reviewer).
+#     Its `promote` job computes the next `vX.Y.Z` from the latest stable tag
+#     and pushes it from the `staging` tip; that tag push starts the signed
+#     build here.
 #
-#   * The prerelease ("edge") channel stays an ungated manual dispatch
+#   * A `channel: stable` dispatch of THIS workflow re-publishes an existing
+#     release: it must be dispatched at a `vX.Y.Z` tag ref (Promote to
+#     Production does this for you on `bump: none`) and rebuilds/re-publishes
+#     that exact version — the rollback path for a distributed artifact.
+#
+#   * The prerelease ("edge") channel is an ungated manual dispatch
 #     (`channel: edge`, the default) cut off `staging`. An edge run always
 #     produces a GitHub Release marked `prerelease: true`, so it never becomes
 #     GitHub's "latest", is never seen by the in-CLI update check, never lands
@@ -21,27 +27,19 @@ name: Release
 #     docs/dev/prerelease-channel.md.
 on:
   # Stable releases are triggered by pushing an immutable vX.Y.Z tag (stamped
-  # by the gated `promote` job below, off the `staging` tip).
+  # by the gated `promote` job in promote-production.yml, off the `staging` tip).
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
       channel:
-        description: 'edge = ungated unsigned prerelease off staging. release = gated promote: cut the next vX.Y.Z stable tag (approve the `release` environment).'
+        description: 'edge = ungated unsigned prerelease off staging (default). stable = re-publish the vX.Y.Z tag this run is dispatched at (used by Promote to Production, bump=none).'
         type: choice
         default: edge
         options:
           - edge
-          - release
-      bump:
-        description: 'Semver bump for the stable tag stamped by a `release` promote. Ignored for edge.'
-        type: choice
-        default: patch
-        options:
-          - patch
-          - minor
-          - major
+          - stable
 
 permissions:
   contents: write
@@ -51,71 +49,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  promote:
-    name: Promote to Release (cut vX.Y.Z tag)
-    # The gated "Release" button: only a `channel: release` dispatch runs this,
-    # and only after the `release` environment's required reviewer approves.
-    if: github.event_name == 'workflow_dispatch' && inputs.channel == 'release'
-    runs-on: ubuntu-latest
-    environment: release
-    permissions:
-      contents: write
-    steps:
-      # Deploy the ref this workflow was dispatched from (normally `staging`).
-      # fetch-depth: 0 brings all tags so the bump can find the latest vX.Y.Z.
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-
-      - name: Stamp release tag
-        env:
-          BUMP: ${{ inputs.bump }}
-          # A tag pushed with the default GITHUB_TOKEN does NOT trigger any
-          # workflow (GitHub's anti-recursion rule), so this workflow's tag build
-          # would never fire. Push with a PAT (contents:write on this repo) so the
-          # tag event triggers the release build.
-          RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
-        run: |
-          # Latest stable vX.Y.Z tag across history; default v0.0.0 if none.
-          # Prerelease tags (vX.Y.Z-rc.N) are excluded so an edge cut never
-          # perturbs the next stable bump.
-          LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v -- '-' | sort -V | tail -1)
-          LATEST_TAG="${LATEST_TAG:-v0.0.0}"
-          MAJOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f1)
-          MINOR=$(echo "$LATEST_TAG" | cut -d. -f2)
-          PATCH=$(echo "$LATEST_TAG" | cut -d. -f3)
-          case "$BUMP" in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH + 1)) ;;
-          esac
-          TAG="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "Stamping $TAG on $(git rev-parse --short HEAD) (was $LATEST_TAG)"
-          # Annotated tags need a tagger identity; the default checkout sets none.
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "Release $TAG"
-          # Fail loud rather than silently pushing with a token that won't
-          # trigger the tag build (see the RELEASE_TAG_TOKEN note above).
-          if [ -z "${RELEASE_TAG_TOKEN:-}" ]; then
-            echo "::error::RELEASE_TAG_TOKEN secret is not set — a GITHUB_TOKEN tag push would not trigger the release build. Add a PAT with contents:write as RELEASE_TAG_TOKEN." >&2
-            exit 1
-          fi
-          # actions/checkout persists a GITHUB_TOKEN auth header
-          # (http.<host>.extraheader) that GitHub honors OVER the URL's PAT
-          # credentials, re-attributing the push to GITHUB_TOKEN — which never
-          # triggers workflows. Strip it so the PAT in the URL is what
-          # authenticates the push (and thus triggers the tag build).
-          git config --local --unset-all http.https://github.com/.extraheader || true
-          git push "https://x-access-token:${RELEASE_TAG_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$TAG"
-
   version:
     name: Determine Version
-    # Runs for the stable tag build and for edge dispatches — but NOT for a
-    # `release` promote dispatch (that only cuts the tag; the tag push then
-    # starts a fresh run). Skipping it here cascades to skip every build job.
-    if: github.event_name != 'workflow_dispatch' || inputs.channel == 'edge'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -132,10 +67,24 @@ jobs:
       - name: Generate version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            # Stable build: the version IS the tag that triggered this run
-            # (stamped by the gated `promote` job), not a recomputation.
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.channel }}" = "stable" ]; then
+            # Stable build: the version IS the vX.Y.Z tag this run is for —
+            # either the tag push that triggered it (stamped by the gated
+            # `promote` job in promote-production.yml), or, for a
+            # `channel: stable` re-publish dispatch, the tag ref the dispatch
+            # was made at. Never a recomputation.
             TAG="${GITHUB_REF_NAME}"
+            case "$GITHUB_REF" in
+              refs/tags/v*-*)
+                echo "::error::channel=stable cannot re-publish a prerelease tag ($GITHUB_REF_NAME)." >&2
+                exit 1
+                ;;
+              refs/tags/v[0-9]*.[0-9]*.[0-9]*) : ;;
+              *)
+                echo "::error::channel=stable must be dispatched at an existing vX.Y.Z tag ref (got $GITHUB_REF). Use Promote to Production with bump=none, or pick the tag in the Run-workflow ref dropdown." >&2
+                exit 1
+                ;;
+            esac
             VERSION="${TAG#v}"
             echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
             echo "tag=${TAG}" >> "$GITHUB_OUTPUT"

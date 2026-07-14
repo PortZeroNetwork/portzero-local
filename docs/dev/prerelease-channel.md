@@ -43,7 +43,8 @@ Run the **Release** workflow via *Actions → Release → Run workflow* off
   signing steps are skipped for prereleases (see below);
 - the Homebrew **edge** formula (`portzero-edge`) bumped in the tap.
 
-Stable releases are cut by pushing a `vX.Y.Z` tag (the gated `promote` job) and
+Stable releases are cut by pushing a `vX.Y.Z` tag (the gated `promote` job in
+the **Promote to Production** workflow) and
 are unaffected by edge runs — prerelease tags are excluded from the stable
 version calculation. See [sdlc.md](sdlc.md#cut-a-stable-release).
 
