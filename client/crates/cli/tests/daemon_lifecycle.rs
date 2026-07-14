@@ -16,6 +16,15 @@
 //! states (`status` reporting a real edge connection) — both require real
 //! privilege/network setup outside a CI sandbox and are exercised, if at
 //! all, by the staging E2E suite instead.
+//!
+//! Unix-only, same as `signal_shutdown.rs`: `DaemonConfig::default()` locates
+//! the state dir via `dirs::home_dir()`, which on Windows calls
+//! `SHGetKnownFolderPath` directly and ignores the `HOME` env var, so the
+//! throwaway-`HOME` isolation below is a no-op there — every subprocess would
+//! share the runner's real `~/.portzero/daemon/daemon.pid`, and parallel test
+//! threads stomp on each other's PID files.
+
+#![cfg(unix)]
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
