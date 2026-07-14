@@ -172,6 +172,12 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v5
+        # This runner is persistent, so its disk IS the build cache: keep the
+        # workspace `target/` and `~/.cargo` between runs instead of wiping
+        # them. `git clean -ffdx` (the checkout default) would delete `target/`
+        # and force a cold rebuild + crate re-download every run.
+        with:
+          clean: false
 
       - name: Ensure vmkit (VM control plane) is installed
         # The harness runs through vmkit (see ./vmkit.conf and
