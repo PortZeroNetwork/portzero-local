@@ -202,6 +202,7 @@ mod tests {
         assert!(managed_symlink_target(&link).is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn symlink_outside_directory_is_flagged() {
         let dir = tempfile::tempdir().unwrap();
@@ -209,7 +210,6 @@ mod tests {
         let real = elsewhere.path().join("static-hosts");
         std::fs::write(&real, "127.0.0.1 localhost\n").unwrap();
         let link = dir.path().join("hosts");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
         let safety = check_hosts_write_safety(&link);
