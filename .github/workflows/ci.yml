@@ -115,37 +115,29 @@ jobs:
   e2e:
     name: E2E real TUN overlay (${{ matrix.os }})
     if: github.event_name != 'workflow_dispatch' || inputs.job == 'all' || inputs.job == 'e2e'
-    runs-on: ${{ matrix.runner || matrix.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Run the privileged real-TUN E2E on every supported desktop OS. A
         # manual dispatch with a specific `os` input narrows this to that
         # runner (e.g. job=e2e, os=windows-latest to reproduce the Wintun
-        # bring-up hang in isolation). macOS runs on a persistent
-        # self-hosted runner (see cache step below) instead of a
-        # GitHub-hosted macos-15 runner.
+        # bring-up hang in isolation). macOS stays on a GitHub-hosted
+        # macos-15 runner (unlike the unprivileged `check` job's self-hosted
+        # setup, see top of file) because this job's steps run `sudo`:
+        # sudo must never execute directly on the org's one self-hosted
+        # macOS runner, since that box is a developer's personal laptop, not
+        # a throwaway VM. Real-TUN/trust-store coverage that needs sudo on
+        # macOS runs inside the Parallels guest instead (vm-e2e.yml, driven
+        # through vmkit from that same self-hosted runner) rather than
+        # against the host directly.
         os: ${{ (github.event_name == 'workflow_dispatch' && inputs.os != 'all') && fromJSON(format('["{0}"]', inputs.os)) || fromJSON('["ubuntu-latest", "macos-15", "windows-latest"]') }}
-        include:
-          - os: macos-15
-            runner: [self-hosted, macOS, portzero-macbook]
     steps:
       - uses: actions/checkout@v5
-        with:
-          clean: ${{ runner.os != 'macOS' }}
-
-      - name: Point Cargo at a persistent cache dir (self-hosted macOS only)
-        if: runner.os == 'macOS'
-        run: |
-          mkdir -p "$HOME/ci-cache/portzero-local/cargo-home" "$HOME/ci-cache/portzero-local/target"
-          echo "CARGO_HOME=$HOME/ci-cache/portzero-local/cargo-home" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_DIR=$HOME/ci-cache/portzero-local/target" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry/target (GitHub-hosted runners only)
-        if: runner.os != 'macOS'
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
 
       - name: Build test binary (populate cache as user)
         run: cargo build -p portzero-daemon --tests
