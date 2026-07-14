@@ -9,6 +9,9 @@ devenv-tunnel.db
 *.log
 .idea/
 .DS_Store
+
+# Claude Code agent worktrees (scratch state for isolated subagent runs)
+.claude/worktrees/
 # Ticketry ticket management state (index.db, hooks state, etc.) is never committed
 /.ticketry/index.db
 
