@@ -136,6 +136,18 @@ with "refactor thread" in the subject. View pre-refactor history with
 
 [//]: # (END TICKETRY DESCRIPTION)
 
+### Configuration & service endpoints
+
+The client has no staging-vs-production environment of its own — only which
+backend URLs it targets. Those URLs (cloud API, edge, dashboard, marketing site)
+and their `PZ_TUNNEL_*` environment overrides live in **one** place:
+`portzero_domain::endpoints`. When you need a service URL, call its accessor
+(`endpoints::api_url()`, `endpoints::edge_url()`, `endpoints::dashboard_url()`,
+`endpoints::web_url()`); when you add a new endpoint, add its `DEFAULT_*`
+constant and accessor there. Never redefine a `DEFAULT_*` URL constant or
+re-read a `PZ_TUNNEL_*` variable with its own fallback inside a `cli`/`daemon`
+crate — that reintroduces the duplication this module exists to prevent.
+
 ### Terminology
 
 - In code, `service` is an acceptable umbrella term for the discovered thing when
