@@ -464,6 +464,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # cargo-deb's `$auto` dependency resolution runs dpkg-shlibdeps over every
+      # packaged binary, including the tray, which links GTK / libxdo /
+      # libayatana-appindicator. Those runtime libraries must be present on the
+      # packaging runner so shlibdeps can map them to the correct Depends.
+      - name: Install tray runtime library deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+
       - name: Extract binary into target/release
         run: |
           tar xzf portzero-linux-amd64.tar.gz
