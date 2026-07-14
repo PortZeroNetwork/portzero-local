@@ -105,7 +105,10 @@ async fn mock_edge_server(
     path: String,
     ping_ts: u64,
 ) -> EdgeOutcome {
-    let (stream, _) = listener.accept().await.expect("edge: accept tcp connection");
+    let (stream, _) = listener
+        .accept()
+        .await
+        .expect("edge: accept tcp connection");
     let mut ws = tokio_tungstenite::accept_async(stream)
         .await
         .expect("edge: websocket handshake failed");
@@ -258,7 +261,10 @@ async fn cloud_connector_full_flow_against_mock_edge() {
     // 4. Drive a real CloudConnector: connect (sends Hello) then register.
     let auth_token = "tok_mock_abc123".to_string();
     let mut connector = CloudConnector::new(auth_token.clone());
-    connector.connect(router).await.expect("connect to mock edge");
+    connector
+        .connect(router)
+        .await
+        .expect("connect to mock edge");
     connector
         .register_route(&domain, backend_port, None)
         .await
