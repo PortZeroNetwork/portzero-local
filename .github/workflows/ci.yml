@@ -128,7 +128,7 @@ jobs:
         os: ${{ (github.event_name == 'workflow_dispatch' && inputs.os != 'all') && fromJSON(format('["{0}"]', inputs.os)) || fromJSON('["ubuntu-latest", "macos-15", "windows-latest"]') }}
         include:
           - os: macos-15
-            runner: [self-hosted, macOS, portzero-macbook]
+            runner: [self-hosted, macOS, X64]
     steps:
       - uses: actions/checkout@v5
         with:
