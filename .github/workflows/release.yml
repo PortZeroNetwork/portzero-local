@@ -71,6 +71,11 @@ jobs:
       - name: Stamp release tag
         env:
           BUMP: ${{ inputs.bump }}
+          # A tag pushed with the default GITHUB_TOKEN does NOT trigger any
+          # workflow (GitHub's anti-recursion rule), so this workflow's tag build
+          # would never fire. Push with a PAT (contents:write on this repo) so the
+          # tag event triggers the release build.
+          RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
         run: |
           # Latest stable vX.Y.Z tag across history; default v0.0.0 if none.
           # Prerelease tags (vX.Y.Z-rc.N) are excluded so an edge cut never
@@ -91,9 +96,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG" -m "Release $TAG"
-          # Uses the checkout's default GITHUB_TOKEN; contents: write authorizes
-          # the tag push, which in turn triggers this workflow's tag build.
-          git push origin "$TAG"
+          # Fail loud rather than silently pushing with a token that won't
+          # trigger the tag build (see the RELEASE_TAG_TOKEN note above).
+          if [ -z "${RELEASE_TAG_TOKEN:-}" ]; then
+            echo "::error::RELEASE_TAG_TOKEN secret is not set — a GITHUB_TOKEN tag push would not trigger the release build. Add a PAT with contents:write as RELEASE_TAG_TOKEN." >&2
+            exit 1
+          fi
+          git push "https://x-access-token:${RELEASE_TAG_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$TAG"
 
   version:
     name: Determine Version
