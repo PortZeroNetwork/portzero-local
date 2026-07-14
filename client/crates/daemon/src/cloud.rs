@@ -18,12 +18,9 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::forwarder;
 
-/// Default edge server WebSocket URL.
-const DEFAULT_EDGE_URL: &str = "wss://edge.portzero.cloud/tunnel";
-
 /// Resolve the edge server URL from the environment or fall back to the default.
 fn resolve_edge_url() -> String {
-    std::env::var("PZ_TUNNEL_EDGE_URL").unwrap_or_else(|_| DEFAULT_EDGE_URL.to_string())
+    portzero_domain::endpoints::edge_url()
 }
 
 /// Cloud connector state.
