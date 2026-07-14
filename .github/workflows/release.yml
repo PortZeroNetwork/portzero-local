@@ -102,6 +102,12 @@ jobs:
             echo "::error::RELEASE_TAG_TOKEN secret is not set — a GITHUB_TOKEN tag push would not trigger the release build. Add a PAT with contents:write as RELEASE_TAG_TOKEN." >&2
             exit 1
           fi
+          # actions/checkout persists a GITHUB_TOKEN auth header
+          # (http.<host>.extraheader) that GitHub honors OVER the URL's PAT
+          # credentials, re-attributing the push to GITHUB_TOKEN — which never
+          # triggers workflows. Strip it so the PAT in the URL is what
+          # authenticates the push (and thus triggers the tag build).
+          git config --local --unset-all http.https://github.com/.extraheader || true
           git push "https://x-access-token:${RELEASE_TAG_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$TAG"
 
   version:
