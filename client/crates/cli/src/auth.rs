@@ -139,26 +139,7 @@ struct VerifyResponse {
 /// - If `PZ_TUNNEL_API_URL` looks like `localhost:3001`, use `localhost:3003`.
 /// - Otherwise default to `https://app.portzero.cloud`.
 pub(crate) fn dashboard_url() -> String {
-    if let Ok(url) = std::env::var("PZ_TUNNEL_DASHBOARD_URL") {
-        return url;
-    }
-
-    let api_url = std::env::var("PZ_TUNNEL_API_URL")
-        .unwrap_or_else(|_| crate::api_client::DEFAULT_API_URL.to_string());
-
-    dashboard_url_from_api_url(&api_url)
-}
-
-fn dashboard_url_from_api_url(api_url: &str) -> String {
-    if api_url.contains("localhost") || api_url.contains("127.0.0.1") {
-        // Replace port with 3003 for the dashboard.
-        if let Some(colon_pos) = api_url.rfind(':') {
-            let base = &api_url[..colon_pos];
-            return format!("{base}:3003");
-        }
-    }
-
-    "https://app.portzero.cloud".to_string()
+    portzero_domain::endpoints::dashboard_url()
 }
 
 /// Generate a random session code for the browser login flow.
@@ -317,8 +298,7 @@ async fn login_interactive(email: Option<String>) -> Result<()> {
             "Failed to send verification code (HTTP {status}).\n\n\
              Server response: {body}\n\n\
              If you believe this is an error, visit {}/support for help.",
-            std::env::var("PZ_TUNNEL_WEB_URL")
-                .unwrap_or_else(|_| "https://portzero.cloud".to_string())
+            portzero_domain::endpoints::web_url()
         );
     }
 
@@ -457,7 +437,9 @@ pub async fn whoami() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::dashboard_url_from_api_url;
+    // Dashboard-URL derivation is centralised in and tested by
+    // `portzero_domain::endpoints`.
+    use portzero_domain::endpoints::dashboard_url_from_api_url;
 
     #[test]
     fn dashboard_url_tracks_the_app_domain_for_the_production_api() {

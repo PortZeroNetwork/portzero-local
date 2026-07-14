@@ -27,6 +27,11 @@
 
 use std::path::{Path, PathBuf};
 
+/// Canonical service endpoints (API/edge/dashboard/web) and their
+/// `PZ_TUNNEL_*` overrides — the single source of truth for the URLs the
+/// client targets.
+pub mod endpoints;
+
 /// Default base domain for portzero.cloud tunnels. The portzero-cloud edge only
 /// accepts tunnel routes ending in this suffix.
 pub const DEFAULT_BASE_DOMAIN: &str = "tunnel.portzero.cloud";

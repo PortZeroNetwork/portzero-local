@@ -14,8 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use uuid::Uuid;
 
-/// Default base URL for cloud API calls.
-const DEFAULT_API_URL: &str = "https://app.portzero.cloud/api";
+use portzero_domain::endpoints;
 
 /// Stored authentication configuration (written by the CLI after login).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,25 +83,7 @@ fn decode_jwt_exp(token: &str) -> Option<u64> {
 /// - If `PZ_TUNNEL_API_URL` looks like `localhost:3001`, use `localhost:3003`.
 /// - Otherwise default to `https://app.portzero.cloud`.
 fn dashboard_url() -> String {
-    if let Ok(url) = std::env::var("PZ_TUNNEL_DASHBOARD_URL") {
-        return url;
-    }
-
-    let api_url =
-        std::env::var("PZ_TUNNEL_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
-
-    dashboard_url_from_api_url(&api_url)
-}
-
-fn dashboard_url_from_api_url(api_url: &str) -> String {
-    if api_url.contains("localhost") || api_url.contains("127.0.0.1") {
-        if let Some(colon_pos) = api_url.rfind(':') {
-            let base = &api_url[..colon_pos];
-            return format!("{base}:3003");
-        }
-    }
-
-    "https://app.portzero.cloud".to_string()
+    endpoints::dashboard_url()
 }
 
 fn generate_session_code() -> String {
@@ -362,8 +343,7 @@ impl AuthConfig {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No token to refresh"))?;
 
-        let api_url =
-            std::env::var("PZ_TUNNEL_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+        let api_url = endpoints::api_url();
 
         let client = reqwest::Client::new();
         let resp = client
@@ -521,6 +501,6 @@ mod tests {
 
     #[test]
     fn test_default_api_url_matches_the_dashboard_api() {
-        assert_eq!(DEFAULT_API_URL, "https://app.portzero.cloud/api");
+        assert_eq!(endpoints::DEFAULT_API_URL, "https://app.portzero.cloud/api");
     }
 }

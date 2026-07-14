@@ -6,9 +6,6 @@ use serde::Serialize;
 
 use crate::auth::AuthConfig;
 
-/// Default base URL for the portzero.cloud API.
-pub(crate) const DEFAULT_API_URL: &str = "https://app.portzero.cloud/api";
-
 /// HTTP client for the portzero.cloud API with automatic auth injection.
 pub struct ApiClient {
     base_url: String,
@@ -23,8 +20,7 @@ impl ApiClient {
     /// the `PZ_TUNNEL_API_URL` environment variable (useful for local
     /// development) or falls back to the default.
     pub fn new() -> Self {
-        let base_url =
-            std::env::var("PZ_TUNNEL_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string());
+        let base_url = portzero_domain::endpoints::api_url();
         let auth = AuthConfig::load().ok();
 
         Self {
@@ -88,6 +84,9 @@ mod tests {
 
     #[test]
     fn default_api_url_points_at_the_dashboard_api() {
-        assert_eq!(DEFAULT_API_URL, "https://app.portzero.cloud/api");
+        assert_eq!(
+            portzero_domain::endpoints::DEFAULT_API_URL,
+            "https://app.portzero.cloud/api"
+        );
     }
 }
