@@ -30,9 +30,7 @@ use tracing::info;
 ))]
 use tracing::warn;
 
-// ---------------------------------------------------------------------------
 // Public entry points
-// ---------------------------------------------------------------------------
 
 /// Install the scoped resolver for `*.portzero.local`, routing queries to
 /// `dns_addr` (our embedded DNS server).
@@ -84,9 +82,7 @@ pub fn status(dns_addr: SocketAddr) -> ResolverStatus {
     status_impl(dns_addr)
 }
 
-// ---------------------------------------------------------------------------
 // macOS
-// ---------------------------------------------------------------------------
 
 #[cfg(target_os = "macos")]
 fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
@@ -137,9 +133,7 @@ fn status_impl(dns_addr: SocketAddr) -> ResolverStatus {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Linux
-// ---------------------------------------------------------------------------
 //
 // The previous implementation attached the scoped DNS to the loopback link
 // (`lo`) via `resolvectl dns lo …`. On boxes where systemd-resolved is active
@@ -316,7 +310,7 @@ fn status_impl(_dns_addr: SocketAddr) -> ResolverStatus {
     }
 }
 
-// --- resolve1 (busctl) argument builders — pure, unit-tested ---------------
+// resolve1 (busctl) argument builders — pure, unit-tested
 
 /// Build `busctl call … SetLinkDNS` args for an IPv4/IPv6 `dns_addr` on `ifindex`.
 ///
@@ -387,7 +381,7 @@ pub(crate) fn busctl_revert_link_args(ifindex: u32) -> Vec<String> {
     ]
 }
 
-// --- resolvectl-on-TUN alternative (kept for easy mechanism swap) ----------
+// resolvectl-on-TUN alternative (kept for easy mechanism swap)
 
 /// Returns the resolvectl args to set the DNS server for a link.
 /// Exported for testing. Alternative to the busctl/resolve1 path: pass the TUN
@@ -414,7 +408,7 @@ pub(crate) fn resolvectl_domain_args(link: &str) -> Vec<String> {
     ]
 }
 
-// --- dnsmasq fallback snippet — pure builders, unit-tested ------------------
+// dnsmasq fallback snippet — pure builders, unit-tested
 
 /// Path of the scoped dnsmasq snippet. NetworkManager's integrated dnsmasq
 /// reads `/etc/NetworkManager/dnsmasq.d/`; a standalone dnsmasq reads
@@ -441,7 +435,7 @@ pub(crate) fn dnsmasq_snippet_content(dns_addr: SocketAddr) -> String {
     )
 }
 
-// --- ifindex parsing — pure, unit-tested -----------------------------------
+// ifindex parsing — pure, unit-tested
 
 /// Parse the contents of `/sys/class/net/<link>/ifindex` into a link index.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -459,7 +453,7 @@ fn read_ifindex(link_name: &str) -> Result<u32> {
     parse_ifindex(&contents)
 }
 
-// --- system detection (impure shims kept thin) ------------------------------
+// system detection (impure shims kept thin)
 
 #[cfg(target_os = "linux")]
 fn detect_resolver_env() -> ResolverEnv {
@@ -534,9 +528,7 @@ const fn libc_af_inet6() -> i32 {
     10
 }
 
-// ---------------------------------------------------------------------------
 // Windows
-// ---------------------------------------------------------------------------
 
 #[cfg(target_os = "windows")]
 fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
@@ -612,9 +604,7 @@ fn run_powershell(script: &str) -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
 // Unsupported platforms — compile to no-ops with a warning
-// ---------------------------------------------------------------------------
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn install_impl(dns_addr: SocketAddr, _link_name: &str) -> Result<()> {
@@ -636,9 +626,7 @@ fn status_impl(_dns_addr: SocketAddr) -> ResolverStatus {
     ResolverStatus::Unknown
 }
 
-// ---------------------------------------------------------------------------
 // Unit tests — purely functional; never write to the real system
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
