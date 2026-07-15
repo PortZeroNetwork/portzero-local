@@ -483,8 +483,6 @@ mod tests {
     use super::*;
     use portzero_daemon::discovery::ServiceSource;
 
-    // --- health_cell() ---
-
     #[test]
     fn health_cell_shows_dash_when_no_health_path() {
         assert_eq!(health_cell(None), "-");
@@ -494,8 +492,6 @@ mod tests {
     fn health_cell_shows_declared_path() {
         assert_eq!(health_cell(Some("/healthz")), "/healthz");
     }
-
-    // --- format_source() ---
 
     #[test]
     fn format_source_process_shows_pid() {
@@ -529,12 +525,9 @@ mod tests {
         assert_eq!(format_source(&source, 0), "container ab12");
     }
 
-    // --- overlay_inactive_hint() ---
-    //
-    // This helper is `#[cfg(target_os = ...)]`-gated internally; only the
-    // branch for the OS we're compiling/testing on is present, so we can only
+    // `overlay_inactive_hint` is `#[cfg(target_os = ...)]`-gated internally; only
+    // the branch for the OS we're compiling/testing on is present, so we can only
     // assert the shape of whatever variant is active here.
-
     #[test]
     fn overlay_inactive_hint_is_nonempty_and_mentions_overlay() {
         let hint = overlay_inactive_hint();

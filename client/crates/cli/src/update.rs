@@ -334,8 +334,8 @@ mod tests {
         let v1 = parse_semver("1.2.3").unwrap();
         let v2 = parse_semver("1.2.3").unwrap();
         assert_eq!(v1, v2);
-        assert!(!(v1 < v2));
-        assert!(!(v1 > v2));
+        assert!(v1 >= v2);
+        assert!(v1 <= v2);
     }
 
     #[test]

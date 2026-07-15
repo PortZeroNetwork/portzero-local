@@ -98,10 +98,6 @@ impl AuthConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Login
-// ---------------------------------------------------------------------------
-
 /// Request body for POST /auth/login.
 #[derive(Serialize)]
 struct LoginRequest {
@@ -373,20 +369,12 @@ pub async fn login(interactive: bool, email: Option<String>, _name: Option<Strin
     }
 }
 
-// ---------------------------------------------------------------------------
-// Logout
-// ---------------------------------------------------------------------------
-
 /// Remove stored credentials.
 pub fn logout() -> Result<()> {
     AuthConfig::remove()?;
     println!("Logged out. Credentials removed.");
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Whoami
-// ---------------------------------------------------------------------------
 
 /// Response from GET /auth/me.
 #[derive(Deserialize)]

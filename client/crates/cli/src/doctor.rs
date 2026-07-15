@@ -142,10 +142,6 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Individual checks
-// ---------------------------------------------------------------------------
-
 /// Is the daemon process running? Report its PID and (best-effort) uptime.
 fn check_daemon_running(config: &DaemonConfig, pid: Option<u32>) -> Check {
     match pid {
@@ -541,10 +537,6 @@ async fn check_cloud(config: &DaemonConfig) -> Check {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Reporting
-// ---------------------------------------------------------------------------
-
 fn print_report(checks: &[Check]) {
     let width = checks.iter().map(|c| c.name.len()).max().unwrap_or(0);
 
@@ -574,10 +566,6 @@ fn print_report(checks: &[Check]) {
         (f, w) => println!("{f} check(s) failed, {w} warning(s)."),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers (pure where possible so they are unit-testable without root)
-// ---------------------------------------------------------------------------
 
 /// Best-effort daemon uptime from the PID file's modification time (written once
 /// at startup).
@@ -620,8 +608,6 @@ fn leak_name(domain: &str) -> &'static str {
     Box::leak(format!("tunnel {domain}").into_boxed_str())
 }
 
-// --- /etc/hosts pin analysis (macOS) ---------------------------------------
-
 #[cfg(target_os = "macos")]
 enum HostsPin {
     Expected,
@@ -655,11 +641,11 @@ fn analyze_hosts_pin(content: &str) -> HostsPin {
 #[cfg(all(test, not(target_os = "macos")))]
 enum HostsPin {
     Expected,
-    Conflicting(String),
+    // Only matched by variant on non-macOS test builds; the payload itself is
+    // read by the real macOS-only consumer, `check_hosts_pin`.
+    Conflicting(#[allow(dead_code)] String),
     Missing,
 }
-
-// --- Minimal DNS-over-UDP probe --------------------------------------------
 
 /// Send an A-record query for `name` to `server` and return the answered IPv4
 /// addresses. Used to probe the embedded DNS server directly (check 4).
