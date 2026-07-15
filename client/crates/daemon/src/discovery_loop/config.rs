@@ -20,6 +20,10 @@ pub struct DaemonConfig {
     pub overlay_https: OverlayHttpsPolicy,
     /// How DNS handles first hits for unknown `.portzero.local` services.
     pub dns_first_hit_policy: DnsFirstHitPolicy,
+    /// When a new HTTP/HTTPS local tunnel is detected (a `.portzero.local`
+    /// backend on port 80 or 443), open its URL in the default browser once.
+    /// On by default so a freshly-started example pops a browser tab.
+    pub auto_open_http_tunnels: bool,
 }
 
 impl Default for DaemonConfig {
@@ -33,6 +37,7 @@ impl Default for DaemonConfig {
             scan_interval_secs: 2,
             overlay_https: OverlayHttpsPolicy::default(),
             dns_first_hit_policy: DnsFirstHitPolicy::default(),
+            auto_open_http_tunnels: true,
         }
     }
 }
@@ -163,6 +168,42 @@ impl DaemonConfig {
             .with_context(|| format!("writing https policy to {}", path.display()))?;
         Ok(())
     }
+
+    /// Write (or update) only the `[daemon] auto_open_http_tunnels` key in the
+    /// config file, preserving every other key/section via a TOML value merge.
+    /// A running daemon picks the change up on its next config-reload poll.
+    pub fn write_auto_open_http_tunnels(&self, enabled: bool) -> Result<()> {
+        let path = self.config_path();
+
+        let mut root: toml::Value = match std::fs::read_to_string(&path) {
+            Ok(raw) => {
+                toml::from_str(&raw).unwrap_or_else(|_| toml::Value::Table(Default::default()))
+            }
+            Err(_) => toml::Value::Table(Default::default()),
+        };
+
+        if let Some(tbl) = root.as_table_mut() {
+            let daemon = tbl
+                .entry("daemon".to_owned())
+                .or_insert(toml::Value::Table(Default::default()));
+            if let Some(d) = daemon.as_table_mut() {
+                d.insert(
+                    "auto_open_http_tunnels".to_owned(),
+                    toml::Value::Boolean(enabled),
+                );
+            }
+        }
+
+        let serialized = toml::to_string_pretty(&root)
+            .context("serializing config.toml for auto_open_http_tunnels")?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating parent dir for {}", path.display()))?;
+        }
+        std::fs::write(&path, serialized)
+            .with_context(|| format!("writing auto_open_http_tunnels to {}", path.display()))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -177,6 +218,9 @@ impl FileConfig {
             if let Some(scan_interval_secs) = daemon.scan_interval_secs {
                 config.scan_interval_secs = scan_interval_secs;
             }
+            if let Some(auto_open) = daemon.auto_open_http_tunnels {
+                config.auto_open_http_tunnels = auto_open;
+            }
         }
         if let Some(overlay) = self.overlay {
             overlay.apply_to(config);
@@ -187,6 +231,7 @@ impl FileConfig {
 #[derive(Debug, Default, Deserialize)]
 struct FileDaemonConfig {
     scan_interval_secs: Option<u64>,
+    auto_open_http_tunnels: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]

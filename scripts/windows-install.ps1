@@ -257,6 +257,22 @@ function Open-Browser {
     }
 }
 
+function Wait-Dashboard {
+    # Poll the dashboard over its real DNS path so we only pop the browser once
+    # it will actually load — opening early would just show an error page.
+    Write-Host "Waiting for http://portzero.local..."
+    for ($i = 0; $i -lt 30; $i++) {
+        try {
+            $resp = Invoke-WebRequest -Uri "http://portzero.local/status.json" `
+                -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+            if ($resp.StatusCode -eq 200) { return $true }
+        }
+        catch { }
+        Start-Sleep -Seconds 1
+    }
+    return $false
+}
+
 if ($env:OS -ne "Windows_NT") {
     Fail "scripts/windows-install.ps1 can only be run on Windows."
 }
@@ -318,10 +334,15 @@ if ($LASTEXITCODE -ne 0) {
 Install-Tray -Cargo $cargo.Source -CargoBin $cargoBin
 
 Write-Host ""
-if (-not (Open-Browser -Url "http://portzero.local")) {
-    Write-Host "portzero installed. Open http://portzero.local in your browser."
+if (Wait-Dashboard) {
+    if (Open-Browser -Url "http://portzero.local") {
+        Write-Host "portzero installed and should now be open in your browser."
+        Write-Host "Run an example from the Getting Started section on the dashboard."
+    } else {
+        Write-Host "portzero installed. Open http://portzero.local in your browser and run an example from Getting Started."
+    }
 } else {
-    Write-Host "portzero installed and should now be open in your browser."
+    Write-Host "portzero installed. Open http://portzero.local once it is reachable (see 'portzero status') and run an example from Getting Started."
 }
 Write-Host "If this terminal was already open, PATH has been updated for this process; new terminals will also find portzero.exe."
 

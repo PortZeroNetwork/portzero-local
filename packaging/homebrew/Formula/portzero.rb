@@ -68,7 +68,8 @@ class Portzero < Formula
       is consulted, so subdomains need the /etc/resolver entry and the management
       dashboard needs the static hosts entry.
 
-      Once done, open http://portzero.local in your browser.
+      Once done, open http://portzero.local in your browser and run an example
+      from the Getting Started section.
 
       A system-tray companion (portzero-tray) is installed and set to start at
       login via ~/Library/LaunchAgents/cloud.portzero.tray.plist. It shows

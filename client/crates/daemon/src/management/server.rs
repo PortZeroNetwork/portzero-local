@@ -29,6 +29,8 @@ pub struct PortRegistration {
 /// Shared state: PID -> list of registered ports.
 pub type RegistrationStore = Arc<RwLock<HashMap<u32, Vec<PortRegistration>>>>;
 
+pub use crate::management::handlers::RunningExamples;
+
 /// Shared application state passed to all handlers.
 #[derive(Clone)]
 pub struct AppState {
@@ -37,6 +39,9 @@ pub struct AppState {
     /// Daemon state directory; handlers read `overlay.json`, `routes.json`,
     /// `cloud_state.json`, and `daemon.pid` from here.
     pub state_dir: std::path::PathBuf,
+    /// Getting-started examples currently running (id → process handle), so the
+    /// dashboard can show live state and stop them.
+    pub running_examples: RunningExamples,
 }
 
 /// The management API server.
@@ -47,6 +52,8 @@ pub struct ManagementServer {
     pub bound_port: u16,
     /// Daemon state directory (used by the status UI handler to read daemon state files).
     pub state_dir: std::path::PathBuf,
+    /// Registry of running getting-started examples.
+    pub running_examples: RunningExamples,
 }
 
 impl ManagementServer {
@@ -62,6 +69,7 @@ impl ManagementServer {
             store,
             bound_port,
             state_dir,
+            running_examples: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         };
         Ok((server, listener))
     }
@@ -71,6 +79,7 @@ impl ManagementServer {
         let app_state = AppState {
             store: self.store,
             state_dir: self.state_dir,
+            running_examples: self.running_examples,
         };
         let router = build_router(app_state);
         tracing::info!("management API listening on 127.0.0.1:{}", self.bound_port);
@@ -98,6 +107,21 @@ fn build_router(state: AppState) -> Router {
             "/v1/config/https",
             routing::put(handlers::update_https_policy),
         )
+        .route(
+            "/v1/config/auto-open",
+            routing::put(handlers::update_auto_open),
+        )
+        // Getting-started examples (download + run/stream + stop)
+        .route(
+            "/v1/examples/status",
+            routing::get(handlers::examples_status),
+        )
+        .route(
+            "/v1/examples/download",
+            routing::post(handlers::download_examples),
+        )
+        .route("/v1/examples/run", routing::get(handlers::run_example))
+        .route("/v1/examples/stop", routing::post(handlers::stop_example))
         // Status UI (served at portzero.local)
         .route("/", routing::get(handlers::status_ui))
         .route("/login", routing::get(handlers::start_login))
@@ -112,4 +136,51 @@ fn build_router(state: AppState) -> Router {
         .route("/openapi.json", routing::get(handlers::openapi_json))
         .route("/status.json", routing::get(handlers::status_json))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The dashboard shell and `/status.json` wire up: the reordered UI is
+    /// served, and the snapshot carries the new getting-started + settings
+    /// fields the page reads.
+    #[tokio::test]
+    async fn serves_dashboard_and_status_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let (server, listener) = ManagementServer::bind(dir.path().to_path_buf())
+            .await
+            .unwrap();
+        let base = format!("http://127.0.0.1:{}", server.bound_port);
+        tokio::spawn(server.serve(listener));
+
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        let html = client
+            .get(format!("{base}/"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(html.contains("Getting Started"));
+        assert!(html.contains("id=\"download-btn\""));
+        assert!(html.contains("set-auto-open"));
+
+        let v: serde_json::Value = client
+            .get(format!("{base}/status.json"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(v.get("auto_open_http_tunnels").is_some());
+        assert!(v
+            .get("examples")
+            .and_then(|e| e.get("downloaded"))
+            .and_then(|d| d.as_bool())
+            .is_some());
+    }
 }

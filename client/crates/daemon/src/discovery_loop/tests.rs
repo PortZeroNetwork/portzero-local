@@ -279,6 +279,7 @@ fn test_read_daemon_pid_no_file() {
         scan_interval_secs: 2,
         overlay_https: OverlayHttpsPolicy::default(),
         dns_first_hit_policy: DnsFirstHitPolicy::default(),
+        auto_open_http_tunnels: true,
     };
     assert!(read_daemon_pid(&config).is_none());
 }
@@ -290,6 +291,7 @@ fn temp_config() -> (DaemonConfig, tempfile::TempDir) {
         scan_interval_secs: 2,
         overlay_https: OverlayHttpsPolicy::default(),
         dns_first_hit_policy: DnsFirstHitPolicy::default(),
+        auto_open_http_tunnels: true,
     };
     (config, dir)
 }
@@ -352,6 +354,7 @@ fn test_cloud_state_missing_file() {
         scan_interval_secs: 2,
         overlay_https: OverlayHttpsPolicy::default(),
         dns_first_hit_policy: DnsFirstHitPolicy::default(),
+        auto_open_http_tunnels: true,
     };
     assert_eq!(read_cloud_connected(&config), None);
     assert_eq!(read_cloud_error(&config), None);

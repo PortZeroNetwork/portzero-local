@@ -1,5 +1,7 @@
 pub mod auth;
+pub mod auto_open;
 pub mod autostart;
+pub mod browser;
 pub mod cloud;
 pub mod diagnostics;
 pub mod discovery;

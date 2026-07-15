@@ -59,7 +59,11 @@ pub async fn run() -> Result<()> {
 
     if failures.is_empty() {
         println!();
-        println!("Setup complete. Open http://portzero.local in your browser.");
+        println!("Setup complete.");
+        println!("Run an example from the Getting Started section on the dashboard.");
+        // Pop the dashboard, but only once it actually answers — opening early
+        // would show an error page before DNS/overlay are ready.
+        wait_and_open_dashboard().await;
         return Ok(());
     }
 
@@ -73,6 +77,42 @@ pub async fn run() -> Result<()> {
          or address the problems listed above",
         failures.len()
     )
+}
+
+/// Poll the dashboard over its real DNS path for up to ~30s, and open it in the
+/// browser the moment it answers. Best-effort: prints a hint and returns rather
+/// than failing setup if the dashboard never becomes reachable (or has no
+/// browser opener). Proxy is bypassed so a corporate `HTTP_PROXY` can't swallow
+/// the local request.
+async fn wait_and_open_dashboard() {
+    const DASHBOARD_URL: &str = "http://portzero.local";
+    const PROBE_URL: &str = "http://portzero.local/status.json";
+
+    let client = match reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    print!("Waiting for {DASHBOARD_URL}...");
+    let _ = std::io::stdout().flush();
+    for _ in 0..30 {
+        if let Ok(resp) = client.get(PROBE_URL).send().await {
+            if resp.status().is_success() {
+                println!(" ready.");
+                if !crate::browser::open_browser(DASHBOARD_URL) {
+                    println!("Open {DASHBOARD_URL} in your browser to get started.");
+                }
+                return;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    println!();
+    println!("Open {DASHBOARD_URL} once it is reachable (see 'portzero status').");
 }
 
 /// Install the scoped `*.portzero.local` OS resolver as part of setup so name

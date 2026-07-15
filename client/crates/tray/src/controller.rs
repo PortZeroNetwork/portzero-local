@@ -57,6 +57,11 @@ impl Controller {
         engine::maybe_autostart(&self.config, &mut self.auto_started);
     }
 
+    /// First run after install: nudge the user to the dashboard, once.
+    pub fn maybe_notify_first_run(&self) {
+        crate::welcome::maybe_notify_first_run(&self.config);
+    }
+
     /// Re-read daemon state and rebuild the icon, tooltip, and menu.
     pub fn refresh(&mut self) {
         // Reload the config each tick so an HTTPS toggle we (or the CLI) wrote to

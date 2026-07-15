@@ -21,6 +21,11 @@ pub use dashboard::{
     openapi_json, portzero_mark_asset, portzero_wordmark_asset, start_login, status_json, status_ui,
 };
 
+mod examples;
+pub use examples::{
+    download_examples, examples_status, run_example, stop_example, RunningExamples,
+};
+
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RegisterRequest {
     /// One or more port→domain mappings to register. All existing
@@ -119,6 +124,12 @@ pub struct HttpsPolicyUpdate {
     pub enable_for_port_80: Option<bool>,
     pub redirect_port_80: Option<bool>,
     pub passthrough_port_443: Option<bool>,
+}
+
+/// Update for the "open a browser tab when an HTTP/HTTPS tunnel appears" setting.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AutoOpenUpdate {
+    pub enabled: bool,
 }
 
 /// Resolve the source port from the connecting address to a PID.
@@ -439,6 +450,28 @@ pub async fn update_https_policy(
 
     if let Err(e) = crate::discovery_loop::DaemonConfig::load().write_https_policy(policy) {
         tracing::warn!(?e, "failed to write https policy");
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "config_write_failed",
+                detail: format!("Failed to persist config: {e}"),
+            }),
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// PUT /v1/config/auto-open — toggle auto-opening a browser tab when a new
+/// HTTP/HTTPS local tunnel appears. Persisted to config.toml; the running daemon
+/// picks it up on its next config-reload poll.
+pub async fn update_auto_open(
+    State(_state): State<AppState>,
+    Json(body): Json<AutoOpenUpdate>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    if let Err(e) =
+        crate::discovery_loop::DaemonConfig::load().write_auto_open_http_tunnels(body.enabled)
+    {
+        tracing::warn!(?e, "failed to write auto_open_http_tunnels");
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
