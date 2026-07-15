@@ -22,8 +22,8 @@ dirs = "6"
 futures-util = "0.3"
 hostname = "0.4"
 # hickory-dns for embedded authoritative DNS server (scoped *.portzero.local)
-hickory-proto = "0.24"
-hickory-server = "0.24"
+hickory-proto = "0.26.1"
+hickory-server = "0.26.1"
 libc = "0.2"
 rcgen = { version = "0.13", features = ["x509-parser"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }

@@ -63,7 +63,7 @@ impl AuthConfig {
     pub fn save(&self) -> Result<()> {
         let path = Self::path()?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
+            portzero_daemon::secure_file::ensure_private_dir(parent).with_context(|| {
                 format!(
                     "Failed to create config directory: {}\n\n\
                      Check that you have write permissions to your home directory.",
@@ -73,16 +73,8 @@ impl AuthConfig {
         }
 
         let json = serde_json::to_string_pretty(self).context("Failed to serialize auth config")?;
-        std::fs::write(&path, &json)
+        portzero_daemon::secure_file::write_secret_atomic(&path, json.as_bytes())
             .with_context(|| format!("Failed to write auth config to {}", path.display()))?;
-
-        // Restrict permissions on Unix so other users cannot read the token.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(&path, perms).ok();
-        }
 
         Ok(())
     }

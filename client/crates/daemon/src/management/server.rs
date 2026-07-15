@@ -19,10 +19,9 @@ pub struct PortRegistration {
     /// registration.
     #[schema(minimum = 1, example = 8080)]
     pub local_port: u16,
-    /// Full domain name to map to this port. Accepted patterns:
-    /// `*.portzero.local` for local overlay-only resolution, or
-    /// `*.<cloud-username>.tunnel.portzero.cloud` for a cloud-proxied tunnel domain.
-    #[schema(examples("api.alice.tunnel.portzero.cloud", "myservice.portzero.local"))]
+    /// Full local-overlay domain to map to this port. It must be a non-reserved
+    /// subdomain of `portzero.local`.
+    #[schema(example = "myservice.portzero.local")]
     pub domain: String,
 }
 
@@ -103,14 +102,6 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/v1/status", routing::get(handlers::status))
         .route("/v1/daemon/status", routing::get(handlers::daemon_status))
-        .route(
-            "/v1/config/https",
-            routing::put(handlers::update_https_policy),
-        )
-        .route(
-            "/v1/config/auto-open",
-            routing::put(handlers::update_auto_open),
-        )
         // Getting-started examples (download + run/stream + stop)
         .route(
             "/v1/examples/status",
@@ -167,6 +158,12 @@ mod tests {
         assert!(html.contains("Getting Started"));
         assert!(html.contains("id=\"download-btn\""));
         assert!(html.contains("set-auto-open"));
+        assert!(!html.contains("/v1/config/"));
+
+        for path in ["/v1/config/https", "/v1/config/auto-open"] {
+            let response = client.put(format!("{base}{path}")).send().await.unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND, "{path}");
+        }
 
         let v: serde_json::Value = client
             .get(format!("{base}/status.json"))

@@ -16,6 +16,7 @@ pub mod notify;
 pub mod observations;
 pub mod protocol_detect;
 pub mod route_table;
+pub mod secure_file;
 pub mod tls;
 
 /// Install rustls' process-wide crypto provider.

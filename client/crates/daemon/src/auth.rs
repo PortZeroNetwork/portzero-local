@@ -130,7 +130,7 @@ pub fn save_browser_login_credentials(credentials: &BrowserLoginCredentials) -> 
     let config_dir = dirs::home_dir()
         .map(|h| h.join(".portzero"))
         .unwrap_or_else(|| PathBuf::from(".portzero"));
-    std::fs::create_dir_all(&config_dir)?;
+    crate::secure_file::ensure_private_dir(&config_dir)?;
 
     let auth_file = AuthFile {
         email: Some(credentials.email.clone()),
@@ -140,14 +140,7 @@ pub fn save_browser_login_credentials(credentials: &BrowserLoginCredentials) -> 
     };
     let json = serde_json::to_string_pretty(&auth_file)?;
     let auth_path = config_dir.join("auth.json");
-    std::fs::write(&auth_path, json)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(&auth_path, perms).ok();
-    }
+    crate::secure_file::write_secret_atomic(&auth_path, json.as_bytes())?;
 
     Ok(())
 }
@@ -295,7 +288,7 @@ impl AuthConfig {
 
     /// Save an auth token to disk.
     pub fn save_token(&mut self, token: &str) -> Result<()> {
-        std::fs::create_dir_all(&self.config_dir)?;
+        crate::secure_file::ensure_private_dir(&self.config_dir)?;
         let auth_file = AuthFile {
             email: None,
             token: Some(token.to_string()),
@@ -303,7 +296,10 @@ impl AuthConfig {
             username: self.username.clone(),
         };
         let json = serde_json::to_string_pretty(&auth_file)?;
-        std::fs::write(self.config_dir.join("auth.json"), json)?;
+        crate::secure_file::write_secret_atomic(
+            &self.config_dir.join("auth.json"),
+            json.as_bytes(),
+        )?;
         self.token = Some(token.to_string());
         Ok(())
     }

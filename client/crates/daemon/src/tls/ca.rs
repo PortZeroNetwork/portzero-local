@@ -64,7 +64,7 @@ impl LocalCa {
     /// the files are absent or within [`RENEW_WITHIN_DAYS`] of expiry.
     pub fn load_or_create() -> Result<Self> {
         let dir = data_dir()?;
-        std::fs::create_dir_all(&dir)
+        crate::secure_file::ensure_private_dir(&dir)
             .with_context(|| format!("create PortZero data dir: {}", dir.display()))?;
 
         if is_fresh(&dir) && has_browser_tls_usages(&dir) {
@@ -212,11 +212,18 @@ fn save(ca: &LocalCa, expiry: OffsetDateTime, dir: &Path) -> Result<()> {
     // crash mid-write) never sees a truncated or half-written cert. Key written
     // first with restricted permissions; if this fails the cert files are never
     // written so the bundle stays consistent on retry.
-    write_private_atomic(&dir.join(WILDCARD_KEY), ca.wildcard_key_pem.as_bytes())?;
-    write_atomic(&dir.join(CA_CERT), ca.ca_cert_pem.as_bytes()).context("write ca.crt")?;
-    write_atomic(&dir.join(WILDCARD_CERT), ca.wildcard_cert_pem.as_bytes())
-        .context("write wildcard.crt")?;
-    write_atomic(
+    crate::secure_file::write_secret_atomic(
+        &dir.join(WILDCARD_KEY),
+        ca.wildcard_key_pem.as_bytes(),
+    )?;
+    crate::secure_file::write_public_atomic(&dir.join(CA_CERT), ca.ca_cert_pem.as_bytes())
+        .context("write ca.crt")?;
+    crate::secure_file::write_public_atomic(
+        &dir.join(WILDCARD_CERT),
+        ca.wildcard_cert_pem.as_bytes(),
+    )
+    .context("write wildcard.crt")?;
+    crate::secure_file::write_public_atomic(
         &dir.join(WILDCARD_EXPIRY),
         expiry
             .format(&Rfc3339)
@@ -224,23 +231,6 @@ fn save(ca: &LocalCa, expiry: OffsetDateTime, dir: &Path) -> Result<()> {
             .as_bytes(),
     )
     .context("write wildcard.expiry")?;
-    Ok(())
-}
-
-/// Path for the temporary sibling file used by the atomic-write helpers.
-fn tmp_path(path: &Path) -> PathBuf {
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(".tmp");
-    path.with_file_name(name)
-}
-
-/// Write `content` to `path` atomically: write a sibling temp file, then rename
-/// it over `path`. On the same filesystem the rename is atomic.
-fn write_atomic(path: &Path, content: &[u8]) -> Result<()> {
-    let tmp = tmp_path(path);
-    std::fs::write(&tmp, content).with_context(|| format!("write {}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
     Ok(())
 }
 
@@ -344,7 +334,7 @@ fn dir_ca_is_name_constrained(dir: &Path) -> bool {
 /// A fresh install (no CA on disk yet) generates a constrained CA and returns
 /// `false`: that is the normal first-run path, not a migration.
 fn ensure_name_constrained_in(dir: &Path) -> Result<bool> {
-    std::fs::create_dir_all(dir)
+    crate::secure_file::ensure_private_dir(dir)
         .with_context(|| format!("create PortZero data dir: {}", dir.display()))?;
 
     let ca_exists = dir.join(CA_CERT).exists();
@@ -371,37 +361,6 @@ fn make_dn(common_name: &str, org: Option<&str>) -> DistinguishedName {
         dn.push(DnType::OrganizationName, o);
     }
     dn
-}
-
-/// Write `content` to `path` atomically with owner-only read/write permissions.
-///
-/// On Unix the temp file is created mode 0o600 before the rename, so the key is
-/// never briefly world-readable.  On other platforms falls back to a plain
-/// atomic write (Windows ACLs are handled separately by the trust store
-/// installer).
-fn write_private_atomic(path: &Path, content: &[u8]) -> Result<()> {
-    let tmp = tmp_path(path);
-    #[cfg(unix)]
-    {
-        use std::io::Write as _;
-        use std::os::unix::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)
-            .with_context(|| format!("open {} for writing", tmp.display()))?
-            .write_all(content)
-            .with_context(|| format!("write {}", tmp.display()))?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(&tmp, content).with_context(|| format!("write {}", tmp.display()))?;
-    }
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -543,7 +502,7 @@ mod tests {
         use std::os::unix::fs::MetadataExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("key.pem");
-        write_private_atomic(&path, b"test").unwrap();
+        crate::secure_file::write_secret_atomic(&path, b"test").unwrap();
         let mode = std::fs::metadata(&path).unwrap().mode();
         assert_eq!(
             mode & 0o777,

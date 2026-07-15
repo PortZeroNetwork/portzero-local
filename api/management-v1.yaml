@@ -64,7 +64,7 @@ paths:
       description: |-
         Registers one or more `local_port` → `domain` mappings for the calling process. If the process already has registrations they are **replaced** atomically by this call.
 
-        The daemon resolves the caller's PID from the TCP source port of this connection, then verifies that the PID is listening on every `local_port` listed. Any port that fails verification causes the entire request to be rejected.
+        The daemon resolves the caller's PID from the TCP source port of this connection, then verifies that the PID is listening on every `local_port` listed. Any port that fails verification causes the entire request to be rejected. Domains must be non-reserved subdomains of `portzero.local`; cloud tunnel domains cannot be registered through this API.
       operationId: registerPorts
       requestBody:
         content:
@@ -73,9 +73,9 @@ paths:
               $ref: '#/components/schemas/RegisterRequest'
             example:
               ports:
-              - domain: api.alice.tunnel.portzero.cloud
+              - domain: api.myapp.portzero.local
                 local_port: 8080
-              - domain: metrics.alice.tunnel.portzero.cloud
+              - domain: metrics.myapp.portzero.local
                 local_port: 9090
         required: true
       responses:
@@ -159,9 +159,9 @@ paths:
               example:
                 pid: 12345
                 ports:
-                - domain: api.alice.tunnel.portzero.cloud
+                - domain: api.myapp.portzero.local
                   local_port: 8080
-                - domain: metrics.alice.tunnel.portzero.cloud
+                - domain: metrics.myapp.portzero.local
                   local_port: 9090
         '404':
           description: No registrations found for this process
@@ -300,12 +300,9 @@ components:
         domain:
           type: string
           description: |-
-            Full domain name to map to this port. Accepted patterns:
-            `*.portzero.local` for local overlay-only resolution, or
-            `*.<cloud-username>.tunnel.portzero.cloud` for a cloud-proxied tunnel domain.
-          examples:
-          - api.alice.tunnel.portzero.cloud
-          - myservice.portzero.local
+            Full local-overlay domain to map to this port. It must be a non-reserved
+            subdomain of `portzero.local`.
+          example: myservice.portzero.local
         local_port:
           type: integer
           format: int32
@@ -327,6 +324,7 @@ components:
           description: |-
             One or more port→domain mappings to register. All existing
             registrations for this PID are replaced atomically.
+          maxItems: 64
           minItems: 1
     RegisterResponse:
       type: object

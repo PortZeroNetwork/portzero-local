@@ -61,11 +61,8 @@ pub async fn dns_query_a(dns_addr: SocketAddr, name: &str) -> Option<Ipv4Addr> {
     let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     sock.connect(dns_addr).await.unwrap();
 
-    let mut req = Message::new();
-    req.set_id(0x1234);
-    req.set_message_type(MessageType::Query);
-    req.set_op_code(OpCode::Query);
-    req.set_recursion_desired(true);
+    let mut req = Message::new(0x1234, MessageType::Query, OpCode::Query);
+    req.metadata.recursion_desired = true;
     let mut q = hickory_proto::op::Query::new();
     q.set_name(Name::from_str(name).unwrap());
     q.set_query_type(RecordType::A);
@@ -82,8 +79,8 @@ pub async fn dns_query_a(dns_addr: SocketAddr, name: &str) -> Option<Ipv4Addr> {
         .expect("DNS recv failed");
 
     let resp = Message::from_bytes(&buf[..n]).unwrap();
-    for ans in resp.answers() {
-        if let Some(RData::A(a)) = ans.data() {
+    for ans in &resp.answers {
+        if let RData::A(a) = &ans.data {
             return Some(a.0);
         }
     }

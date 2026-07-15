@@ -276,10 +276,10 @@ fn has_unresolved_overlay_query(data: &[u8], services: &ServiceTable) -> bool {
         Ok(m) => m,
         Err(_) => return false,
     };
-    if msg.op_code() != OpCode::Query {
+    if msg.metadata.op_code != OpCode::Query {
         return false;
     }
-    msg.queries().iter().any(|q| {
+    msg.queries.iter().any(|q| {
         q.query_class() == DNSClass::IN
             && q.query_type() == RecordType::A
             && is_portzero_local(q.name())
@@ -296,12 +296,12 @@ fn reserve_unresolved_overlay_queries(
         Ok(m) => m,
         Err(_) => return false,
     };
-    if msg.op_code() != OpCode::Query {
+    if msg.metadata.op_code != OpCode::Query {
         return false;
     }
 
     let mut reserved = false;
-    for q in msg.queries() {
+    for q in &msg.queries {
         if q.query_class() == DNSClass::IN
             && q.query_type() == RecordType::A
             && is_portzero_local(q.name())
@@ -322,46 +322,38 @@ fn handle_query_with_services(data: &[u8], services: &ServiceTable) -> Option<Ve
         Err(_) => return None,
     };
 
-    if msg.op_code() != OpCode::Query {
+    if msg.metadata.op_code != OpCode::Query {
         return None;
     }
 
-    let mut out = Message::new();
-    out.set_id(msg.id());
-    out.set_message_type(MessageType::Response);
-    out.set_op_code(OpCode::Query);
-    out.set_recursion_desired(msg.recursion_desired());
-    out.set_recursion_available(true);
-    out.set_authoritative(true);
-    out.set_response_code(ResponseCode::NoError);
+    let mut out = Message::new(msg.metadata.id, MessageType::Response, OpCode::Query);
+    out.metadata.recursion_desired = msg.metadata.recursion_desired;
+    out.metadata.recursion_available = true;
+    out.metadata.authoritative = true;
+    out.metadata.response_code = ResponseCode::NoError;
 
-    for q in msg.queries() {
+    for q in &msg.queries {
         let name = q.name().clone();
         if q.query_class() != DNSClass::IN {
-            out.set_response_code(ResponseCode::NotImp);
+            out.metadata.response_code = ResponseCode::NotImp;
             continue;
         }
 
         if q.query_type() == RecordType::A {
             if let Some(ip) = resolve_name_to_vip(&name, services) {
-                let mut rec = Record::new();
-                rec.set_name(name.clone());
-                rec.set_rr_type(RecordType::A);
-                rec.set_dns_class(DNSClass::IN);
-                rec.set_ttl(5);
-                rec.set_data(Some(RData::A(ip.into())));
+                let rec = Record::from_rdata(name.clone(), 5, RData::A(ip.into()));
                 out.add_answer(rec);
-                out.set_response_code(ResponseCode::NoError);
+                out.metadata.response_code = ResponseCode::NoError;
             } else if is_portzero_local(&name) {
-                out.set_response_code(ResponseCode::NXDomain);
+                out.metadata.response_code = ResponseCode::NXDomain;
             }
         } else if is_portzero_local(&name) && resolve_name_to_vip(&name, services).is_none() {
-            out.set_response_code(ResponseCode::NXDomain);
+            out.metadata.response_code = ResponseCode::NXDomain;
         }
     }
 
     // Add the original question
-    for q in msg.queries() {
+    for q in &msg.queries {
         out.add_query(q.clone());
     }
 
@@ -370,8 +362,8 @@ fn handle_query_with_services(data: &[u8], services: &ServiceTable) -> Option<Ve
     // service hasn't been discovered yet (an immediate rescan is already in
     // flight), so the client's next attempt must hit us again rather than a
     // cached NXDOMAIN.
-    if out.response_code() == ResponseCode::NXDomain {
-        out.add_name_server(portzero_zero_ttl_soa());
+    if out.metadata.response_code == ResponseCode::NXDomain {
+        out.add_authority(portzero_zero_ttl_soa());
     }
 
     out.to_bytes().ok()
@@ -384,13 +376,7 @@ fn portzero_zero_ttl_soa() -> Record {
     let mname = zone.clone();
     let rname = Name::from_ascii("hostmaster.portzero.local.").unwrap_or_else(|_| Name::root());
     let soa = SOA::new(mname, rname, 1, 3600, 600, 86400, 0);
-    let mut rec = Record::new();
-    rec.set_name(zone);
-    rec.set_rr_type(RecordType::SOA);
-    rec.set_dns_class(DNSClass::IN);
-    rec.set_ttl(0);
-    rec.set_data(Some(RData::SOA(soa)));
-    rec
+    Record::from_rdata(zone, 0, RData::SOA(soa))
 }
 
 fn is_portzero_local(name: &Name) -> bool {
@@ -471,10 +457,7 @@ mod tests {
         q.set_name(Name::from_ascii(name).unwrap());
         q.set_query_type(RecordType::A);
         q.set_query_class(DNSClass::IN);
-        let mut msg = Message::new();
-        msg.set_id(1);
-        msg.set_message_type(MessageType::Query);
-        msg.set_op_code(OpCode::Query);
+        let mut msg = Message::new(1, MessageType::Query, OpCode::Query);
         msg.add_query(q);
         msg.to_bytes().unwrap()
     }
@@ -492,8 +475,8 @@ mod tests {
 
     fn first_a_record(resp: &[u8]) -> Option<Ipv4Addr> {
         let msg = Message::from_bytes(resp).unwrap();
-        msg.answers().iter().find_map(|r| match r.data() {
-            Some(RData::A(ip)) => Some(Ipv4Addr::from(*ip)),
+        msg.answers.iter().find_map(|r| match &r.data {
+            RData::A(ip) => Some(Ipv4Addr::from(*ip)),
             _ => None,
         })
     }
@@ -531,17 +514,13 @@ mod tests {
         )
         .expect("response");
         let msg = Message::from_bytes(&resp).unwrap();
-        assert_eq!(msg.response_code(), ResponseCode::NXDomain);
+        assert_eq!(msg.metadata.response_code, ResponseCode::NXDomain);
         let soa = msg
-            .name_servers()
+            .authorities
             .iter()
             .find(|r| r.record_type() == RecordType::SOA)
             .expect("NXDOMAIN must include an SOA so the miss is not negatively cached");
-        assert_eq!(
-            soa.ttl(),
-            0,
-            "SOA TTL must be 0 to disable negative caching"
-        );
+        assert_eq!(soa.ttl, 0, "SOA TTL must be 0 to disable negative caching");
     }
 
     #[test]
@@ -550,11 +529,9 @@ mod tests {
             handle_query_with_services(&a_query_bytes("foo.portzero.local."), &table_with("foo"))
                 .expect("response");
         let msg = Message::from_bytes(&resp).unwrap();
-        assert_eq!(msg.response_code(), ResponseCode::NoError);
+        assert_eq!(msg.metadata.response_code, ResponseCode::NoError);
         assert!(
-            msg.answers()
-                .iter()
-                .any(|r| r.record_type() == RecordType::A),
+            msg.answers.iter().any(|r| r.record_type() == RecordType::A),
             "a registered service must return an A record"
         );
     }
@@ -643,7 +620,10 @@ mod tests {
             Some(Ipv4Addr::from(service.vip.0))
         );
         assert_eq!(
-            Message::from_bytes(&user_resp).unwrap().response_code(),
+            Message::from_bytes(&user_resp)
+                .unwrap()
+                .metadata
+                .response_code,
             ResponseCode::NXDomain
         );
     }
@@ -659,11 +639,9 @@ mod tests {
             .await
             .expect("response");
         let msg = Message::from_bytes(&resp).unwrap();
-        assert_eq!(msg.response_code(), ResponseCode::NoError);
+        assert_eq!(msg.metadata.response_code, ResponseCode::NoError);
         assert!(
-            msg.answers()
-                .iter()
-                .any(|r| r.record_type() == RecordType::A),
+            msg.answers.iter().any(|r| r.record_type() == RecordType::A),
             "proactive mode must answer with the reserved VIP immediately"
         );
 
@@ -683,7 +661,7 @@ mod tests {
             .await
             .expect("response");
         let msg = Message::from_bytes(&resp).unwrap();
-        assert_eq!(msg.response_code(), ResponseCode::NoError);
+        assert_eq!(msg.metadata.response_code, ResponseCode::NoError);
 
         let guard = services.read().await;
         assert!(guard.assigned_vip("staging").is_none());

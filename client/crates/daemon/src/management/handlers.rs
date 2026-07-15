@@ -13,8 +13,15 @@ use utoipa::ToSchema;
 use crate::management::pid_lookup;
 use crate::management::port_verify;
 use crate::management::server::{AppState, PortRegistration};
-use crate::net::stack::OverlayHttpsPolicy;
 use crate::route_table::OverlayState;
+
+const MAX_REGISTRATIONS_PER_PROCESS: usize = 64;
+const RESERVED_REGISTRATION_NAMES: &[&str] = &[
+    "portzero.local",
+    "api.portzero.local",
+    "portzero.portzero.local",
+    "portzero-api.portzero.local",
+];
 
 mod dashboard;
 pub use dashboard::{
@@ -30,7 +37,7 @@ pub use examples::{
 pub struct RegisterRequest {
     /// One or more port→domain mappings to register. All existing
     /// registrations for this PID are replaced atomically.
-    #[schema(min_items = 1)]
+    #[schema(min_items = 1, max_items = 64)]
     pub ports: Vec<PortRegistration>,
 }
 
@@ -116,20 +123,6 @@ pub struct ErrorResponse {
     error: &'static str,
     /// Human-readable message with additional detail.
     detail: String,
-}
-
-/// Partial or full update for the HTTPS policy that controls *.portzero.local behavior.
-#[derive(Debug, Deserialize, ToSchema, Default)]
-pub struct HttpsPolicyUpdate {
-    pub enable_for_port_80: Option<bool>,
-    pub redirect_port_80: Option<bool>,
-    pub passthrough_port_443: Option<bool>,
-}
-
-/// Update for the "open a browser tab when an HTTP/HTTPS tunnel appears" setting.
-#[derive(Debug, Deserialize, ToSchema)]
-pub struct AutoOpenUpdate {
-    pub enabled: bool,
 }
 
 /// Resolve the source port from the connecting address to a PID.
@@ -219,13 +212,14 @@ fn read_cloud_state(
         The daemon resolves the caller's PID from the TCP source port of this \
         connection, then verifies that the PID is listening on every \
         `local_port` listed. Any port that fails verification causes the entire \
-        request to be rejected.",
+        request to be rejected. Domains must be non-reserved subdomains of \
+        `portzero.local`; cloud tunnel domains cannot be registered through this API.",
     request_body(
         content = RegisterRequest,
         example = json!({
             "ports": [
-                {"local_port": 8080, "domain": "api.alice.tunnel.portzero.cloud"},
-                {"local_port": 9090, "domain": "metrics.alice.tunnel.portzero.cloud"}
+                {"local_port": 8080, "domain": "api.myapp.portzero.local"},
+                {"local_port": 9090, "domain": "metrics.myapp.portzero.local"}
             ]
         })
     ),
@@ -241,10 +235,31 @@ fn read_cloud_state(
 pub async fn register(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Json(body): Json<RegisterRequest>,
+    Json(mut body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<RegisterResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let pid = resolve_pid(&addr)?;
+    if let Err(detail) = validate_registration_count(body.ports.len()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid_registration_count",
+                detail,
+            }),
+        ));
+    }
 
+    for reg in &mut body.ports {
+        reg.domain = canonical_registration_domain(&reg.domain).map_err(|detail| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "invalid_domain",
+                    detail,
+                }),
+            )
+        })?;
+    }
+
+    let pid = resolve_pid(&addr)?;
     for reg in &body.ports {
         if !port_verify::pid_is_listening_on(pid, reg.local_port) {
             tracing::warn!(
@@ -273,6 +288,44 @@ pub async fn register(
             registered: count,
         }),
     ))
+}
+
+fn validate_registration_count(count: usize) -> Result<(), String> {
+    if (1..=MAX_REGISTRATIONS_PER_PROCESS).contains(&count) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Provide between 1 and {MAX_REGISTRATIONS_PER_PROCESS} port registrations"
+        ))
+    }
+}
+
+fn canonical_registration_domain(raw: &str) -> Result<String, String> {
+    let domain = raw.trim().to_ascii_lowercase();
+    if RESERVED_REGISTRATION_NAMES.contains(&domain.as_str()) {
+        return Err(format!("'{domain}' is reserved for portzero management"));
+    }
+    let Some(prefix) = domain.strip_suffix(".portzero.local") else {
+        return Err("domain must be a subdomain of portzero.local".to_string());
+    };
+    if prefix.is_empty() || domain.len() > 253 {
+        return Err(
+            "domain must contain a non-empty subdomain and be at most 253 bytes".to_string(),
+        );
+    }
+    for label in prefix.split('.') {
+        let valid = !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+        if !valid {
+            return Err(format!("'{domain}' is not a valid DNS name"));
+        }
+    }
+    Ok(domain)
 }
 
 /// DELETE /v1/register — remove the registration for the calling process.
@@ -336,8 +389,8 @@ pub async fn deregister(
             example = json!({
                 "pid": 12345,
                 "ports": [
-                    {"local_port": 8080, "domain": "api.alice.tunnel.portzero.cloud"},
-                    {"local_port": 9090, "domain": "metrics.alice.tunnel.portzero.cloud"}
+                    {"local_port": 8080, "domain": "api.myapp.portzero.local"},
+                    {"local_port": 9090, "domain": "metrics.myapp.portzero.local"}
                 ]
             })),
         (status = 404, description = "No registrations found for this process", body = ErrorResponse,
@@ -429,67 +482,60 @@ pub async fn daemon_status(State(state): State<AppState>) -> Json<DaemonStatusRe
     })
 }
 
-/// PUT /v1/config/https — update the overlay HTTPS policy persisted in config.toml.
-/// The change is written to disk. The running daemon polls the file and applies
-/// the new policy within a few seconds. Existing connections are not dropped;
-/// only new connection decisions and listener presence are affected.
-pub async fn update_https_policy(
-    State(_state): State<AppState>,
-    Json(body): Json<HttpsPolicyUpdate>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let current = crate::discovery_loop::DaemonConfig::load().overlay_https;
-    let policy = OverlayHttpsPolicy {
-        enable_for_port_80: body
-            .enable_for_port_80
-            .unwrap_or(current.enable_for_port_80),
-        redirect_port_80: body.redirect_port_80.unwrap_or(current.redirect_port_80),
-        passthrough_port_443: body
-            .passthrough_port_443
-            .unwrap_or(current.passthrough_port_443),
-    };
-
-    if let Err(e) = crate::discovery_loop::DaemonConfig::load().write_https_policy(policy) {
-        tracing::warn!(?e, "failed to write https policy");
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "config_write_failed",
-                detail: format!("Failed to persist config: {e}"),
-            }),
-        ));
-    }
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// PUT /v1/config/auto-open — toggle auto-opening a browser tab when a new
-/// HTTP/HTTPS local tunnel appears. Persisted to config.toml; the running daemon
-/// picks it up on its next config-reload poll.
-pub async fn update_auto_open(
-    State(_state): State<AppState>,
-    Json(body): Json<AutoOpenUpdate>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    if let Err(e) =
-        crate::discovery_loop::DaemonConfig::load().write_auto_open_http_tunnels(body.enabled)
-    {
-        tracing::warn!(?e, "failed to write auto_open_http_tunnels");
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "config_write_failed",
-                detail: format!("Failed to persist config: {e}"),
-            }),
-        ));
-    }
-    Ok(StatusCode::NO_CONTENT)
-}
-
 #[cfg(test)]
 mod tests {
     use super::dashboard::{
         add_duplicate_route_alerts, has_dns_token, local_service_link_url, read_issues,
         substitution_alerts,
     };
+    use super::{canonical_registration_domain, validate_registration_count};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn registration_count_must_be_between_one_and_sixty_four() {
+        assert!(validate_registration_count(0).is_err());
+        assert!(validate_registration_count(1).is_ok());
+        assert!(validate_registration_count(64).is_ok());
+        assert!(validate_registration_count(65).is_err());
+    }
+
+    #[test]
+    fn registration_domains_are_canonical_and_management_names_are_reserved() {
+        assert_eq!(
+            canonical_registration_domain(" API.Dev.PortZero.Local ").unwrap(),
+            "api.dev.portzero.local"
+        );
+        for domain in [
+            "portzero.local",
+            "api.portzero.local",
+            "portzero.portzero.local",
+            "portzero-api.portzero.local",
+        ] {
+            assert!(canonical_registration_domain(domain).is_err(), "{domain}");
+        }
+    }
+
+    #[test]
+    fn registration_domains_reject_non_overlay_invalid_and_oversized_names() {
+        let long_label = "a".repeat(64);
+        let valid_long_label = "a".repeat(60);
+        let long_domain = format!(
+            "{}.portzero.local",
+            [valid_long_label.as_str(); 4].join(".")
+        );
+        for domain in [
+            "example.com".to_string(),
+            "x.local".to_string(),
+            ".portzero.local".to_string(),
+            "-x.portzero.local".to_string(),
+            "x-.portzero.local".to_string(),
+            "x_.portzero.local".to_string(),
+            format!("{long_label}.portzero.local"),
+            long_domain,
+        ] {
+            assert!(canonical_registration_domain(&domain).is_err(), "{domain}");
+        }
+    }
 
     #[test]
     fn local_service_link_url_uses_scheme_for_web_port() {

@@ -139,31 +139,31 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
   <section class="section" id="settings" aria-labelledby="settings-title">
     <div class="section-head">
       <h2 id="settings-title">Settings</h2>
-      <p class="section-note">Saved to ~/.portzero/config.toml and applied live.</p>
+      <p class="section-note">Read-only. Change settings in the tray app or ~/.portzero/config.toml.</p>
     </div>
     <div class="settings">
       <label>
-        <input type="checkbox" id="set-auto-open">
+        <input type="checkbox" id="set-auto-open" disabled>
         <span class="setting-body">
           <span class="setting-title">Open a browser tab when a web tunnel appears</span>
           <span class="hint">When an app starts serving on http (port 80) or https (port 443) at a <code>*.portzero.local</code> name, open it automatically. On by default.</span>
         </span>
       </label>
       <label>
-        <input type="checkbox" id="set-https-80">
+        <input type="checkbox" id="set-https-80" disabled>
         <span class="setting-body">
           <span class="setting-title">Enable HTTPS (port 443) for backends on port 80</span>
           <span class="hint">We add the local CA to trust stores on install (best-effort). If HTTPS doesn't fully work in your browser, Cloud tunnels always do.</span>
         </span>
       </label>
       <label>
-        <input type="checkbox" id="set-https-redirect">
+        <input type="checkbox" id="set-https-redirect" disabled>
         <span class="setting-body">
           <span class="setting-title">Redirect HTTP (port 80) → HTTPS</span>
         </span>
       </label>
       <label>
-        <input type="checkbox" id="set-https-passthrough">
+        <input type="checkbox" id="set-https-passthrough" disabled>
         <span class="setting-body">
           <span class="setting-title">Passthrough TLS on port 443 when the backend speaks TLS</span>
         </span>
@@ -235,7 +235,6 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
 </main>
 <script>
 let latestData=null;
-let settingsBound=false;
 let activeRun=null; // {id, es}
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
@@ -255,26 +254,6 @@ function exampleRunnable(d,ex){
 }
 
 // ---- Settings ----
-async function putJson(url,body){
-  try{
-    const r=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!r.ok) console.warn('PUT '+url+' failed',r.status);
-  }catch(e){console.warn('PUT '+url+' error',e)}
-  setTimeout(load,150);
-}
-function bindSettings(){
-  if(settingsBound) return;
-  settingsBound=true;
-  document.getElementById('set-auto-open').addEventListener('change',function(){
-    putJson('/v1/config/auto-open',{enabled:this.checked});
-  });
-  const https=[['set-https-80','enable_for_port_80'],['set-https-redirect','redirect_port_80'],['set-https-passthrough','passthrough_port_443']];
-  https.forEach(function(pair){
-    document.getElementById(pair[0]).addEventListener('change',function(){
-      const patch={};patch[pair[1]]=this.checked;putJson('/v1/config/https',patch);
-    });
-  });
-}
 function renderSettings(d){
   const hp=d.https_policy||{};
   const set=function(id,v){const el=document.getElementById(id);if(el&&document.activeElement!==el) el.checked=!!v};
@@ -542,7 +521,6 @@ function renderIssues(d){
 // ---- Main ----
 function render(d){
   latestData=d;
-  bindSettings();
   document.getElementById('hdr-meta').textContent=d.daemon_pid?'pid '+d.daemon_pid:'local daemon';
   document.getElementById('hdr-ts').textContent='Updated '+new Date().toLocaleTimeString();
   renderSettings(d);

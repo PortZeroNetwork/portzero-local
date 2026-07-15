@@ -13,10 +13,14 @@ use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use portzero_proto::{ClientMessage, ServerMessage};
 use portzero_tunnel_client::domain_router::DomainRouter;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore};
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::forwarder;
+
+const MAX_INCOMING_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_CONCURRENT_FORWARDS: usize = 32;
 
 /// Cloud connector state.
 pub struct CloudConnector {
@@ -135,16 +139,23 @@ impl CloudConnector {
     pub async fn connect(&mut self, domain_router: DomainRouter) -> Result<()> {
         tracing::info!("Connecting to edge server at {}", self.edge_url);
 
-        let (ws_stream, _) = tokio_tungstenite::connect_async(&self.edge_url)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to connect to edge server at {}.\n\n\
+        let mut websocket_config = WebSocketConfig::default();
+        websocket_config.max_message_size = Some(MAX_INCOMING_MESSAGE_BYTES);
+        websocket_config.max_frame_size = Some(MAX_INCOMING_MESSAGE_BYTES);
+        let (ws_stream, _) = tokio_tungstenite::connect_async_with_config(
+            &self.edge_url,
+            Some(websocket_config),
+            false,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to connect to edge server at {}.\n\n\
                      Check your internet connection and that the edge server is running.\n\
                      The daemon will continue in local-only mode.",
-                    self.edge_url
-                )
-            })?;
+                self.edge_url
+            )
+        })?;
 
         let (mut ws_sink, mut ws_stream_rx) = ws_stream.split();
 
@@ -192,6 +203,7 @@ impl CloudConnector {
         let route_statuses_for_reader = Arc::clone(&self.route_statuses);
         let status_path_for_reader = Arc::clone(&self.status_path);
         let observations_for_reader = self.observations.lock().ok().and_then(|g| g.clone());
+        let forward_slots = Arc::new(Semaphore::new(MAX_CONCURRENT_FORWARDS));
         tokio::spawn(async move {
             while let Some(msg_result) = ws_stream_rx.next().await {
                 let msg = match msg_result {
@@ -219,6 +231,38 @@ impl CloudConnector {
                         continue;
                     }
                 };
+
+                if let ServerMessage::HttpRequest { request_id, .. } = &server_msg {
+                    let request_id = *request_id;
+                    let permit = match Arc::clone(&forward_slots).try_acquire_owned() {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            let _ = tx_for_reader.try_send(overloaded_response(request_id));
+                            continue;
+                        }
+                    };
+                    let router = domain_router.clone();
+                    let observations = observations_for_reader.clone();
+                    let response_tx = tx_for_reader.clone();
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        match handle_incoming(server_msg, &router, observations.as_ref()).await {
+                            Ok(Some(response)) => {
+                                if let Err(error) = response_tx.send(response).await {
+                                    tracing::error!("Failed to queue response: {error}");
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                tracing::error!("Error handling incoming request: {error}");
+                                let _ = response_tx
+                                    .send(forwarding_error_response(request_id))
+                                    .await;
+                            }
+                        }
+                    });
+                    continue;
+                }
 
                 // Capture plan (from Welcome) and friendly upsell / plan messages for the client UI.
                 // These drive "you need a paid plan" prompts when users try *.portzero.cloud on free.
@@ -439,6 +483,24 @@ impl CloudConnector {
         self.inbound_alive.store(false, Ordering::Relaxed);
         self.auth_failed.store(false, Ordering::Relaxed);
         self.connect(domain_router).await
+    }
+}
+
+fn overloaded_response(request_id: u64) -> ClientMessage {
+    ClientMessage::HttpResponse {
+        request_id,
+        status: 503,
+        headers: vec![("Content-Type".into(), "text/plain".into())],
+        body: b"Tunnel forwarding concurrency limit reached".to_vec(),
+    }
+}
+
+fn forwarding_error_response(request_id: u64) -> ClientMessage {
+    ClientMessage::HttpResponse {
+        request_id,
+        status: 502,
+        headers: vec![("Content-Type".into(), "text/plain".into())],
+        body: b"No local process is available for this tunnel".to_vec(),
     }
 }
 

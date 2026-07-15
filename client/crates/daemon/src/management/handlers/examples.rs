@@ -148,7 +148,13 @@ pub async fn examples_status(State(state): State<AppState>) -> Json<serde_json::
 
 /// Shared shape used by both `examples_status` and `/status.json`.
 pub async fn status_value(state: &AppState) -> serde_json::Value {
-    let running: Vec<String> = state.running_examples.lock().await.keys().cloned().collect();
+    let running: Vec<String> = state
+        .running_examples
+        .lock()
+        .await
+        .keys()
+        .cloned()
+        .collect();
     serde_json::json!({
         "downloaded": is_downloaded(),
         "dir": examples_dir_display(),
@@ -329,7 +335,10 @@ async fn spawn_streaming_example(
 
     // Echo the commands the user is running, so the console reads like a shell.
     let _ = tx
-        .send(line_event(format!("$ cd {}", examples_display_path(&rel_path))))
+        .send(line_event(format!(
+            "$ cd {}",
+            examples_display_path(&rel_path)
+        )))
         .await;
     let _ = tx.send(line_event(format!("$ {command}"))).await;
 
@@ -479,7 +488,10 @@ mod tests {
         let ex = find_example("python/process").expect("python/process example");
         let cmd = os_command(&ex).expect("has an OS command");
         assert!(cmd.contains("PZ_TUNNEL"), "command was: {cmd}");
-        assert!(!cmd.contains("just "), "command should not hide behind just: {cmd}");
+        assert!(
+            !cmd.contains("just "),
+            "command should not hide behind just: {cmd}"
+        );
     }
 
     #[test]
