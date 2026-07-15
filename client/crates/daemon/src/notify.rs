@@ -235,10 +235,6 @@ impl IssuesState {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Unified problem list (issues.json + diagnostics.json)
-// ---------------------------------------------------------------------------
-
 /// A single problem the daemon wants to surface to the user, regardless of
 /// whether it came from passive discovery (`issues.json`) or an active
 /// diagnostics run (`diagnostics.json`). This is the single source of truth
@@ -309,10 +305,6 @@ pub fn collect_problems(
     problems
 }
 
-// ---------------------------------------------------------------------------
-// Detection (pure)
-// ---------------------------------------------------------------------------
-
 /// Render a claimant description for a discovered overlay service. Uses the
 /// existing `ServiceSource` Display for processes (`(~/path)`) and containers.
 fn describe_claimant(svc: &DiscoveredNetworkService) -> String {
@@ -367,10 +359,6 @@ pub fn detect_duplicate_names(services: &[DiscoveredNetworkService]) -> Vec<Issu
     issues
 }
 
-// ---------------------------------------------------------------------------
-// Persisted issue state (file I/O)
-// ---------------------------------------------------------------------------
-
 /// Write the current issues to `path`. Best-effort: logs and ignores I/O errors.
 pub fn write_issues(path: &std::path::Path, state: &IssuesState) {
     if let Err(e) = std::fs::write(path, state.to_json()) {
@@ -386,10 +374,6 @@ pub fn read_issues(path: &std::path::Path) -> IssuesState {
         Err(_) => IssuesState::default(),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Native notifications (shell-out, best-effort)
-// ---------------------------------------------------------------------------
 
 /// The platform-specific command + arguments to display a desktop notification.
 /// Returned as data (not executed) so the construction is unit-testable.
@@ -508,10 +492,6 @@ pub fn send_notification(title: &str, body: &str) {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests (pure only — no shell-out, no notifications fired)
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

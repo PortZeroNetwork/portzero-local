@@ -5,8 +5,6 @@ pub fn pid_is_listening_on(pid: u32, port: u16) -> bool {
     pid_is_listening_impl(pid, port)
 }
 
-// ─── Linux ───────────────────────────────────────────────────────────────────
-
 #[cfg(target_os = "linux")]
 fn pid_is_listening_impl(pid: u32, port: u16) -> bool {
     // Parse /proc/{pid}/net/tcp and /proc/{pid}/net/tcp6.
@@ -42,8 +40,6 @@ fn pid_is_listening_impl(pid: u32, port: u16) -> bool {
     false
 }
 
-// ─── macOS ───────────────────────────────────────────────────────────────────
-
 #[cfg(target_os = "macos")]
 fn pid_is_listening_impl(pid: u32, port: u16) -> bool {
     use std::process::Command;
@@ -68,8 +64,6 @@ fn pid_is_listening_impl(pid: u32, port: u16) -> bool {
 
     output.status.success() && !output.stdout.is_empty()
 }
-
-// ─── Windows ─────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "windows")]
 fn pid_is_listening_impl(pid: u32, port: u16) -> bool {
@@ -104,8 +98,6 @@ fn pid_is_listening_impl(pid: u32, port: u16) -> bool {
     }
     false
 }
-
-// ─── Unsupported platforms ────────────────────────────────────────────────────
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn pid_is_listening_impl(_pid: u32, _port: u16) -> bool {

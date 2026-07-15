@@ -6,8 +6,6 @@ pub fn pid_for_source_port(source_port: u16) -> Option<u32> {
     pid_for_source_port_impl(source_port)
 }
 
-// ─── Linux ───────────────────────────────────────────────────────────────────
-
 #[cfg(target_os = "linux")]
 fn pid_for_source_port_impl(source_port: u16) -> Option<u32> {
     let inode = find_inode_for_port(source_port)?;
@@ -81,8 +79,6 @@ fn find_pid_for_inode(inode: u64) -> Option<u32> {
     None
 }
 
-// ─── macOS ───────────────────────────────────────────────────────────────────
-
 #[cfg(target_os = "macos")]
 fn pid_for_source_port_impl(source_port: u16) -> Option<u32> {
     use std::process::Command;
@@ -121,8 +117,6 @@ fn pid_for_source_port_impl(source_port: u16) -> Option<u32> {
     None
 }
 
-// ─── Windows ─────────────────────────────────────────────────────────────────
-
 #[cfg(target_os = "windows")]
 fn pid_for_source_port_impl(source_port: u16) -> Option<u32> {
     use std::process::Command;
@@ -157,16 +151,10 @@ fn pid_for_source_port_impl(source_port: u16) -> Option<u32> {
     None
 }
 
-// ─── Unsupported platforms ────────────────────────────────────────────────────
-
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn pid_for_source_port_impl(_source_port: u16) -> Option<u32> {
     None
 }
-
-// ---------------------------------------------------------------------------
-// PID liveness check
-// ---------------------------------------------------------------------------
 
 /// Return `true` if a process with the given PID is currently running.
 pub fn pid_is_alive(pid: u32) -> bool {

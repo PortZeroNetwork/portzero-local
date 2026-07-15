@@ -171,10 +171,6 @@ fn issue_sort_key(issue: &Issue) -> (u16, u32) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Docker port-bind conflict detection
-// ---------------------------------------------------------------------------
-
 /// Parse a Docker CLI/daemon error message and, if it indicates a host
 /// port-bind conflict, return the offending host port.
 ///
@@ -234,10 +230,6 @@ pub fn docker_conflict_issue(container: &str, port: u16) -> Issue {
         container: container.to_string(),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Impure wrapper (thin) — wires the pure core to real system enumeration
-// ---------------------------------------------------------------------------
 
 /// Scan the system for legacy listeners and return them as issues.
 ///
