@@ -230,8 +230,6 @@ mod tests {
         state.save(&config.overlay_path()).unwrap();
     }
 
-    // --- edge_status ---
-
     #[test]
     fn edge_status_none_when_no_file() {
         let config = temp_config("edge-none");
@@ -249,8 +247,6 @@ mod tests {
         );
         cleanup(&config);
     }
-
-    // --- probe() ---
 
     #[tokio::test]
     async fn probe_paused_short_circuits_before_lookup() {
@@ -309,8 +305,6 @@ mod tests {
         cleanup(&config);
     }
 
-    // --- poll_health() ---
-
     #[tokio::test]
     async fn poll_health_true_on_2xx() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -351,10 +345,10 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // --- wait_with_config() — only scenarios that resolve without a real
-    // sleep. A `--timeout 0` request means the deadline has already passed by
-    // the time the loop checks it, so the timeout branch fires on the first
-    // iteration without ever hitting `tokio::time::sleep`. ---
+    // wait_with_config(): only scenarios that resolve without a real sleep. A
+    // `--timeout 0` request means the deadline has already passed by the time
+    // the loop checks it, so the timeout branch fires on the first iteration
+    // without ever hitting `tokio::time::sleep`.
 
     #[tokio::test]
     async fn wait_bails_immediately_when_paused() {

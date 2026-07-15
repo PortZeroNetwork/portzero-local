@@ -238,10 +238,6 @@ fn tool_error(message: &str) -> Value {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Cloud-backed tools (portzero.cloud feedback threads)
-// ---------------------------------------------------------------------------
-
 /// Message returned when the cloud tools are used without `portzero login`.
 const NOT_LOGGED_IN: &str = "Not logged in. Run `portzero login` to authenticate.";
 
@@ -430,10 +426,6 @@ fn shape_feedback_thread(thread: &Value) -> Value {
     Value::Object(out)
 }
 
-// ---------------------------------------------------------------------------
-// Data gathering (shared shapes for every tool)
-// ---------------------------------------------------------------------------
-
 fn overview(config: &DaemonConfig) -> Value {
     json!({
         "daemon_running": read_daemon_pid(config).is_some(),
@@ -562,10 +554,6 @@ fn read_cloud_route_statuses(config: &DaemonConfig) -> std::collections::HashMap
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
 }
-
-// ---------------------------------------------------------------------------
-// JSON-RPC framing
-// ---------------------------------------------------------------------------
 
 fn success_response(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })

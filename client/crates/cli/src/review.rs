@@ -70,7 +70,6 @@ pub async fn run(
 
     let cwd = std::env::current_dir().context("Failed to determine the current directory")?;
 
-    // --- Resolve repo info ------------------------------------------------
     let base_ref = match base {
         Some(b) => b,
         None => detect_default_base(&cwd),
@@ -104,7 +103,6 @@ pub async fn run(
         git_output_raw(&cwd, &["diff", &range]).context("Failed to compute the branch diff")?;
     check_diff(&diff, commits.len())?;
 
-    // --- Resolve the tunnel domain hosting the live app --------------------
     let domain = match domain {
         Some(d) => d,
         None => {
@@ -114,7 +112,6 @@ pub async fn run(
         }
     };
 
-    // --- Upload -------------------------------------------------------------
     let body = json!({
         "project": project_name,
         "branch": branch,
@@ -152,7 +149,6 @@ pub async fn run(
         .await
         .context("Failed to parse the review record from the server response.")?;
 
-    // --- Report -------------------------------------------------------------
     println!("Review record {} uploaded.", record.id);
     println!("  branch:  {} (base {base_ref})", record.branch);
     println!(
@@ -178,10 +174,6 @@ pub async fn run(
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Git helpers
-// ---------------------------------------------------------------------------
 
 /// Run `git -C <cwd> <args…>` and return trimmed stdout, or a descriptive error.
 fn git_output(cwd: &Path, args: &[&str]) -> Result<String> {
@@ -295,10 +287,6 @@ fn check_diff(diff: &str, commit_count: usize) -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Domain resolution
-// ---------------------------------------------------------------------------
-
 /// Pick the cloud tunnel domain hosting the live app for this review.
 ///
 /// - Prefer a cloud tunnel whose domain contains the DNS-sanitized project or
@@ -341,10 +329,6 @@ fn pick_domain(tunnels: &[TunnelUrl], project: &str, branch: &str) -> Result<Str
     );
 }
 
-// ---------------------------------------------------------------------------
-// Output helpers
-// ---------------------------------------------------------------------------
-
 /// Dashboard URL for a review record.
 fn review_record_url(dashboard: &str, record_id: &str) -> String {
     format!("{dashboard}/#/review-records/{record_id}")
@@ -365,15 +349,9 @@ fn short_sha(sha: &str) -> &str {
     &sha[..sha.len().min(8)]
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // --- parse_commit_log ---
 
     #[test]
     fn parse_commit_log_parses_unit_separated_fields() {
@@ -416,8 +394,6 @@ mod tests {
         assert_eq!(commits[0].message, "weird\u{1f}subject");
     }
 
-    // --- check_diff (size guard + nothing-to-review) ---
-
     #[test]
     fn check_diff_rejects_oversized_diff() {
         let big = "a".repeat(MAX_DIFF_BYTES + 1);
@@ -443,8 +419,6 @@ mod tests {
         assert!(check_diff("", 2).is_ok());
     }
 
-    // --- review URL construction ---
-
     #[test]
     fn review_record_url_appends_hash_route() {
         assert_eq!(
@@ -453,16 +427,12 @@ mod tests {
         );
     }
 
-    // --- base ref default ---
-
     #[test]
     fn strip_origin_removes_remote_prefix_only() {
         assert_eq!(strip_origin("origin/main"), "main");
         assert_eq!(strip_origin("origin/release/v2"), "release/v2");
         assert_eq!(strip_origin("main"), "main");
     }
-
-    // --- thread ref / sha formatting ---
 
     #[test]
     fn format_thread_ref_never_doubles_the_prefix() {
@@ -475,8 +445,6 @@ mod tests {
         assert_eq!(short_sha("0123456789abcdef"), "01234567");
         assert_eq!(short_sha("abc"), "abc");
     }
-
-    // --- pick_domain ---
 
     fn tunnel(domain: &str) -> TunnelUrl {
         TunnelUrl {

@@ -233,8 +233,6 @@ mod tests {
         assert_eq!(env_var_name("a\nb"), "PZ_URL_A_B");
     }
 
-    // --- discovered_tunnels() / lookup_tunnel() ---
-
     use portzero_daemon::discovery::ServiceSource;
     use portzero_daemon::discovery_loop::DaemonConfig;
     use portzero_daemon::route_table::OverlayRoute;
@@ -348,8 +346,6 @@ mod tests {
         cleanup(&config);
     }
 
-    // --- url() ---
-
     #[test]
     fn url_errs_when_no_tunnels_discovered() {
         let config = temp_config("url-empty");
@@ -386,8 +382,6 @@ mod tests {
         assert!(url_with_config(&config, "web.portzero.local").is_ok());
         cleanup(&config);
     }
-
-    // --- env(--github) file-writing ---
 
     // GITHUB_ENV is a process-global env var, so serialize every test that
     // touches it to avoid cross-test interference when the suite runs tests

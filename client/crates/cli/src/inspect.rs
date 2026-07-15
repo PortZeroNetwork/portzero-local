@@ -41,7 +41,6 @@ fn render(config: &DaemonConfig) -> String {
     }
     out.push('\n');
 
-    // --- Tunnels (cloud routes + local overlay) ---
     let _ = writeln!(out, "TUNNELS");
     if table.routes.is_empty() && overlay.routes.is_empty() {
         let _ = writeln!(
@@ -77,7 +76,6 @@ fn render(config: &DaemonConfig) -> String {
     }
     out.push('\n');
 
-    // --- Observed edges ---
     let _ = writeln!(out, "OBSERVED EDGES (who-talks-to-whom)");
     if obs.edges.is_empty() {
         let _ = writeln!(out, "  (none observed yet)");
@@ -95,7 +93,6 @@ fn render(config: &DaemonConfig) -> String {
     }
     out.push('\n');
 
-    // --- Exercised routes ---
     let _ = writeln!(out, "EXERCISED ROUTES (smoke-test inventory)");
     if obs.routes.is_empty() {
         let _ = writeln!(out, "  (none observed yet)");
@@ -178,8 +175,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&config.state_dir);
     }
 
-    // --- describe_source() ---
-
     #[test]
     fn describe_source_process_with_cwd() {
         let source = ServiceSource::Process {
@@ -214,8 +209,6 @@ mod tests {
         };
         assert_eq!(describe_source(&source, 0), "container web (ab12)");
     }
-
-    // --- render() ---
 
     #[test]
     fn render_reports_stopped_daemon_and_no_tunnels_when_empty() {

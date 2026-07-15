@@ -80,8 +80,6 @@ impl ApiClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn default_api_url_points_at_the_dashboard_api() {
         assert_eq!(
