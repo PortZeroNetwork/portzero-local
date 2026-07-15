@@ -1,9 +1,6 @@
 #[allow(unused_imports)]
 use super::*;
 
-// Docker container scanning
-// ---------------------------------------------------------------------------
-
 pub(super) async fn scan_docker_containers(
     account_id: Option<&str>,
     username: Option<&str>,
