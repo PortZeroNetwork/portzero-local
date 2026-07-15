@@ -417,11 +417,12 @@ openapi:
 # (used by the pre-commit hook, so it stays fast).
 [unix]
 complexity *ARGS:
-    ./scripts/check-file-size-budget.sh {{ARGS}}
+    CARGO_TARGET_DIR=/tmp/portzero-target cargo run -p portzero-xtask --bin check-file-size-budget -- {{ARGS}}
 
 [windows]
 complexity *ARGS:
-    bash ./scripts/check-file-size-budget.sh {{ARGS}}
+    $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
+    cargo run -p portzero-xtask --bin check-file-size-budget -- {{ARGS}}
 
 # Run the unprivileged local checks from the main CI job.
 # Recommended before pushing. Follow with `just e2e` for current-OS CI parity.

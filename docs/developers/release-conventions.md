@@ -85,7 +85,7 @@ artifact products where nothing is "deployed" — the concept being gated
 |---|---|---|
 | `ref` | any ref; blank = the ref dispatched from (normally `staging`) | What to promote/release. An older tag/SHA = rollback |
 | `bump` | `patch` \| `minor` \| `major` \| `none` | Explicit semver bump; `none` = rollback/re-publish of an existing ref, cuts no tag |
-| `channel` | `stable` \| `edge` | Only for products with a prerelease channel. `edge` = ungated, unsigned prerelease (`prerelease: true`, never `latest`); `stable` = re-publish an existing `vX.Y.Z` tag |
+| `channel` | `stable` \| `unstable` | Only for products with an unstable channel. `unstable` = ungated, unsigned build (GitHub `prerelease: true`, never `latest`); `stable` = re-publish an existing `vX.Y.Z` tag |
 
 ### Secrets and variables
 
@@ -106,7 +106,7 @@ GitHub-Settings side does not rename with the workflow reference.
 
 - `vX.Y.Z` — annotated, immutable, the release of record. Never moved, never
   reused, never deleted to "undo" a release.
-- `vX.Y.Z-rc.N` — prerelease (edge) tags, excluded from stable version
+- `vX.Y.Z-rc.N` — unstable-channel tags, excluded from stable version
   computation.
 - Moving convenience tags (e.g. `production-current` for cold-boot pointers)
   are allowed but must never be inputs to version computation.
@@ -132,7 +132,7 @@ things are required, and both fail silently if forgotten:
     RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
   run: |
     # Latest stable vX.Y.Z tag across history; default v0.0.0 if none.
-    # Prerelease tags (vX.Y.Z-rc.N) are excluded via `grep -v -- '-'`.
+    # Unstable-channel tags (vX.Y.Z-rc.N) are excluded via `grep -v -- '-'`.
     LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v -- '-' | sort -V | tail -1)
     LATEST_TAG="${LATEST_TAG:-v0.0.0}"
     MAJOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f1)

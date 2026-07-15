@@ -124,9 +124,9 @@ You do **not** delete or move the tag to undo a release. Two steps:
    normal way (Cut a stable release, above). The higher `vX.Y.Z` becomes
    `latest` and supersedes the bad one everywhere.
 
-## Prereleases (edge channel)
+## Unstable releases
 
-A prerelease is cut off `staging` by dispatching the same workflow with
-**channel** `edge` (the default). It is ungated and produces an **unsigned**
-build tagged/marked `prerelease: true`, so it never touches the stable install
-paths. See [unstable-channel.md](unstable-channel.md).
+An unstable release is cut off `staging` by dispatching the same workflow with
+**channel** `unstable` (the default). It is ungated and produces an **unsigned**
+build tagged/marked GitHub `prerelease: true`, so it never touches the stable
+install paths. See [unstable-channel.md](unstable-channel.md).

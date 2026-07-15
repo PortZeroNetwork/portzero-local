@@ -9,8 +9,8 @@ enforced now, the thresholds chosen, and what is deliberately out of scope.
 ## What's enforced
 
 **File-size budget.** A Rust source file under `client/` may not exceed
-**1000 lines**. This is checked by `scripts/check-file-size-budget.sh`
-(invoked via `just complexity`) and runs:
+**1000 lines**. This is checked by `portzero-xtask`'s `check-file-size-budget`
+binary (invoked via `just complexity`) and runs:
 
 - **Locally, pre-commit** (`lefthook.yml`): scoped to staged `client/*.rs`
   files only (`just complexity --changed`), so it stays fast (a handful of
@@ -33,7 +33,7 @@ lines is a tighter, more conventional ceiling — low enough that a file
 creeping toward it is a real signal to split it, rather than something that
 only trips once a file is already unwieldy.
 
-The threshold lives in `scripts/check-file-size-budget.sh`
+The threshold lives in `client/crates/xtask/src/bin/check_file_size_budget.rs`
 (`PORTZERO_FILE_SIZE_BUDGET`, default `1000`) and can be overridden via that
 env var for local experimentation, but the default is what CI enforces.
 
@@ -58,7 +58,7 @@ a new enforcement mechanism.
 
 ## Files
 
-- `scripts/check-file-size-budget.sh` — the file-size check.
+- `client/crates/xtask/src/bin/check_file_size_budget.rs` — the file-size check.
 - `clippy.toml` — cognitive-complexity threshold (25).
 - `justfile` — `just complexity [--changed]` and `just clippy[-all]` recipes.
 - `lefthook.yml` — `pre-commit.complexity` (changed files only) and

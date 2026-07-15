@@ -16,7 +16,7 @@ GitHub Actions is not free. The main CI job runs:
 - `cargo fmt -- --check`
 - `cargo clippy --workspace -- -D warnings`
 - `cargo test --workspace`
-- `./scripts/check-file-size-budget.sh` (the `file-size-budget` job — see [Complexity budgets](complexity-budgets.md))
+- `cargo run -p portzero-xtask --bin check-file-size-budget` (the `file-size-budget` job — see [Complexity budgets](complexity-budgets.md))
 
 (plus privileged E2E on a separate job).
 

@@ -2787,6 +2787,13 @@ name = "portzero-tunnel-client"
 version = "0.1.0"
 
 [[package]]
+name = "portzero-xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

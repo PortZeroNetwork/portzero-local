@@ -16,8 +16,8 @@ pub fn enable() -> Result<()> {
 
     println!("Autostart enabled.");
     println!("The daemon will now start automatically at boot.");
-    if let Some(loc) = service_location() {
-        println!("Service installed at: {loc}");
+    if let Some(loc) = process_location() {
+        println!("Process installed at: {loc}");
     }
     Ok(())
 }
@@ -36,8 +36,8 @@ pub fn disable() -> Result<()> {
 pub fn status() -> Result<()> {
     if is_autostart_installed() {
         println!("Autostart: installed");
-        if let Some(loc) = service_location() {
-            println!("Service:   {loc}");
+        if let Some(loc) = process_location() {
+            println!("Process:   {loc}");
         }
         println!("The daemon will start automatically at boot.");
     } else {
@@ -49,7 +49,7 @@ pub fn status() -> Result<()> {
 
 /// Best-effort, human-readable location of the platform service definition.
 /// Returns `None` on unsupported platforms.
-fn service_location() -> Option<String> {
+fn process_location() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         Some("/Library/LaunchDaemons/cloud.portzero.daemon.plist (root LaunchDaemon)".to_string())
