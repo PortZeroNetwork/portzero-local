@@ -35,6 +35,7 @@ Port Zero runs a background process on your local dev machine that scans for pro
 
 ```sh
 brew tap PortZeroNetwork/portzero
+brew trust portzeronetwork/portzero
 brew install portzero
 ```
 
