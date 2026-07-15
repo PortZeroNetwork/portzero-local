@@ -355,13 +355,59 @@ jobs:
             Copy-Item $dll.FullName "$staging\" -Force
           }
 
+      - name: Create Windows ZIP
+        # Unsigned here regardless of channel — signing needs the `production`
+        # environment (job-level only in Actions), which this matrix job can't
+        # scope to just the Windows leg without gating every platform's build
+        # behind it. The `sign-windows-zip` job re-signs and overwrites this
+        # artifact for genuine vX.Y.Z tag builds; unstable builds ship as-is.
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          $staging = "${{ matrix.archive_name }}"
+          Compress-Archive -Path "$staging" -DestinationPath "$staging.zip"
+
+      - name: Compute SHA256 (macOS)
+        if: contains(matrix.target, 'apple-darwin')
+        run: |
+          shasum -a 256 "${{ matrix.archive_name }}.tar.gz" | awk '{print $1}' \
+            > "${{ matrix.archive_name }}.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.archive_name }}
+          path: ${{ matrix.archive_name }}.${{ matrix.archive_ext }}
+
+      - name: Upload SHA256 (macOS)
+        if: contains(matrix.target, 'apple-darwin')
+        uses: actions/upload-artifact@v5
+        with:
+          name: sha256-${{ matrix.archive_name }}
+          path: ${{ matrix.archive_name }}.sha256
+
+  sign-windows-zip:
+    name: Sign Windows Zip Binaries
+    needs: [version, build]
+    # Only a genuine vX.Y.Z tag build goes through Artifact Signing — unstable
+    # builds (staging push / workflow_dispatch) ship unsigned for testing. This
+    # job (unlike the `build` matrix) covers only the Windows leg, so gating it
+    # on the `production` environment doesn't hold up macOS/Linux builds too.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    environment: production
+    steps:
+      - name: Download Windows zip artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-windows-amd64
+
+      - name: Extract zip contents
+        shell: pwsh
+        run: |
+          Expand-Archive -Path "portzero-windows-amd64.zip" -DestinationPath "." -Force
+
       - name: Azure login for Artifact Signing
-        # Sign only the SIGNED stable path — a genuine vX.Y.Z tag build. The
-        # Azure federated-identity credential trusts `refs/tags/v*`, not the
-        # unstable (staging push / workflow_dispatch) refs; unstable builds are for testing rather
-        # than distribution. Gating on the tag ref means no dispatch can ever
-        # reach the signing steps regardless of inputs.
-        if: matrix.archive_ext == 'zip' && startsWith(github.ref, 'refs/tags/v')
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -369,7 +415,6 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign Windows EXE
-        if: matrix.archive_ext == 'zip' && startsWith(github.ref, 'refs/tags/v')
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
@@ -377,14 +422,13 @@ jobs:
           certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
           # Sign both the CLI and the system-tray companion so the tray, which
           # autostarts at login, is not flagged by SmartScreen.
-          files-folder: ${{ github.workspace }}\${{ matrix.archive_name }}
+          files-folder: ${{ github.workspace }}\portzero-windows-amd64
           files-folder-filter: portzero*.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
       - name: Verify Windows EXE signature
-        if: matrix.archive_ext == 'zip' && startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
           function Get-SigntoolPath {
@@ -416,7 +460,7 @@ jobs:
 
           $signtool = Get-SigntoolPath
           foreach ($name in @("portzero.exe", "portzero-tray.exe")) {
-            $exe = Resolve-Path ".\${{ matrix.archive_name }}\$name"
+            $exe = Resolve-Path ".\portzero-windows-amd64\$name"
             & $signtool verify /pa /v $exe.Path
             if ($LASTEXITCODE -ne 0) {
               throw "signtool failed to verify $($exe.Path)"
@@ -428,31 +472,17 @@ jobs:
             }
           }
 
-      - name: Create Windows ZIP
-        if: matrix.archive_ext == 'zip'
+      - name: Re-create signed Windows ZIP
         shell: pwsh
         run: |
-          $staging = "${{ matrix.archive_name }}"
-          Compress-Archive -Path "$staging" -DestinationPath "$staging.zip"
+          Compress-Archive -Path "portzero-windows-amd64" -DestinationPath "portzero-windows-amd64.zip" -Force
 
-      - name: Compute SHA256 (macOS)
-        if: contains(matrix.target, 'apple-darwin')
-        run: |
-          shasum -a 256 "${{ matrix.archive_name }}.tar.gz" | awk '{print $1}' \
-            > "${{ matrix.archive_name }}.sha256"
-
-      - name: Upload artifact
+      - name: Upload signed artifact
         uses: actions/upload-artifact@v5
         with:
-          name: ${{ matrix.archive_name }}
-          path: ${{ matrix.archive_name }}.${{ matrix.archive_ext }}
-
-      - name: Upload SHA256 (macOS)
-        if: contains(matrix.target, 'apple-darwin')
-        uses: actions/upload-artifact@v5
-        with:
-          name: sha256-${{ matrix.archive_name }}
-          path: ${{ matrix.archive_name }}.sha256
+          name: portzero-windows-amd64
+          path: portzero-windows-amd64.zip
+          overwrite: true
 
   package-linux:
     name: Build Linux Packages
@@ -521,11 +551,14 @@ jobs:
 
   package-windows:
     name: Build Windows MSI
-    needs: [version, build]
+    needs: [version, build, sign-windows-zip]
+    # sign-windows-zip only runs (and is skipped otherwise) for genuine vX.Y.Z
+    # tag builds — tolerate that skip instead of the default success()-only
+    # condition, which would skip this job too on every unstable build.
+    if: ${{ !failure() && !cancelled() }}
     runs-on: windows-latest
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v5
 
@@ -545,30 +578,6 @@ jobs:
       - name: Install WiX Toolset
         shell: pwsh
         run: choco install wixtoolset --no-progress -y
-
-      - name: Locate signtool
-        shell: pwsh
-        run: |
-          $signtoolPath = $null
-
-          $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue
-          if ($signtool) {
-            $signtoolPath = Split-Path -Parent $signtool.Source
-          } else {
-            $kitRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10\bin"
-            $signtool = Get-ChildItem $kitRoot -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
-              Sort-Object FullName -Descending |
-              Select-Object -First 1
-            if ($signtool) {
-              $signtoolPath = $signtool.DirectoryName
-            }
-          }
-
-          if (-not $signtoolPath) {
-            throw "signtool.exe was not found on the runner"
-          }
-
-          Add-Content $env:GITHUB_PATH $signtoolPath
 
       - name: Build MSI
         shell: pwsh
@@ -594,11 +603,70 @@ jobs:
             -out "portzero-${{ needs.version.outputs.version }}-x86_64.msi" `
             "portzero.wixobj"
 
+      - name: Generate winget manifest
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Filter "portzero-*.msi" | Select-Object -First 1
+          if (-not $msi) {
+            throw "MSI artifact not found after WiX build"
+          }
+
+          & ".\scripts\generate-winget-manifest.ps1" `
+            -Version "${{ needs.version.outputs.version }}" `
+            -MsiPath $msi.FullName
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v5
+        with:
+          name: portzero-msi
+          path: "*.msi"
+
+      - name: Upload winget manifest
+        uses: actions/upload-artifact@v5
+        with:
+          name: portzero-winget
+          path: packaging/winget/manifests/**
+
+  sign-windows-msi:
+    name: Sign Windows MSI
+    needs: [version, package-windows]
+    # Only a genuine vX.Y.Z tag build goes through Artifact Signing — unstable
+    # MSIs ship unsigned for testing. Split out from package-windows so the
+    # `production` environment gate doesn't hold up every unstable MSI build.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    environment: production
+    steps:
+      - name: Download MSI artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: portzero-msi
+
+      - name: Locate signtool
+        shell: pwsh
+        run: |
+          $signtoolPath = $null
+
+          $signtool = Get-Command signtool.exe -ErrorAction SilentlyContinue
+          if ($signtool) {
+            $signtoolPath = Split-Path -Parent $signtool.Source
+          } else {
+            $kitRoot = Join-Path "${env:ProgramFiles(x86)}" "Windows Kits\10\bin"
+            $signtool = Get-ChildItem $kitRoot -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if ($signtool) {
+              $signtoolPath = $signtool.DirectoryName
+            }
+          }
+
+          if (-not $signtoolPath) {
+            throw "signtool.exe was not found on the runner"
+          }
+
+          Add-Content $env:GITHUB_PATH $signtoolPath
+
       - name: Azure login for Artifact Signing
-        # Sign only the SIGNED stable path — a genuine vX.Y.Z tag build. The
-        # Azure federated-identity credential trusts `refs/tags/v*`, not the
-        # unstable (staging push / workflow_dispatch) refs. Unstable MSIs ship unsigned for testing.
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -606,7 +674,6 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign MSI
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
@@ -619,7 +686,6 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Verify MSI signature
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         shell: pwsh
         run: |
           $msi = Get-ChildItem -Filter "portzero-*.msi" | Select-Object -First 1
@@ -665,29 +731,12 @@ jobs:
             throw "Invalid Authenticode signature for $($msi.FullName): $($signature.Status)"
           }
 
-      - name: Generate winget manifest
-        shell: pwsh
-        run: |
-          $msi = Get-ChildItem -Filter "portzero-*.msi" | Select-Object -First 1
-          if (-not $msi) {
-            throw "MSI artifact not found after WiX build"
-          }
-
-          & ".\scripts\generate-winget-manifest.ps1" `
-            -Version "${{ needs.version.outputs.version }}" `
-            -MsiPath $msi.FullName
-
-      - name: Upload MSI
+      - name: Upload signed MSI
         uses: actions/upload-artifact@v5
         with:
           name: portzero-msi
           path: "*.msi"
-
-      - name: Upload winget manifest
-        uses: actions/upload-artifact@v5
-        with:
-          name: portzero-winget
-          path: packaging/winget/manifests/**
+          overwrite: true
 
   test-macos-interop:
     name: macOS client interop test
@@ -732,7 +781,10 @@ jobs:
 
   test-windows-interop:
     name: Windows client interop test
-    needs: [version, build, package-windows]
+    needs: [version, build, package-windows, sign-windows-msi]
+    # sign-windows-msi only runs (and is skipped otherwise) for genuine
+    # vX.Y.Z tag builds — tolerate that skip like package-windows does.
+    if: ${{ !failure() && !cancelled() }}
     runs-on: windows-latest
     environment: staging
     steps:
