@@ -182,8 +182,6 @@ fn truncate(s: &str, n: usize) -> String {
     out
 }
 
-// ── muda backend (Windows / macOS) ──────────────────────────────────────────
-//
 // Renders the neutral spec into a `muda::Menu` and the id → action map the
 // controller dispatches against. Linux uses ksni instead and never compiles
 // muda (which links GTK), so this is gated off there.

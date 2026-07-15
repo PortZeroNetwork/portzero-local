@@ -136,7 +136,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -----------------------------------------------------------------
     // Fragmented / partial reads.
     //
     // The codec itself has no length-prefixed byte framing -- each
@@ -147,7 +146,6 @@ mod tests {
     // tried to decode before the frame was fully reassembled). These
     // tests assert that partial prefixes fail cleanly (no panic) and that
     // the full, reassembled text decodes correctly afterwards.
-    // -----------------------------------------------------------------
 
     #[test]
     fn decode_truncated_mid_header_errors_then_full_text_succeeds() {
@@ -261,9 +259,7 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------
     // Malformed / oversized frames.
-    // -----------------------------------------------------------------
 
     #[test]
     fn decode_empty_string_errors_cleanly() {

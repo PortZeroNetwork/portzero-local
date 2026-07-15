@@ -22,9 +22,7 @@ pub mod connection;
 /// and a v2 server (or vice versa) still interoperate during rollout.
 pub const PROTOCOL_VERSION: u32 = 2;
 
-// ---------------------------------------------------------------------------
 // Supporting types
-// ---------------------------------------------------------------------------
 
 /// Transport protocol for a registered route.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,9 +78,7 @@ pub enum ErrorCode {
     InternalError,
 }
 
-// ---------------------------------------------------------------------------
 // Client -> Server messages
-// ---------------------------------------------------------------------------
 
 /// Messages sent from the tunnel client to the edge server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,9 +115,7 @@ pub enum ClientMessage {
     Pong { timestamp: u64 },
 }
 
-// ---------------------------------------------------------------------------
 // Server -> Client messages
-// ---------------------------------------------------------------------------
 
 /// Messages sent from the edge server to the tunnel client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,9 +172,7 @@ pub enum ServerMessage {
 mod tests {
     use super::*;
 
-    // -----------------------------------------------------------------------
     // ClientMessage roundtrips
-    // -----------------------------------------------------------------------
 
     #[test]
     fn roundtrip_hello() {
@@ -306,9 +298,7 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------------
     // ServerMessage roundtrips
-    // -----------------------------------------------------------------------
 
     #[test]
     fn roundtrip_welcome() {
@@ -473,9 +463,7 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Supporting types
-    // -----------------------------------------------------------------------
 
     #[test]
     fn route_protocol_roundtrip() {
