@@ -508,8 +508,13 @@ UNIT
 
     info "Starting portzero..."
     if start_portzero "$bin_path"; then
-        wait_for_dashboard || true
-        open_dashboard || true
+        # Only pop the browser once the dashboard actually answers over its real
+        # DNS path — opening early would just show a "can't resolve host" page.
+        if wait_for_dashboard; then
+            open_dashboard || true
+        else
+            info "Open http://portzero.local once it is reachable (see 'portzero status')."
+        fi
     else
         warn "Could not start portzero automatically. Run later: portzero start"
     fi
@@ -554,4 +559,5 @@ info "Cloud features governed by https://portzero.net/terms"
 
 echo ""
 echo "Uninstall: ${BOLD}${uninstall_helper}${RESET}"
+echo "Get started: open ${BOLD}http://portzero.local${RESET} and run an example from Getting Started"
 echo "Next: ${BOLD}portzero login${RESET}  when you want cloud tunnels"

@@ -38,6 +38,7 @@ impl ApplicationHandler for TrayApp {
             StartCause::Init => match Controller::new() {
                 Ok(mut controller) => {
                     controller.maybe_autostart_daemon();
+                    controller.maybe_notify_first_run();
                     self.controller = Some(controller);
                     self.arm_refresh(event_loop);
                 }

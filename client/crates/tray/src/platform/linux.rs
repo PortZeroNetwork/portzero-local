@@ -160,6 +160,9 @@ pub fn run() -> Result<()> {
     let mut auto_started = false;
     engine::maybe_autostart(&config, &mut auto_started);
 
+    // First run after install: nudge the user to the dashboard, once.
+    crate::welcome::maybe_notify_first_run(&config);
+
     let tray = PortzeroTray {
         config,
         snapshot,

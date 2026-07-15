@@ -24,5 +24,6 @@ pub mod icon;
 pub mod menu;
 pub mod platform;
 pub mod state;
+pub mod welcome;
 
 pub use platform::run;
