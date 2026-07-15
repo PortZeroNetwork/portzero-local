@@ -482,10 +482,6 @@ fn command_on_path(program: &str) -> bool {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Tests (pure only — no `docker`, no shell-out, no child spawning)
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;

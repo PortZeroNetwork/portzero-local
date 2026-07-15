@@ -80,10 +80,6 @@ pub fn is_autostart_installed() -> bool {
     false
 }
 
-// ---------------------------------------------------------------------------
-// Binary location
-// ---------------------------------------------------------------------------
-
 /// Find the path to the portzero binary.
 fn find_daemon_binary() -> Result<PathBuf> {
     // First: check if we're running as the binary ourselves
@@ -124,10 +120,6 @@ fn which(name: &str) -> Result<PathBuf> {
     }
     anyhow::bail!("{} not found in PATH", name)
 }
-
-// ---------------------------------------------------------------------------
-// macOS: LaunchAgent
-// ---------------------------------------------------------------------------
 
 /// System LaunchDaemon directory. The daemon must run as **root** so the
 /// privileged overlay (utun + `/etc/resolver` + routes) can come up, so the
@@ -399,10 +391,6 @@ fn uninstall_launchd() -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Linux: systemd user unit
-// ---------------------------------------------------------------------------
-
 #[cfg(target_os = "linux")]
 fn systemd_unit_path() -> PathBuf {
     dirs::home_dir()
@@ -485,10 +473,6 @@ fn uninstall_systemd() -> Result<()> {
 
     Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Windows: scheduled task
-// ---------------------------------------------------------------------------
 
 /// Whether this process runs as LocalSystem (SID S-1-5-18), e.g. as an MSI
 /// deferred custom action. Checked via `whoami /user` because the SID is
@@ -574,10 +558,6 @@ fn is_windows_task_installed() -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
