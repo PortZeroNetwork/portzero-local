@@ -67,7 +67,7 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace -- -D warnings -D clippy::cognitive_complexity
 
       - name: Tests
         run: cargo test --workspace

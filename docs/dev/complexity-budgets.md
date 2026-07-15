@@ -4,12 +4,12 @@ Nothing enforced a maximum file size or complexity in this repo until
 task-50. `client/crates/daemon/src/discovery.rs` grew to ~3.2k lines before
 anyone noticed and split it (task-49) into `discovery.rs` +
 `discovery/process.rs` + `discovery_loop.rs`. This document explains what is
-enforced now, the threshold chosen, and what is deliberately out of scope.
+enforced now, the thresholds chosen, and what is deliberately out of scope.
 
 ## What's enforced
 
-**File-size budget only.** A Rust source file under `client/` may not exceed
-**2500 lines**. This is checked by `scripts/check-file-size-budget.sh`
+**File-size budget.** A Rust source file under `client/` may not exceed
+**1000 lines**. This is checked by `scripts/check-file-size-budget.sh`
 (invoked via `just complexity`) and runs:
 
 - **Locally, pre-commit** (`lefthook.yml`): scoped to staged `client/*.rs`
@@ -24,58 +24,44 @@ enforced now, the threshold chosen, and what is deliberately out of scope.
 - **On demand**: `just complexity` (whole tree) or `just complexity
   --changed` (staged files).
 
-## Why 2500 lines
+## Why 1000 lines
 
-The budget is derived from the actual max file size in `client/` *after*
-the discovery.rs split, not picked arbitrarily. Measured with:
-
-```sh
-find client -name '*.rs' | xargs wc -l | sort -n | tail
-```
-
-At the time this check was added, the largest file was
-`client/crates/daemon/src/discovery_loop.rs` at **2168 lines**. The next
-largest were `client/crates/daemon/src/tls/trust.rs` (2037) and
-`client/crates/daemon/src/discovery/process.rs` (1979) — all comfortably
-under 2500.
-
-2500 gives ~330 lines of headroom above the current max: enough that normal
-incremental work (adding a handler, a test, a variant) doesn't immediately
-trip the check on the file that's already largest, but low enough that a
-file creeping toward the ceiling is a real signal to consider splitting it
-before it becomes another 3k-line discovery.rs. If a legitimate change
-needs to grow a file past 2500 lines, that's exactly the point where a
-split (as was done for discovery.rs) should be considered instead of
-bumping the threshold.
+2500 was derived from the actual max file size in `client/` right after the
+discovery.rs split, but that headroom turned out to be too generous: several
+files quietly grew past 2000 lines again with nothing flagging it. 1000
+lines is a tighter, more conventional ceiling — low enough that a file
+creeping toward it is a real signal to split it, rather than something that
+only trips once a file is already unwieldy.
 
 The threshold lives in `scripts/check-file-size-budget.sh`
-(`PORTZERO_FILE_SIZE_BUDGET`, default `2500`) and can be overridden via that
+(`PORTZERO_FILE_SIZE_BUDGET`, default `1000`) and can be overridden via that
 env var for local experimentation, but the default is what CI enforces.
 
-## What's out of scope (for now)
+## Cognitive complexity
 
-The ticket asked us to evaluate cyclomatic/cognitive complexity tooling
-(`cargo-complexity`, clippy's `cognitive_complexity`-style lints, etc.) in
-addition to file size. As of this writing:
+Per-function cognitive complexity is enforced via clippy's
+`clippy::cognitive_complexity` lint, at clippy's own default threshold of
+**25**, set in the workspace-root `clippy.toml`
+(`cognitive-complexity-threshold = 25`) and enabled with
+`-D clippy::cognitive_complexity` alongside `-D warnings` in `just clippy`
+/ `just clippy-all` and CI's "Clippy" step (`.github/workflows/ci.yml`).
 
-- `cognitive_complexity`-style lints are a clippy nightly-only lint group,
-  not available on stable Rust, which is what this repo's toolchain and CI
-  pin to (`dtolnay/rust-toolchain@stable`).
-- There is no maintained, lightweight, stable-Rust cyclomatic/cognitive
-  complexity checker that's trivially available in this environment (no
-  crates.io tool was verified to install cleanly and run fast enough for a
-  pre-commit hook without adding real toolchain weight).
-
-Given that, per-function complexity enforcement is **deferred**, not
-shipped. The file-size budget above is the concrete enforcement floor the
-ticket calls "at minimum." If/when a suitable stable-Rust complexity tool
-becomes available (or clippy stabilizes a cognitive-complexity lint), it
-should plug into the same `just complexity` recipe and the same pre-commit
-(changed-files-only) / CI (full-tree) split used here.
+An earlier version of this doc claimed `cognitive_complexity`-style lints
+were clippy-nightly-only and deferred enforcement for that reason. That was
+incorrect (or became outdated) — as of clippy 1.94 (this repo's pinned
+stable toolchain), `clippy::cognitive_complexity` works with no nightly
+features, and its threshold is configurable via `clippy.toml`. There was no
+tooling gap; it just hadn't been re-verified. Since `just clippy` /
+`just clippy-all` already run with `-D warnings` in CI and pre-push, adding
+`-D clippy::cognitive_complexity` alongside them was a one-line change, not
+a new enforcement mechanism.
 
 ## Files
 
-- `scripts/check-file-size-budget.sh` — the check itself.
-- `justfile` — `just complexity [--changed]` recipe.
-- `lefthook.yml` — `pre-commit.complexity` (changed files only).
-- `.github/workflows/ci.yml` — `file-size-budget` job (full tree, required).
+- `scripts/check-file-size-budget.sh` — the file-size check.
+- `clippy.toml` — cognitive-complexity threshold (25).
+- `justfile` — `just complexity [--changed]` and `just clippy[-all]` recipes.
+- `lefthook.yml` — `pre-commit.complexity` (changed files only) and
+  `pre-push` clippy (full workspace, includes cognitive complexity).
+- `.github/workflows/ci.yml` — `file-size-budget` job (full tree, required)
+  and the `Clippy` step in `check` (full workspace, required).

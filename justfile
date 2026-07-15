@@ -373,22 +373,22 @@ fmt-check:
 # recently failed on GitHub Actions.
 [unix]
 clippy:
-    CARGO_TARGET_DIR=/tmp/portzero-target cargo clippy --workspace -- -D warnings
+    CARGO_TARGET_DIR=/tmp/portzero-target cargo clippy --workspace -- -D warnings -D clippy::cognitive_complexity
 
 [windows]
 clippy:
     $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
-    cargo clippy --workspace -- -D warnings
+    cargo clippy --workspace -- -D warnings -D clippy::cognitive_complexity
 
 # Clippy on tests + bins + examples + all features.
 [unix]
 clippy-all:
-    CARGO_TARGET_DIR=/tmp/portzero-target cargo clippy --workspace --all-targets --all-features -- -D warnings
+    CARGO_TARGET_DIR=/tmp/portzero-target cargo clippy --workspace --all-targets --all-features -- -D warnings -D clippy::cognitive_complexity
 
 [windows]
 clippy-all:
     $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings -D clippy::cognitive_complexity
 
 # Fast type check.
 [unix]

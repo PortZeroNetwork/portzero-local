@@ -11,11 +11,10 @@
 # becomes painful to split.
 #
 # Threshold rationale (see docs/dev/complexity-budgets.md for the full
-# writeup): after the discovery.rs split, the largest file in `client/` is
-# `client/crates/daemon/src/discovery_loop.rs` at 2168 lines. The budget is
-# set to 2500 lines: enough headroom that ordinary incremental work doesn't
-# immediately trip the check, but low enough that a file approaching it is a
-# real signal to consider splitting.
+# writeup): the budget was 2500 lines (set after the discovery.rs split) but
+# was tightened to 1000 lines — 2500 let several files grow past 2k before
+# anyone noticed. 1000 lines is a real signal that a file is doing too much,
+# well before it becomes painful to split.
 #
 # Usage:
 #   scripts/check-file-size-budget.sh                 # check all client/*.rs files
@@ -27,7 +26,7 @@
 set -euo pipefail
 
 # Max lines allowed in a single Rust source file under client/.
-MAX_LINES="${PORTZERO_FILE_SIZE_BUDGET:-2500}"
+MAX_LINES="${PORTZERO_FILE_SIZE_BUDGET:-1000}"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
