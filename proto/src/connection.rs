@@ -363,7 +363,6 @@ mod tests {
         assert!(sm.validate_receive(&welcome).is_err());
     }
 
-    // -----------------------------------------------------------------
     // Dropped connection / reconnect state transitions.
     //
     // `ConnectionStateMachine` has no socket I/O of its own (the actual
@@ -372,7 +371,6 @@ mod tests {
     // and a "reconnect attempt" is modeled as constructing a fresh state
     // machine (as the real client would do when redialing) and driving it
     // through the handshake again.
-    // -----------------------------------------------------------------
 
     fn hello_msg() -> ClientMessage {
         ClientMessage::Hello {
