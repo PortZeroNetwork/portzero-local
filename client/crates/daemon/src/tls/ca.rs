@@ -247,7 +247,6 @@ fn write_atomic(path: &Path, content: &[u8]) -> Result<()> {
 fn generate() -> Result<(LocalCa, OffsetDateTime)> {
     let now = OffsetDateTime::now_utc();
 
-    // --- CA (10-year self-signed) ---
     let mut ca_params = CertificateParams::new(vec![]).context("build CA cert params")?;
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     ca_params.name_constraints = Some(ca_name_constraints());
@@ -264,7 +263,6 @@ fn generate() -> Result<(LocalCa, OffsetDateTime)> {
         .self_signed(&ca_key)
         .context("self-sign CA certificate")?;
 
-    // --- Wildcard cert (1-year, CA-signed) ---
     let wildcard_expiry = now + Duration::days(WILDCARD_VALIDITY_DAYS);
     let mut leaf_params = CertificateParams::new(vec![
         "*.portzero.local".to_string(),

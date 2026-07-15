@@ -18,11 +18,6 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::forwarder;
 
-/// Resolve the edge server URL from the environment or fall back to the default.
-fn resolve_edge_url() -> String {
-    portzero_domain::endpoints::edge_url()
-}
-
 /// Cloud connector state.
 pub struct CloudConnector {
     /// Outbound message sender.
@@ -75,7 +70,7 @@ impl CloudConnector {
             tx: None,
             auth_token,
             machine_id,
-            edge_url: resolve_edge_url(),
+            edge_url: portzero_domain::endpoints::edge_url(),
             session_id: None,
             plan: Arc::new(Mutex::new(None)),
             can_use_cloud_tunnels: Arc::new(Mutex::new(None)),
@@ -655,10 +650,6 @@ fn generate_machine_id() -> String {
     let suffix = &uuid::Uuid::new_v4().to_string()[..8];
     format!("{}-{}", host, suffix)
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
