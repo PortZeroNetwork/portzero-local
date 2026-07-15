@@ -70,10 +70,6 @@ const PROBE_READ_LEN: usize = 64;
 /// scan). Kept small and cheap.
 const PROBE_ATTEMPTS: u32 = 2;
 
-// ---------------------------------------------------------------------------
-// Pure classifier (unit-tested, no I/O)
-// ---------------------------------------------------------------------------
-
 /// Classify a server's first response bytes into a canonical protocol.
 ///
 /// PURE: no I/O, fully deterministic over the input bytes. This is the
@@ -116,10 +112,6 @@ fn is_tls_record(bytes: &[u8]) -> bool {
     is_known_type && plausible_version
 }
 
-// ---------------------------------------------------------------------------
-// Opt-out decision (pure)
-// ---------------------------------------------------------------------------
-
 /// Decide whether probing is disabled, given the value of
 /// `PZ_TUNNEL_NO_PROBE` from the target process's environment
 /// (`per_process`) and from the daemon's own environment (`daemon`).
@@ -137,10 +129,6 @@ pub fn probing_disabled(per_process: Option<&str>, daemon: Option<&str>) -> bool
         None => daemon.map(truthy).unwrap_or(false),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Cache (cross-scan) + pure decision logic
-// ---------------------------------------------------------------------------
 
 /// Key identifying a probed backend. Re-probe only when this changes.
 pub type CacheKey = (u32, u16);
@@ -169,10 +157,6 @@ fn global_cache() -> &'static Mutex<HashMap<CacheKey, Option<u16>>> {
     static CACHE: OnceLock<Mutex<HashMap<CacheKey, Option<u16>>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
-
-// ---------------------------------------------------------------------------
-// Async detection (I/O, best-effort, never fatal)
-// ---------------------------------------------------------------------------
 
 /// Detect the backend protocol, using the cross-scan cache.
 ///
@@ -323,10 +307,6 @@ const CLIENT_HELLO: &[u8] = &[
     0x02,             // list length = 2
     0x03, 0x03,       // TLS 1.2
 ];
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
