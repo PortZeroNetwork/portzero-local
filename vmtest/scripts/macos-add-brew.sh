@@ -3,6 +3,11 @@
 # reset point — the snapshot `just vm-test macos` and the CI VM-E2E job revert
 # to — so both exercise the real `brew install portzero` path.
 #
+# This is now a thin wrapper over the vmkit `provision` primitive (the reusable
+# "reset -> run a guest script -> re-checkpoint" dance; see the kit's
+# docs/PROVISIONING.md). vmkit owns the reset/preserve/re-checkpoint mechanics;
+# this script only names the pieces specific to Homebrew on our macOS VM.
+#
 # Runs entirely on the INTERNAL working copy (~/Parallels); macOS runs poorly
 # off the 4 TB spinny drive, so the install happens on fast storage and the
 # result is mirrored out afterwards with `just vm-sync-macos`.
@@ -21,45 +26,24 @@
 # `portzero-toolchain` is a permanent anchor the routine flow never overwrites:
 # it is the durable cache of the one-time CLT+Homebrew download (metered link —
 # see vmtest/README.md "Cache-first"). If `built` is ever clobbered, revert to
-# `portzero-toolchain` and re-checkpoint `built` — no re-download, ever.
+# `portzero-toolchain` and re-checkpoint `built` — no re-download, ever. This is
+# `vmkit provision`'s `--anchor`; the pristine baseline is its `--preserve-as`.
 #
 # Idempotent-friendly: the guest install script no-ops if brew already exists,
-# and the pristine preservation snapshot is only taken if it isn't there yet.
+# and vmkit only takes the pristine preservation snapshot if it isn't there yet.
 set -euo pipefail
 
-REPO_HOST="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VM="macOS 15.7.7"
-VMSH="vmkit"   # VM control plane (brew install portzeronetwork/portzero/vmkit)
+# reset macos to `built` -> preserve the pristine baseline once as
+# `portzero-pre-brew` -> install Homebrew in the guest -> re-capture `built` ->
+# capture the permanent `portzero-toolchain` anchor. vmkit supplies the safety
+# rails (internal-disk-only recovery, guarded guest exec, host-side timeout).
+vmkit provision macos vmtest/scripts/macos-install-homebrew.sh \
+    --checkpoint built \
+    --preserve-as pre-brew \
+    --anchor toolchain \
+    --timeout "${VMKIT_RUN_TIMEOUT:-2400}"
 
-has_snap() { # <snapshot-name> — prlctl snapshot-list only shows names with -i <id>
-    local name="$1" id
-    for id in $(prlctl snapshot-list "$VM" 2>/dev/null | grep -oE '\{[0-9a-f-]+\}'); do
-        prlctl snapshot-list "$VM" -i "$id" 2>/dev/null | grep -qiE "^Name: ${name}$" && return 0
-    done
-    return 1
-}
-
-echo ">> [1/4] reset '$VM' to its pristine 'built' reset point"
-"$VMSH" reset "$VM" built
-
-if has_snap "portzero-pre-brew"; then
-    echo ">> [2/4] 'portzero-pre-brew' already exists — keeping the original pristine snapshot, not re-taking it"
-else
-    echo ">> [2/4] preserving pristine state as 'portzero-pre-brew'"
-    "$VMSH" checkpoint "$VM" pre-brew
-fi
-
-echo ">> [3/4] installing Homebrew in the guest (CLT + brew; several minutes)"
-VMKIT_RUN_TIMEOUT="${VMKIT_RUN_TIMEOUT:-2400}" \
-    "$VMSH" run "$VM" vmtest/scripts/macos-install-homebrew.sh
-
-echo ">> [4/5] re-capturing 'portzero-built' with Homebrew baked in"
-"$VMSH" checkpoint "$VM" built
-
-echo ">> [5/5] capturing the permanent 'portzero-toolchain' anchor (never auto-overwritten)"
-"$VMSH" checkpoint "$VM" toolchain
-
-cat <<EOF
+cat <<'EOF'
 
 Done.
   portzero-built      -> CLT + Homebrew (vm-test/CI reset point)
@@ -67,6 +51,6 @@ Done.
                          the one-time download — revert here if 'built' is lost)
   portzero-pre-brew   -> pristine, no CLT/brew (preserved)
 Next, mirror the updated VM to the 4 TB drive (off-machine backup of the cache):
-    prlctl stop "$VM" --fast
+    vmkit stop macos
     just vm-sync-macos
 EOF

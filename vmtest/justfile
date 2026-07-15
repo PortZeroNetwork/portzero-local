@@ -122,6 +122,18 @@ vm-repro-trust vm="windows":
 vm-macos-add-brew:
     bash vmtest/scripts/macos-add-brew.sh
 
+# One-time provisioning: bake Windows Defender exclusions (install dir + the
+# artifact drop dir + portzero.exe) into the Windows VM's "portzero-built" reset
+# point, so the intentionally UNSIGNED MSI — installed off the \\Mac\Home share,
+# hence Mark-of-the-Web tagged — can install and launch without Defender's
+# heuristic engine blocking it ("...file contains a virus..."). Baked into the
+# checkpoint via `vmkit provision` so it survives every `vm-test` reset; the
+# pristine pre-exclusion state is preserved as `portzero-built-pre-defender`.
+[macos]
+vm-windows-add-defender-exclusions:
+    vmkit provision windows vmtest/scripts/windows-add-defender-exclusions.ps1 \
+        --checkpoint built --label defender
+
 # Mirror the macOS VM + its cache from the internal disk to the archive drive.
 # VM must be powered off. Pass --dry-run / --delete through.
 [macos]

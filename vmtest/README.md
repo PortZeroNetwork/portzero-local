@@ -327,6 +327,45 @@ to mirror the image (all three snapshots) to the 4 TB drive as the off-machine
 backup of the cache. To rebuild Homebrew from scratch (rare), revert to
 `portzero-pre-brew` and re-run `just vm-macos-add-brew`.
 
+Under the hood `vm-macos-add-brew` is now just a `vmkit provision` call (the
+reusable "reset → run a guest script → re-checkpoint" primitive; see
+`$(brew --prefix)/opt/vmkit/libexec/docs/PROVISIONING.md`) — the same primitive
+the Windows Defender step below uses.
+
+### Windows Defender exclusions (one-time, baked into the snapshot)
+
+The Windows VM E2E path installs an **intentionally unsigned** MSI (signing is
+release-only) straight off the `\\Mac\Home` share, so the installed binary
+inherits Mark-of-the-Web and Windows Defender's heuristic engine blocks it from
+launching:
+
+```
+Start-Process : ... the file contains a virus or potentially unwanted software.
+```
+
+The fix is a one-time Defender **exclusion** for the install dir
+(`%ProgramFiles%\Port Zero`), the artifact drop dir, and `portzero.exe`. Like
+Homebrew on macOS, it must survive the per-test reset, so it's baked into
+`portzero-built` **once** and every `just vm-test windows` reset inherits it:
+
+```
+just vm-windows-add-defender-exclusions     # bake exclusions into portzero-built
+```
+
+That recipe is a `vmkit provision` call
+(`vmtest/scripts/windows-add-defender-exclusions.ps1`, `--checkpoint built
+--label defender`): it resets to `built`, preserves the pristine pre-exclusion
+state once as `portzero-built-pre-defender`, applies the exclusions in the
+guest (idempotently, via `Add-MpPreference`), then re-captures `built`. The
+guest script SKIPs cleanly if the Defender module is absent, and names Tamper
+Protection / policy as the likely cause if an exclusion won't stick. This is a
+**test-VM convenience for unsigned pre-release artifacts** — real users install
+a signed MSI Defender already trusts, so nothing here ships to users.
+
+> **Note.** This is a test-only convenience, not a product safety toggle. It is
+> deliberately a *manual, one-time* provisioning step (it mutates VM/snapshot
+> state), never a CI step on the self-hosted runner — same as `vm-macos-add-brew`.
+
 ## Adding a system test
 
 1. Write `vmtest/scripts/<name>.ps1` (or `.sh` for Linux/macOS guests). Make it
