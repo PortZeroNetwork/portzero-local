@@ -1,4 +1,4 @@
-//! Regenerates `installer/getting-started.json` and `docs/examples.md` from
+//! Regenerates `installer/getting-started.json` and `docs/users/examples.md` from
 //! the adjacent `portzero-examples` checkout. Run via `just examples-docs`.
 
 use std::path::{Path, PathBuf};
@@ -130,7 +130,7 @@ fn main() -> Result<()> {
         .with_context(|| format!("write {}", manifest_path.display()))?;
     println!("wrote {}", manifest_path.display());
 
-    let docs_path = repo_root.join("docs/examples.md");
+    let docs_path = repo_root.join("docs/users/examples.md");
     std::fs::write(&docs_path, render_docs(&examples))
         .with_context(|| format!("write {}", docs_path.display()))?;
     println!("wrote {}", docs_path.display());

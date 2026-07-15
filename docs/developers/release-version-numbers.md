@@ -27,19 +27,19 @@ The bump you pick is the bump you get:
 
 The base version is always computed from the latest **stable** `vX.Y.Z` tag
 (`git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v -- '-' | sort -V | tail -1`) —
-prerelease tags (`vX.Y.Z-rc.N`) are filtered out so they never perturb the next
+unstable tags (`vX.Y.Z-rc.N`) are filtered out so they never perturb the next
 stable bump. Once pushed, the tag itself is the release of record; the tag build
 reads its version straight from the tag name (`github.ref_name`) rather than
 recomputing anything.
 
-## Prereleases
+## Unstable builds
 
-An `edge`-channel `workflow_dispatch` run of the same workflow (Actions →
-Release → Run workflow off `staging`, `channel: edge`) instead produces a
-prerelease versioned `X.Y.Z-rc.<run-number>` and tagged/marked
+An unstable-channel `workflow_dispatch` run of the same workflow (Actions →
+Release → Run workflow off `staging`, `channel: unstable`) instead produces a
+unstable versioned `X.Y.Z-rc.<run-number>` and tagged/marked
 `prerelease: true`. For edge builds only, the `X.Y.Z` base is still derived from
 the tip commit's markers (`BREAKING CHANGE`/`[major]` → major, `feat:`/`[minor]`
-→ minor, else patch) on top of the latest stable tag, so an edge cut always
-sorts just below the next possible stable. Those builds are the edge testing
+→ minor, else patch) on top of the latest stable tag, so an unstable cut always
+sorts just below the next possible stable. Those builds are the unstable testing
 channel and never touch the stable install paths — see
-[prerelease-channel.md](prerelease-channel.md).
+[unstable-channel.md](unstable-channel.md).

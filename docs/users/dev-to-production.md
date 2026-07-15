@@ -58,7 +58,7 @@ subsequent steps:
 Actions job).
 
 > These commands are the script-friendly escape hatch. For Playwright
-> specifically, the [`@portzero/playwright`](../client) fixture package talks to
+> specifically, the [`@portzero/playwright`](../../client) fixture package talks to
 > the daemon directly and is the preferred integration.
 
 ## `portzero wait <tunnel-domain> [--healthy] [--timeout <secs>]`

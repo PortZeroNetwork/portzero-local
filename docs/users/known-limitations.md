@@ -55,7 +55,7 @@ unknown one every run."
 
 **Fallback (documented, in use)**: set `ignoreHTTPSErrors: true` for the
 `firefox` project in Playwright config. This is what
-[`testing/tls-verify/playwright.config.ts`](../testing/tls-verify/playwright.config.ts)
+[`testing/tls-verify/playwright.config.ts`](../../testing/tls-verify/playwright.config.ts)
 does; see that project's README for the full per-engine expectation table and
 the CI workflow (`.github/workflows/playwright-tls-verify.yml`) that exercises
 it on a real runner.
@@ -90,7 +90,7 @@ in `trust.rs`.
 
 **Fallback (documented, in use)**: `ignoreHTTPSErrors: true` for the
 `chromium` and `webkit` projects too, alongside `firefox`, in
-[`testing/tls-verify/playwright.config.ts`](../testing/tls-verify/playwright.config.ts) —
+[`testing/tls-verify/playwright.config.ts`](../../testing/tls-verify/playwright.config.ts) —
 matching observed CI reality rather than the (currently incorrect) theoretical
 expectation. `.github/workflows/playwright-tls-verify.yml` also installs
 `p11-kit-modules` and runs a non-fatal diagnostic (`trust extract-compat`

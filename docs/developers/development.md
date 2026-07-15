@@ -28,7 +28,7 @@ just verify          # fmt + clippy (-D) + test + complexity
 just fmt-check
 just clippy
 just test
-just complexity      # file-size budget on client/*.rs; see docs/dev/complexity-budgets.md
+just complexity      # file-size budget on client/*.rs; see docs/developers/complexity-budgets.md
 ```
 
 These are the same commands the CI uses on Linux (and the Rust parts of the other OS jobs).

@@ -1,16 +1,15 @@
-name: Promote to Production
+name: Trigger Stable Release
 
-# The gated release "button" — same workflow name, inputs, and `production`
-# environment gate as portzero-cloud's promote. This repo ships a distributed
-# artifact (the CLI), so "promote to production" means: stamp the next
-# immutable `vX.Y.Z` tag off the chosen ref (normally the `staging` tip). The
-# tag push triggers release.yml, which builds the signed installers and
-# publishes the GitHub Release + Homebrew formula.
+# Gated **stable** release button (downloadable product). Same production
+# environment gate pattern as portzero-cloud. Stamps the next immutable
+# `vX.Y.Z` tag on the chosen ref (normally `staging`); the tag push triggers
+# release.yml as a **Stable Release** (signed installers + GitHub Release +
+# Homebrew). Unstable builds are automatic on every push to `staging` — this
+# workflow is only for stable.
 #
-# Roll back / re-publish by dispatching again with `ref` set to an existing
-# `vX.Y.Z` tag and `bump: none` — that re-runs the Release build for that tag
-# (channel: stable) without cutting a new version, re-pointing "latest" and
-# the Homebrew formula at it.
+# Roll back / re-publish: dispatch again with `ref` set to an existing
+# `vX.Y.Z` tag and `bump: none` — re-dispatches release.yml with
+# channel=stable without cutting a new version.
 on:
   workflow_dispatch:
     inputs:
@@ -35,7 +34,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: promote-production
+  group: trigger-stable-release
   cancel-in-progress: false
 
 jobs:
@@ -66,8 +65,8 @@ jobs:
           RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
         run: |
           # Latest stable vX.Y.Z tag across history; default v0.0.0 if none.
-          # Prerelease tags (vX.Y.Z-rc.N) are excluded so an edge cut never
-          # perturbs the next stable bump.
+          # Unstable tags (vX.Y.Z-rc.N) are excluded so they never
+          # perturb the next stable bump.
           LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v -- '-' | sort -V | tail -1)
           LATEST_TAG="${LATEST_TAG:-v0.0.0}"
           MAJOR=$(echo "$LATEST_TAG" | sed 's/^v//' | cut -d. -f1)
@@ -98,13 +97,11 @@ jobs:
           git config --local --unset-all http.https://github.com/.extraheader || true
           git push "https://x-access-token:${RELEASE_TAG_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$TAG"
 
-      # Rollback / re-publish: re-run the Release build for an existing stable
-      # tag. workflow_dispatch is one of the two event types the GITHUB_TOKEN
-      # IS allowed to trigger, so no PAT is needed here. Note: the dispatched
-      # run uses release.yml as of that tag, so this path only works for tags
-      # cut after release.yml learned `channel: stable`; older tags are
-      # re-published by re-running their original Release run from the
-      # Actions UI.
+      # Rollback / re-publish: re-run Stable Release for an existing stable
+      # tag. workflow_dispatch is allowed with GITHUB_TOKEN (no PAT). Note:
+      # the dispatched run uses release.yml as of that tag, so this path only
+      # works for tags cut after channel=stable existed; older tags: re-run
+      # their original Stable Release from the Actions UI.
       - name: Re-publish existing release (bump=none)
         if: ${{ inputs.bump == 'none' }}
         env:
@@ -122,5 +119,5 @@ jobs:
             echo "::error::tag $REF does not exist." >&2
             exit 1
           fi
-          echo "Re-dispatching Release for $REF ($(git rev-parse --short "refs/tags/$REF^{commit}"))"
+          echo "Re-dispatching Stable Release for $REF ($(git rev-parse --short "refs/tags/$REF^{commit}"))"
           gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$REF" -f channel=stable

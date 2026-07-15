@@ -4,7 +4,7 @@ import? 'vmtest/justfile'
 default:
     @just --list
 
-# Refresh installer/getting-started.json and docs/examples.md from ../portzero-examples.
+# Refresh installer/getting-started.json and docs/users/examples.md from ../portzero-examples.
 [unix]
 examples-docs:
     CARGO_TARGET_DIR=/tmp/portzero-target cargo run -p portzero-daemon --bin generate-examples-docs
@@ -412,7 +412,7 @@ openapi:
     $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
     cargo run -p portzero-daemon --bin generate-openapi
 
-# Enforce file-size/complexity budgets on client/*.rs (see docs/dev/complexity-budgets.md).
+# Enforce file-size/complexity budgets on client/*.rs (see docs/developers/complexity-budgets.md).
 # Checks the whole tree by default; pass `--changed` to scope to staged files
 # (used by the pre-commit hook, so it stays fast).
 [unix]
@@ -447,7 +447,7 @@ verify:
 #
 # IMPORTANT:
 #   - Privileged tests (`just e2e`) are deliberately NOT included.
-#     See explanation below and in docs/privileges.md.
+#     See explanation below and in docs/users/privileges.md.
 #   - You can still bypass with `git push --no-verify` in emergencies.
 # -----------------------------------------------------------------------------
 

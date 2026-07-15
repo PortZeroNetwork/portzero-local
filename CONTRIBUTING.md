@@ -4,8 +4,8 @@ Thank you for your interest in contributing to Port Zero Local!
 
 ## Getting Started
 
-1. Read the development documentation: [docs/dev/README.md](docs/dev/README.md)
-2. Review our [development guide](docs/dev/development.md), [SDLC](docs/dev/sdlc.md), and other docs under `docs/dev/`.
+1. Read the development documentation: [docs/developers/README.md](docs/developers/README.md)
+2. Review our [development guide](docs/developers/development.md), [SDLC](docs/developers/sdlc.md), and other docs under `docs/developers/`.
 3. Follow the project's coding and commit conventions (see `AGENTS.md` and `CLAUDE.md` at the repository root).
 
 ## Pull Request Process

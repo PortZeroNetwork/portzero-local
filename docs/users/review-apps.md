@@ -85,7 +85,7 @@ example.
 This example deploys a review app to a **long-lived host** that already has
 the Port Zero daemon running (a self-hosted GitHub Actions runner, a shared dev
 box, whatever you already use). That's a deliberate difference from CI-only
-ephemeral tunnels (see [`tunnel-action`](../tunnel-action/README.md)): a review
+ephemeral tunnels (see [`tunnel-action`](../../tunnel-action/README.md)): a review
 app needs to keep running *after* the CI job that deployed it finishes, so it
 must live somewhere persistent, not on a throwaway hosted runner.
 
@@ -227,7 +227,7 @@ sees it running.
 
 - [`PZ_TUNNEL` semantics](portzero.md) — the full-domain rule and template
   placeholders.
-- [`tunnel-action`](../tunnel-action/README.md) — the GitHub Action for the
+- [`tunnel-action`](../../tunnel-action/README.md) — the GitHub Action for the
   *different* case of ephemeral, single-job tunnels on hosted runners (e.g. a
   test suite that needs a real HTTPS URL for the duration of one CI job, not a
   long-lived preview environment).

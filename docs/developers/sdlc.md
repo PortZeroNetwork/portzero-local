@@ -8,10 +8,10 @@ This repository uses a Heroku-style, tag-addressed release model (the same one
 - There is **no** `release/*` branch. A stable **release is an immutable
   `vX.Y.Z` tag** — the release of record, browsable under Tags.
 - Cutting a stable release is a deliberate, gated action: you dispatch the
-  **Promote to Production** workflow and pick the version bump, then a required
+  **Trigger Stable Release** workflow and pick the version bump, then a required
   reviewer approves the `production` GitHub Environment. That stamps the tag,
   and the tag push builds and publishes the signed release. (Naming: see
-  [docs/release-conventions.md](../release-conventions.md) — the same workflow
+  [docs/developers/release-conventions.md](release-conventions.md) — the same workflow
   name, inputs, and gate as `portzero-cloud`.)
 - GitHub Actions CI runs on PRs into `staging` (see
   `.github/workflows/ci.yml`).
@@ -32,11 +32,11 @@ is intentionally manual because it needs root or Administrator privileges.
 
 ## Cut a stable release
 
-A stable release is cut by the gated **Promote to Production** workflow
-(`.github/workflows/promote-production.yml`), which picks the bump explicitly
+A stable release is cut by the gated **Trigger Stable Release** workflow
+(`.github/workflows/trigger-stable-release.yml`), which picks the bump explicitly
 and pushes the `vX.Y.Z` tag from the `staging` tip:
 
-1. Go to **Actions → Promote to Production → Run workflow**, with `staging`
+1. Go to **Actions → Trigger Stable Release → Run workflow**, with `staging`
    selected as the branch to run from (or set **ref** explicitly).
 2. Pick the **bump** (`patch` / `minor` / `major`).
 3. Run it. The `promote` job pauses on the `production` environment gate until
@@ -94,7 +94,7 @@ git push origin vX.Y.Z              # re-push the SAME tag on the SAME commit �
 If that still doesn't fire, the tag push is being made with a token that can't
 trigger workflows — push the tag from a PAT / GitHub App token instead of the
 default `GITHUB_TOKEN` (see the trigger-safe tag push snippet in
-[docs/release-conventions.md](../release-conventions.md)), or just cut the next
+[docs/developers/release-conventions.md](release-conventions.md)), or just cut the next
 patch with a fresh promote.
 
 ### A bad release actually shipped (roll back)
@@ -107,7 +107,7 @@ You do **not** delete or move the tag to undo a release. Two steps:
    GitHub's `/releases/latest`, which **ignores** pre-releases — so this single
    toggle immediately drops the bad build out of the in-CLI update check and the
    `curl | sh` / homepage paths. (See
-   [prerelease-channel.md](prerelease-channel.md) for why `/releases/latest` is
+   [unstable-channel.md](unstable-channel.md) for why `/releases/latest` is
    the linchpin.)
    - **Homebrew is separate:** `update-homebrew` already pushed the bad version
      into the tap's stable `portzero` formula, and the toggle above does **not**
@@ -129,4 +129,4 @@ You do **not** delete or move the tag to undo a release. Two steps:
 A prerelease is cut off `staging` by dispatching the same workflow with
 **channel** `edge` (the default). It is ungated and produces an **unsigned**
 build tagged/marked `prerelease: true`, so it never touches the stable install
-paths. See [prerelease-channel.md](prerelease-channel.md).
+paths. See [unstable-channel.md](unstable-channel.md).

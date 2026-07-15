@@ -97,7 +97,7 @@ best-effort and non-fatal by design, and doesn't affect the overlay itself.
 suggests the exact line; `portzero doctor` re-checks it), or skip name
 resolution and use `portzero url` / `portzero env` / `portzero wait` to get
 the concrete tunnel URL for scripts — see
-[`tunnel-action`](../tunnel-action/README.md), which uses the same pattern
+[`tunnel-action`](../../tunnel-action/README.md), which uses the same pattern
 because CI runners have the identical no-systemd shape.
 
 **Before editing `/etc/hosts` yourself**, know that a plain permission check
@@ -163,4 +163,4 @@ browser/engine CA-trust gaps, e.g. Playwright's bundled Firefox).
 - Or run `--foreground` to see logs on the console.
 - `portzero status` shows the current discovered Local tunnels and routes.
 
-For development workflow, tests, hooks, and contributor instructions see [dev/development.md](dev/development.md).
+For development workflow, tests, hooks, and contributor instructions see [dev/development.md](../developers/development.md).

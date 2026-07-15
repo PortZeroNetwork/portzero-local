@@ -1,44 +1,36 @@
 name: Release
+# Per-run title in the Actions list (one file serves both channels).
+run-name: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) && 'Stable Release' || (github.event_name == 'workflow_dispatch' && inputs.channel == 'stable') && 'Stable Release' || 'Unstable Release' }}
 
-# Heroku-style, tag-addressed release model (mirrors portzero-cloud; see
-# docs/release-conventions.md):
+# Heroku-style, tag-addressed release model (see docs/developers/release-conventions.md):
 #
-#   * A STABLE release is the immutable `vX.Y.Z` tag — the release of record.
-#     Pushing such a tag triggers the SIGNED build below. There is no
-#     `release/*` branch; the tag is what "is released", browsable under Tags.
+#   * STABLE — immutable `vX.Y.Z` tag is the release of record. Trigger Stable
+#     Release (trigger-stable-release.yml) stamps the tag behind the production
+#     environment gate; this workflow then builds SIGNED installers.
 #
-#   * Cutting a stable release is a deliberate, gated act: dispatch the
-#     `Promote to Production` workflow (promote-production.yml) with a `bump`,
-#     then approve the `production` environment gate (a required reviewer).
-#     Its `promote` job computes the next `vX.Y.Z` from the latest stable tag
-#     and pushes it from the `staging` tip; that tag push starts the signed
-#     build here.
+#   * UNSTABLE — every push to `staging` automatically builds UNSIGNED installers
+#     and publishes a GitHub Release that is never "latest" (`prerelease: true`).
+#     Manual workflow_dispatch with channel=unstable is also supported.
 #
-#   * A `channel: stable` dispatch of THIS workflow re-publishes an existing
-#     release: it must be dispatched at a `vX.Y.Z` tag ref (Promote to
-#     Production does this for you on `bump: none`) and rebuilds/re-publishes
-#     that exact version — the rollback path for a distributed artifact.
+#   * channel=stable workflow_dispatch re-publishes an existing vX.Y.Z tag
+#     (Trigger Stable Release does this for you on bump=none).
 #
-#   * The prerelease ("edge") channel is an ungated manual dispatch
-#     (`channel: edge`, the default) cut off `staging`. An edge run always
-#     produces a GitHub Release marked `prerelease: true`, so it never becomes
-#     GitHub's "latest", is never seen by the in-CLI update check, never lands
-#     on the stable install paths, and ships UNSIGNED. See
-#     docs/dev/prerelease-channel.md.
+# Call channels **stable** / **unstable** in prose — not "edge" or "prerelease".
+# GitHub's prerelease flag and the portzero-edge Homebrew formula are mechanics.
 on:
-  # Stable releases are triggered by pushing an immutable vX.Y.Z tag (stamped
-  # by the gated `promote` job in promote-production.yml, off the `staging` tip).
   push:
+    branches:
+      - staging
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
       channel:
-        description: 'edge = ungated unsigned prerelease off staging (default). stable = re-publish the vX.Y.Z tag this run is dispatched at (used by Promote to Production, bump=none).'
+        description: 'unstable = unsigned testing build off staging. stable = re-publish the vX.Y.Z tag this run is dispatched at (used by Trigger Stable Release, bump=none).'
         type: choice
-        default: edge
+        default: unstable
         options:
-          - edge
+          - unstable
           - stable
 
 permissions:
@@ -51,6 +43,9 @@ env:
 jobs:
   version:
     name: Determine Version
+    # softprops creates vX.Y.Z-rc.N tags for unstable releases; ignore those
+    # tag-push re-entries (would otherwise look like a broken stable run).
+    if: ${{ !(github.event_name == 'push' && contains(github.ref_name, '-')) }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -67,21 +62,37 @@ jobs:
       - name: Generate version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.channel }}" = "stable" ]; then
+          # Resolve channel: stable (tag / re-publish) vs unstable (staging push / manual).
+          CHANNEL="unstable"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            case "$GITHUB_REF" in
+              refs/tags/v*) CHANNEL="stable" ;;
+              refs/heads/staging) CHANNEL="unstable" ;;
+              *)
+                echo "::error::unexpected push ref $GITHUB_REF (expected staging branch or vX.Y.Z tag)." >&2
+                exit 1
+                ;;
+            esac
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CHANNEL="${{ inputs.channel }}"
+            # Legacy alias if anything still dispatches channel=edge.
+            if [ "$CHANNEL" = "edge" ]; then CHANNEL="unstable"; fi
+          fi
+          echo "channel=${CHANNEL}"
+
+          if [ "$CHANNEL" = "stable" ]; then
             # Stable build: the version IS the vX.Y.Z tag this run is for —
-            # either the tag push that triggered it (stamped by the gated
-            # `promote` job in promote-production.yml), or, for a
-            # `channel: stable` re-publish dispatch, the tag ref the dispatch
-            # was made at. Never a recomputation.
+            # either the tag push (stamped by Trigger Stable Release), or a
+            # channel=stable re-publish dispatch at that tag. Never recompute.
             TAG="${GITHUB_REF_NAME}"
             case "$GITHUB_REF" in
               refs/tags/v*-*)
-                echo "::error::channel=stable cannot re-publish a prerelease tag ($GITHUB_REF_NAME)." >&2
+                echo "::error::channel=stable cannot re-publish an unstable tag ($GITHUB_REF_NAME)." >&2
                 exit 1
                 ;;
               refs/tags/v[0-9]*.[0-9]*.[0-9]*) : ;;
               *)
-                echo "::error::channel=stable must be dispatched at an existing vX.Y.Z tag ref (got $GITHUB_REF). Use Promote to Production with bump=none, or pick the tag in the Run-workflow ref dropdown." >&2
+                echo "::error::channel=stable must run at an existing vX.Y.Z tag ref (got $GITHUB_REF). Use Trigger Stable Release with bump=none, or pick the tag in the Run-workflow ref dropdown." >&2
                 exit 1
                 ;;
             esac
@@ -91,11 +102,10 @@ jobs:
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "formula=portzero" >> "$GITHUB_OUTPUT"
           else
-            # Prerelease / edge channel (workflow_dispatch off staging). The
-            # BASE is derived from the latest stable tag + the tip commit's
-            # markers, exactly as before. Only stable tags (vX.Y.Z) drive the
-            # auto-increment; prerelease tags (vX.Y.Z-rc.N) are excluded so they
-            # never perturb the next stable version.
+            # Unstable channel: every push to staging (or manual dispatch).
+            # BASE is derived from the latest stable tag + tip commit markers.
+            # Only stable tags (vX.Y.Z) drive the auto-increment; unstable tags
+            # (vX.Y.Z-rc.N) are excluded so they never perturb the next stable.
             LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | grep -v -- '-' | sort -V | tail -1)
             LATEST_TAG="${LATEST_TAG:-v0.0.0}"
 
@@ -133,7 +143,7 @@ jobs:
             RPM_VERSION="${VERSION//-/\~}"
             # WiX ProductVersion must be a bare x.x.x.x integer quad; fold the
             # prerelease info into the 4th field via the run number so
-            # successive edge builds still install as upgrades.
+            # successive unstable builds still install as upgrades.
             MSI_VERSION="${BASE_VERSION}.${GITHUB_RUN_NUMBER}"
           else
             RPM_VERSION="$VERSION"
@@ -348,7 +358,7 @@ jobs:
       - name: Azure login for Artifact Signing
         # Sign only the SIGNED stable path — a genuine vX.Y.Z tag build. The
         # Azure federated-identity credential trusts `refs/tags/v*`, not the
-        # edge (workflow_dispatch) refs, and edge builds are for testing rather
+        # unstable (staging push / workflow_dispatch) refs; unstable builds are for testing rather
         # than distribution. Gating on the tag ref means no dispatch can ever
         # reach the signing steps regardless of inputs.
         if: matrix.archive_ext == 'zip' && startsWith(github.ref, 'refs/tags/v')
@@ -587,7 +597,7 @@ jobs:
       - name: Azure login for Artifact Signing
         # Sign only the SIGNED stable path — a genuine vX.Y.Z tag build. The
         # Azure federated-identity credential trusts `refs/tags/v*`, not the
-        # edge (workflow_dispatch) refs. Edge MSIs ship unsigned for testing.
+        # unstable (staging push / workflow_dispatch) refs. Unstable MSIs ship unsigned for testing.
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: azure/login@v3
         with:
@@ -793,17 +803,17 @@ jobs:
       - name: Compose release notes
         run: |
           if [ "${{ needs.version.outputs.prerelease }}" = "true" ]; then
-            # Edge channel: intentionally NOT the stable brew/curl commands, so a
-            # copy-paste from this page can only ever install the edge build.
+            # Unstable channel: intentionally NOT the stable brew/curl commands, so a
+            # copy-paste from this page can only ever install the unstable build.
             cat > artifacts/NOTES.md <<'EOF'
-          ## Prerelease (edge channel) — for testing only
+          ## Unstable channel — for testing only
 
           > This is an **unstable build cut off `staging`** for testing installers.
           > It is not a supported release. Stable users are never directed or
           > updated here. It talks to the **production** portzero.cloud, same as
-          > stable. See [docs/dev/prerelease-channel.md](https://github.com/PortZeroNetwork/portzero-local/blob/staging/docs/dev/prerelease-channel.md).
+          > stable. See [docs/developers/unstable-channel.md](https://github.com/PortZeroNetwork/portzero-local/blob/staging/docs/developers/unstable-channel.md).
 
-          **macOS (Homebrew — edge formula)**
+          **macOS (Homebrew — unstable formula `portzero-edge`)**
           ```sh
           brew tap PortZeroNetwork/portzero
           brew install portzeronetwork/portzero/portzero-edge
@@ -936,7 +946,7 @@ jobs:
           pattern: sha256-portzero-darwin-*
           merge-multiple: true
 
-      - name: Checkout portzero-local (edge formula template)
+      - name: Checkout portzero-local (unstable formula template)
         if: ${{ needs.version.outputs.prerelease == 'true' }}
         uses: actions/checkout@v5
         with:
@@ -960,7 +970,7 @@ jobs:
           TARGET="tap/Formula/${FORMULA}.rb"
 
           if [ "${FORMULA}" = "portzero-edge" ]; then
-            # Seed the edge formula from the in-repo template (single source of
+            # Seed the unstable formula (still named portzero-edge) from the in-repo template (single source of
             # truth for its shape) so the tap does not have to carry it by hand.
             mkdir -p tap/Formula
             cp "src/packaging/homebrew/Formula/portzero-edge.rb" "$TARGET"

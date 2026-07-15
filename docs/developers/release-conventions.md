@@ -1,7 +1,7 @@
 # Release conventions
 
-> This document is the canonical description of the staging → promote →
-> release model used by PortZero repositories. It is written to be lifted
+> This document is the canonical description of the staging → trigger stable
+> → build model used by PortZero repositories. It is written to be lifted
 > verbatim into any new product. `portzero-cloud` (deployed service) and
 > `portzero-local` (distributed artifact) are the two reference
 > implementations; keep the two copies of this file in sync.
@@ -13,7 +13,7 @@
   `production`, `develop`, `main`, or `release/*` branch.
 - **Production is a promoted, tag-addressed release** (Heroku-style), not a
   branch. Promotion is a deliberate, manual act: dispatch the
-  **Promote to Production** workflow, then approve the `production` GitHub
+  **Trigger Stable Release** workflow, then approve the `production` GitHub
   Environment gate (a required reviewer) — that approval is the "button", and
   it is logged with who/when.
 - **The release of record is an immutable `vX.Y.Z` git tag.** The promote
@@ -23,7 +23,7 @@
 - **The version bump is explicit.** The promote takes a `bump` input
   (`patch` / `minor` / `major`) chosen by the person promoting — never
   inferred from commit messages. The bump you pick is the bump you get.
-- **Rollback is a re-promote**: dispatch Promote to Production again with
+- **Rollback is a re-promote**: dispatch Trigger Stable Release again with
   `ref` set to an older tag/SHA and `bump: none` — it redeploys/re-publishes
   the existing release without cutting a new tag.
 
@@ -33,21 +33,21 @@ The same names cover both kinds of product:
 
 | | Deployed service (`portzero-cloud`) | Distributed artifact (`portzero-local`) |
 |---|---|---|
-| "Promote" means | Deploy the ref to the production infra, health-check it, then stamp `vX.Y.Z` | Stamp `vX.Y.Z` on the ref (the gate is the whole act) |
-| `Release` (tag push) does | Build/publish artifacts for the record | Build signed installers, publish the GitHub Release, bump Homebrew/WinGet |
-| `bump: none` rollback | Redeploy the older ref's already-built image; no new tag | Re-run the Release build for the older tag (`channel: stable`), re-pointing `latest` and the package managers at it |
+| "Trigger Stable Release" means | Deploy the ref to the production infra, health-check it, then stamp `vX.Y.Z` | Stamp `vX.Y.Z` on the ref (the gate is the whole act) |
+| Build workflow does | Build/publish artifacts for the record | Build signed installers, publish the GitHub Release, bump Homebrew/WinGet |
+| `bump: none` rollback | Redeploy the older ref's already-built image; no new tag | Re-run **Stable Release** for the older tag (`channel: stable`), re-pointing `latest` and package managers |
 | `Deploy Staging` / `Teardown Staging` | Yes — a live staging environment | Not applicable (CI tests against portzero-cloud's staging instead) |
 
 ## Canonical names
 
 ### Workflows
 
-| File | `name:` | Trigger | Purpose |
+| File | `name:` / run title | Trigger | Purpose |
 |---|---|---|---|
-| `ci.yml` | `CI` | PRs into `staging` + pushes to `staging` | Build, lint, test — plus fast credential-free static config checks (e.g. `terraform fmt`/`validate`, `docker compose config`, `caddy adapt`) as extra jobs |
-| `deploy-staging.yml` | `Deploy Staging` | push to `staging` | Ungated auto-deploy to the staging environment + live E2E (service archetype only) |
-| `promote-production.yml` | `Promote to Production` | `workflow_dispatch` | The gated promote: deploy and/or stamp the `vX.Y.Z` tag |
-| `release.yml` | `Release` | push of tag `v[0-9]+.[0-9]+.[0-9]+` | Build + publish the release for the tag |
+| `ci.yml` | `CI` | PRs into `staging` + pushes to `staging` | Build, lint, test — plus fast credential-free static config checks |
+| `deploy-staging.yml` | `Deploy Staging` | push to `staging` | Ungated auto-deploy + live E2E (**service** archetype only) |
+| `trigger-stable-release.yml` | `Trigger Stable Release` | `workflow_dispatch` + `production` env gate | Stamp `vX.Y.Z` (or `bump: none` re-publish). Downloadable: tag only. Service: deploy production then tag. |
+| `release.yml` | run-name **Stable Release** or **Unstable Release** | **Stable:** push `vX.Y.Z` tag or `workflow_dispatch` `channel=stable`. **Unstable (downloadable):** every push to `staging` or `workflow_dispatch` `channel=unstable` | Multi-platform build + GitHub Release (+ packages). Unstable is unsigned and never latest. |
 | `teardown-staging.yml` | `Teardown Staging` | `workflow_dispatch` | Destroy staging infra on demand (service archetype only) |
 
 Product-specific extra workflows (extra E2E suites, `terraform-plan.yml` PR
@@ -60,7 +60,7 @@ should not reuse the five canonical names above for anything else.
 |---|---|---|
 | `check` | CI | The main build/lint/test job |
 | `deploy` | Deploy Staging | Deploy + verify staging |
-| `promote` | Promote to Production | The gated job (has `environment: production`) |
+| `promote` | Trigger Stable Release | The gated job (`environment: production`) |
 | `version`, `build`, `release` | Release | Determine version from the tag; build artifacts; publish |
 | `teardown` | Teardown Staging | Terraform destroy |
 
@@ -93,7 +93,7 @@ Release-machinery names — identical in every product:
 
 | Name | Kind | Purpose |
 |---|---|---|
-| `RELEASE_TAG_TOKEN` | secret (PAT, `contents: read+write` on the repo) | Pushes the `vX.Y.Z` tag so the push actually triggers `Release` (see below) |
+| `RELEASE_TAG_TOKEN` | secret (PAT, `contents: read+write` on the repo) | Pushes the `vX.Y.Z` tag so the push actually triggers `Stable Release` / `Unstable Release` (see below) |
 | `HOMEBREW_TAP_TOKEN` | secret (PAT on the tap repo) | Artifact products: push formula bumps to the Homebrew tap |
 | `WINGET_TOKEN` | secret (PAT) | Artifact products: submit WinGet manifests |
 
@@ -114,7 +114,7 @@ GitHub-Settings side does not rename with the workflow reference.
 ## The trigger-safe tag push (copy this snippet)
 
 A tag pushed with the default `GITHUB_TOKEN` does **not** trigger workflows
-(GitHub's anti-recursion rule) — `Release` would silently never fire. Two
+(GitHub's anti-recursion rule) — `Stable Release` / `Unstable Release` would silently never fire. Two
 things are required, and both fail silently if forgotten:
 
 1. Push the tag with a **PAT** (`RELEASE_TAG_TOKEN`, `contents: read+write`).
@@ -203,12 +203,12 @@ One-time GitHub configuration for a fresh repo adopting this model:
      `WINGET_TOKEN` if shipping WinGet.
    - Product-specific provider credentials as needed (provider-prefixed
      names).
-5. **Workflows**: copy `ci.yml`, `promote-production.yml`, `release.yml`
+5. **Workflows**: copy `ci.yml`, `trigger-stable-release.yml`, `release.yml`
    (plus `deploy-staging.yml` / `teardown-staging.yml` for a deployed
    service) and strip the product-specific jobs/steps.
 6. **First release**: the version machinery defaults to `v0.0.0` when no tag
    exists, so the first promote with `bump: minor` cuts `v0.1.0` — no seed
    tag needed.
 7. **Verify the tag trigger once**: after the first promote, confirm a
-   `Release` run started for the new tag. If the tag exists but no run
+   `Stable Release` / `Unstable Release` run started for the new tag. If the tag exists but no run
    started, the tag was pushed by `GITHUB_TOKEN` — see the snippet above.

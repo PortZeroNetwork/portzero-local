@@ -73,7 +73,7 @@ exactly, is sandbox-specific and documented in
 — this answer is just the steps.)
 
 1. **Install Port Zero** the same way you would anywhere else — see the
-   [README](../README.md) for the current install command per platform.
+   [README](../../README.md) for the current install command per platform.
 2. **Start the daemon as root**, since the overlay needs `CAP_NET_ADMIN`:
    ```bash
    sudo -E portzero start --foreground
@@ -98,7 +98,7 @@ exactly, is sandbox-specific and documented in
    hosts pin from step 4 is in place it will, but for CI-style steps that
    can't add hosts entries, skip name resolution entirely: use `portzero url`
    / `portzero env` / `portzero wait` to get the concrete tunnel URL instead
-   — the same pattern the [`tunnel-action`](../tunnel-action/README.md)
+   — the same pattern the [`tunnel-action`](../../tunnel-action/README.md)
    GitHub Action uses.
 
 ## How do I expose a public `*.tunnel.portzero.cloud` URL from a remote Claude Code session?

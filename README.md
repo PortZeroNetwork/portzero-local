@@ -72,4 +72,4 @@ By installing or using the software you agree to the terms applicable to the fea
 We welcome contributions!
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution process and development setup.
 
-Internal development documentation lives under [`docs/dev/`](docs/dev/).
+Internal development documentation lives under [`docs/developers/`](docs/developers/).
