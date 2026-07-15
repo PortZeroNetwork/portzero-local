@@ -77,15 +77,6 @@ fn decode_jwt_exp(token: &str) -> Option<u64> {
     payload.get("exp")?.as_u64()
 }
 
-/// Derive the dashboard URL from the API URL.
-///
-/// - If `PZ_TUNNEL_DASHBOARD_URL` is set, use it directly.
-/// - If `PZ_TUNNEL_API_URL` looks like `localhost:3001`, use `localhost:3003`.
-/// - Otherwise default to `https://app.portzero.cloud`.
-fn dashboard_url() -> String {
-    endpoints::dashboard_url()
-}
-
 fn generate_session_code() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
@@ -104,7 +95,7 @@ pub async fn start_browser_login_session() -> Result<BrowserLoginSession> {
     let code = generate_session_code();
     let auth_url = format!(
         "{}/#/auth/cli?port={callback_port}&code={code}",
-        dashboard_url()
+        endpoints::dashboard_url()
     );
 
     tokio::spawn(async move {
@@ -374,10 +365,6 @@ impl AuthConfig {
         Ok(())
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
