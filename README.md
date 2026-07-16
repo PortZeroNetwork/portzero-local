@@ -35,11 +35,23 @@ Port Zero runs a background process on your local dev machine that scans for pro
 
 ```sh
 brew tap PortZeroNetwork/portzero
-brew trust portzeronetwork/portzero
 brew install portzero
 ```
 
+> **macOS: unsigned builds and Gatekeeper.** Port Zero binaries are not yet
+> Apple-signed or notarized. Homebrew-installed binaries are normally *not*
+> quarantined, so `brew install` launches fine. A tarball you download from a
+> browser *is* quarantined — if macOS blocks it with "cannot be opened because
+> the developer cannot be verified", clear the flag with
+> `xattr -d com.apple.quarantine <path-to-binary>`, or right-click the binary
+> in Finder and choose **Open** once to approve it.
+
 **Linux**
+```sh
+curl -fsSL https://portzero.net/install.sh | sh
+```
+
+Offline, or want to pin a specific release? Run the release-asset installer directly instead:
 ```sh
 curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | sh
 ```
@@ -53,9 +65,9 @@ Or run the release asset directly:
 curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-uninstall.sh | sh
 ```
 
-**Windows (winget)**
+**Windows**
 
-Download the `.msi` from the assets below and run it manually.
+Download `portzero-<version>-x86_64.msi` from the [latest GitHub release](https://github.com/PortZeroNetwork/portzero-local/releases/latest) and run it. (winget publishing is coming soon.)
 
 The installer and daemon perform local setup automatically where supported.
 

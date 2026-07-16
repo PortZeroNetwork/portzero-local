@@ -383,6 +383,8 @@ fn render_docs(examples: &[Example]) -> String {
         "cd portzero-examples".to_string(),
         "```".to_string(),
         String::new(),
+        "Prefer one click? The PortZero app's **Getting started** panel can download these same examples and run any of them for you — no manual clone or `PZ_TUNNEL` wrangling needed. The steps below are the equivalent done by hand.".to_string(),
+        String::new(),
         "Each example sets `PZ_TUNNEL` so the local daemon can make the process or Docker Compose project available at a `*.portzero.local` name.".to_string(),
         String::new(),
     ];
