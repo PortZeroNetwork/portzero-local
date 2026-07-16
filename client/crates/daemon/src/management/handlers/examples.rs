@@ -38,11 +38,10 @@ const GETTING_STARTED_JSON: &str = include_str!(concat!(
 /// a handle to cancel.
 pub type RunningExamples = Arc<Mutex<HashMap<String, RunningExample>>>;
 
-/// A live example process. `cancel` asks the supervisor to stop; `pgid` is the
-/// process-group id used to terminate the whole tree at once on Unix.
+/// A live example process. `cancel` asks the supervisor (which owns the
+/// actual process/compose teardown) to stop.
 pub struct RunningExample {
     cancel: Arc<Notify>,
-    pgid: Option<i32>,
 }
 
 /// Absolute path to the examples checkout (`~/portzero-examples`).
@@ -274,8 +273,12 @@ pub async fn run_example(State(state): State<AppState>, Query(q): Query<RunQuery
             "Example directory {rel_path} is missing. Re-download the examples."
         ));
     }
+    let uses_docker_compose = example
+        .get("uses_docker_compose")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
-    spawn_streaming_example(state, q.id, rel_path, command, workdir).await
+    spawn_streaming_example(state, q.id, rel_path, command, workdir, uses_docker_compose).await
 }
 
 /// One SSE output line.
@@ -310,6 +313,7 @@ async fn spawn_streaming_example(
     rel_path: String,
     command: String,
     workdir: PathBuf,
+    uses_docker_compose: bool,
 ) -> Response {
     // Restart semantics: if this example is already running, stop the old one.
     stop_running(&state, &id).await;
@@ -323,15 +327,14 @@ async fn spawn_streaming_example(
     };
 
     let pgid = child.id().map(|p| p as i32);
+    let compose_workdir = uses_docker_compose.then(|| workdir.clone());
 
     let cancel = Arc::new(Notify::new());
-    state.running_examples.lock().await.insert(
-        id.clone(),
-        RunningExample {
-            cancel: cancel.clone(),
-            pgid,
-        },
-    );
+    state
+        .running_examples
+        .lock()
+        .await
+        .insert(id.clone(), RunningExample { cancel: cancel.clone() });
 
     // Echo the commands the user is running, so the console reads like a shell.
     let _ = tx
@@ -352,7 +355,7 @@ async fn spawn_streaming_example(
 
     let running = state.running_examples.clone();
     tokio::spawn(async move {
-        supervise(&mut child, &tx, &cancel, pgid).await;
+        supervise(&mut child, &tx, &cancel, pgid, compose_workdir.as_deref()).await;
         running.lock().await.remove(&id);
     });
 
@@ -409,13 +412,20 @@ where
     });
 }
 
+/// Grace period between SIGTERM and SIGKILL, so `docker compose up` (and other
+/// well-behaved CLIs) gets a chance to run its own shutdown before we force-kill
+/// it out from under any teardown it's doing.
+const TERMINATE_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Wait for the example to finish, the client to disconnect, or a stop request —
-/// whichever comes first — then make sure the process tree is gone.
+/// whichever comes first — then make sure the process tree (and, for `docker
+/// compose` examples, the containers it started) is gone.
 async fn supervise(
     child: &mut tokio::process::Child,
     tx: &mpsc::Sender<Event>,
     cancel: &Notify,
     pgid: Option<i32>,
+    compose_workdir: Option<&Path>,
 ) {
     tokio::select! {
         status = child.wait() => {
@@ -433,40 +443,115 @@ async fn supervise(
     }
 
     // Client-disconnect or explicit stop: tear the whole tree down.
-    terminate_group(pgid);
-    let _ = child.start_kill();
-    let _ = child.wait().await;
+    //
+    // `docker compose down` is run *before* force-killing the CLI process:
+    // the containers `docker compose up` starts are owned by the Docker
+    // daemon, not by the `sh`/`docker compose` process tree, so SIGTERM/
+    // SIGKILL to the process group never reaches them. Compose is the only
+    // thing that knows which containers belong to this run.
+    if let Some(workdir) = compose_workdir {
+        let _ = tx
+            .send(line_event("$ docker compose down"))
+            .await;
+        match tokio::process::Command::new("docker")
+            .args(["compose", "down"])
+            .current_dir(workdir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(mut down) => {
+                if let Some(out) = down.stdout.take() {
+                    spawn_pump(out, tx.clone());
+                }
+                if let Some(err) = down.stderr.take() {
+                    spawn_pump(err, tx.clone());
+                }
+                let _ = down.wait().await;
+            }
+            Err(e) => {
+                let _ = tx
+                    .send(line_event(format!("$ docker compose down failed to start: {e}")))
+                    .await;
+            }
+        }
+    }
+
+    terminate_group(pgid, libc_sigterm());
+    if tokio::time::timeout(TERMINATE_GRACE, child.wait())
+        .await
+        .is_err()
+    {
+        terminate_group(pgid, libc_sigkill());
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+    }
     let _ = tx
         .send(Event::default().event("end").data("[example stopped]"))
         .await;
 }
 
-/// Send SIGTERM to the process group so children (containers, dev servers) stop
-/// too rather than being orphaned. No-op on non-Unix platforms.
 #[cfg(unix)]
-fn terminate_group(pgid: Option<i32>) {
+fn libc_sigterm() -> i32 {
+    libc::SIGTERM
+}
+
+#[cfg(unix)]
+fn libc_sigkill() -> i32 {
+    libc::SIGKILL
+}
+
+#[cfg(not(unix))]
+fn libc_sigterm() -> i32 {
+    0
+}
+
+#[cfg(not(unix))]
+fn libc_sigkill() -> i32 {
+    0
+}
+
+/// Send `signal` to the process group so children (dev servers, non-compose
+/// containers) stop too rather than being orphaned. No-op on non-Unix
+/// platforms.
+#[cfg(unix)]
+fn terminate_group(pgid: Option<i32>, signal: i32) {
     if let Some(pgid) = pgid {
         // Negative pid targets the whole group. Best-effort.
         unsafe {
-            libc::kill(-pgid, libc::SIGTERM);
+            libc::kill(-pgid, signal);
         }
     }
 }
 
 #[cfg(not(unix))]
-fn terminate_group(_pgid: Option<i32>) {}
+fn terminate_group(_pgid: Option<i32>, _signal: i32) {}
 
-/// POST /v1/examples/stop?id=<example-id> — stop a running example.
+/// POST /v1/examples/stop?id=<example-id> — stop a running example. Returns
+/// 404 if it isn't (or is no longer) running, so a stale UI or a race with
+/// the natural exit path is visible to the caller rather than a silent
+/// success.
 pub async fn stop_example(State(state): State<AppState>, Query(q): Query<RunQuery>) -> StatusCode {
-    stop_running(&state, &q.id).await;
-    StatusCode::NO_CONTENT
+    if stop_running(&state, &q.id).await {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    }
 }
 
-/// Signal a running example (if any) to stop. Idempotent.
-async fn stop_running(state: &AppState, id: &str) {
+/// Signal a running example to stop, if one is running under `id`. Only sends
+/// the initial SIGTERM here — `supervise` (woken by `cancel`) owns the rest
+/// of teardown (compose down, grace period, SIGKILL) so it isn't duplicated
+/// between this and the disconnect path. Returns whether an example was
+/// found to stop.
+async fn stop_running(state: &AppState, id: &str) -> bool {
     if let Some(handle) = state.running_examples.lock().await.get(id) {
         handle.cancel.notify_waiters();
-        terminate_group(handle.pgid);
+        true
+    } else {
+        false
     }
 }
 

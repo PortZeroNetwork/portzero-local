@@ -411,11 +411,27 @@ function finishRun(){
   load();
 }
 function stopExample(id){
-  if(activeRun){try{activeRun.es.close()}catch(e){}activeRun=null}
-  fetch('/v1/examples/stop?id='+encodeURIComponent(id),{method:'POST'}).catch(function(){});
   termAppend('[stopping…]','end');
-  markConsoleDone();
-  setTimeout(load,300);
+  // Deliberately leave the EventSource open: the backend keeps streaming
+  // teardown output (e.g. `docker compose down`) and a final "end" event
+  // over this same connection, and the 'end' listener above (finishRun)
+  // closes it once that arrives. Closing it here would cut the connection
+  // before the stop confirmation — or any error — ever reaches the console.
+  fetch('/v1/examples/stop?id='+encodeURIComponent(id),{method:'POST'})
+    .then(function(res){
+      if(!res.ok){
+        termAppend('[stop request failed: HTTP '+res.status+']','err');
+      }
+    })
+    .catch(function(e){
+      termAppend('[stop request failed: '+e+']','err');
+    });
+  // Fallback in case the stream never delivers an "end" event (e.g. the
+  // example id wasn't found server-side, or the connection had already
+  // dropped) so the console doesn't spin forever.
+  setTimeout(function(){
+    if(activeRun && activeRun.id===id) finishRun();
+  },10000);
 }
 
 // ---- Tunnels (local + cloud) ----
