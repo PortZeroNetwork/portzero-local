@@ -160,9 +160,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Note: aarch64/i686 Linux and cross-compiled targets do not build
+          # portzero-app — Tauri's cross-compilation story for GTK/webkit
+          # targets is not set up here, and the amd64 Linux archive (which
+          # already carries portzero-app) is what packaging (deb/rpm) uses.
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            bins: portzero,portzero-tray
+            bins: portzero,portzero-tray,portzero-app
             archive_ext: tar.gz
             archive_name: portzero-linux-amd64
           - target: aarch64-unknown-linux-gnu
@@ -179,17 +183,17 @@ jobs:
             archive_name: portzero-linux-x86
           - target: x86_64-apple-darwin
             os: macos-15
-            bins: portzero,portzero-tray
+            bins: portzero,portzero-tray,portzero-app
             archive_ext: tar.gz
             archive_name: portzero-darwin-amd64
           - target: aarch64-apple-darwin
             os: macos-15
-            bins: portzero,portzero-tray
+            bins: portzero,portzero-tray,portzero-app
             archive_ext: tar.gz
             archive_name: portzero-darwin-arm64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            bins: portzero,portzero-tray
+            bins: portzero,portzero-tray,portzero-app
             archive_ext: zip
             archive_name: portzero-windows-amd64
 
@@ -211,6 +215,29 @@ jobs:
       - name: Install cross
         if: matrix.cross
         run: cargo install cross --locked
+
+      # Only jobs that build portzero-app need Node/webkit — the aarch64/i686
+      # Linux cross-compiled legs above don't carry it in their `bins:` list.
+      - name: Set up Node
+        if: contains(matrix.bins, 'portzero-app')
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/crates/app/ui/package-lock.json
+
+      - name: Install Linux webkit build deps (for portzero-app)
+        if: contains(matrix.bins, 'portzero-app') && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Build portzero-app frontend
+        if: contains(matrix.bins, 'portzero-app')
+        working-directory: client/crates/app/ui
+        run: |
+          npm ci
+          npm run build
 
       - name: Build
         env:
@@ -420,8 +447,9 @@ jobs:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
-          # Sign both the CLI and the system-tray companion so the tray, which
-          # autostarts at login, is not flagged by SmartScreen.
+          # Sign the CLI, the system-tray companion, and the desktop app so
+          # the tray (which autostarts at login) and the app are not flagged
+          # by SmartScreen.
           files-folder: ${{ github.workspace }}\portzero-windows-amd64
           files-folder-filter: portzero*.exe
           file-digest: SHA256
@@ -459,7 +487,7 @@ jobs:
           }
 
           $signtool = Get-SigntoolPath
-          foreach ($name in @("portzero.exe", "portzero-tray.exe")) {
+          foreach ($name in @("portzero.exe", "portzero-tray.exe", "portzero-app.exe")) {
             $exe = Resolve-Path ".\portzero-windows-amd64\$name"
             & $signtool verify /pa /v $exe.Path
             if ($LASTEXITCODE -ne 0) {
@@ -505,13 +533,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # cargo-deb's `$auto` dependency resolution runs dpkg-shlibdeps over every
-      # packaged binary, including the tray, which links GTK / libxdo /
-      # libayatana-appindicator. Those runtime libraries must be present on the
-      # packaging runner so shlibdeps can map them to the correct Depends.
-      - name: Install tray runtime library deps
+      # packaged binary, including the tray (GTK / libxdo / libayatana-appindicator)
+      # and the portzero-app desktop app (webkit2gtk / GTK / libayatana-appindicator).
+      # Those runtime libraries must be present on the packaging runner so
+      # shlibdeps can map them to the correct Depends.
+      - name: Install tray + app runtime library deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libayatana-appindicator3-dev libwebkit2gtk-4.1-dev
 
       - name: Extract binary into target/release
         run: |
@@ -519,10 +548,13 @@ jobs:
           mkdir -p target/release
           cp portzero-linux-amd64/portzero target/release/portzero
           chmod +x target/release/portzero
-          # The amd64 archive also ships the system-tray companion; place it
-          # where cargo-deb / cargo-generate-rpm expect their bundled assets.
+          # The amd64 archive also ships the system-tray companion and the
+          # desktop app; place them where cargo-deb / cargo-generate-rpm
+          # expect their bundled assets.
           cp portzero-linux-amd64/portzero-tray target/release/portzero-tray
           chmod +x target/release/portzero-tray
+          cp portzero-linux-amd64/portzero-app target/release/portzero-app
+          chmod +x target/release/portzero-app
 
       - name: Install packaging tools
         run: cargo install cargo-deb cargo-generate-rpm --locked
