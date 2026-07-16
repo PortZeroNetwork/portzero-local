@@ -98,6 +98,21 @@ portzero_tray_candidates() {
         awk 'NF && !seen[$0]++'
 }
 
+portzero_app_candidates() {
+    if [ -n "${PORTZERO_INSTALL_DIR:-}" ]; then
+        printf '%s\n' "${PORTZERO_INSTALL_DIR%/}/portzero-app"
+    fi
+    if has_cmd portzero-app; then
+        command -v portzero-app
+    fi
+    printf '%s\n' \
+        "${HOME}/.local/bin/portzero-app" \
+        "${HOME}/.cargo/bin/portzero-app" \
+        "/usr/local/bin/portzero-app" \
+        "/usr/bin/portzero-app" |
+        awk 'NF && !seen[$0]++'
+}
+
 run_portzero_best_effort() {
     args="$1"
     for candidate in $(portzero_candidates); do
@@ -180,11 +195,16 @@ remove_via_package_manager() {
     return 1
 }
 
-info "Stopping the tray companion and removing its autostart entry"
+info "Stopping the tray companion and desktop app, and removing launcher entries"
 if has_cmd pkill; then
     pkill -x portzero-tray >/dev/null 2>&1 || true
+    pkill -x portzero-app >/dev/null 2>&1 || true
 fi
 remove_file "${HOME}/.config/autostart/portzero-tray.desktop"
+# The desktop-app launcher (usr/share/applications/portzero.desktop) is
+# package-managed for .deb/.rpm installs; clean up any user-level copy a manual
+# install may have dropped.
+remove_file "${HOME}/.local/share/applications/portzero.desktop"
 
 info "Stopping daemon and removing autostart service"
 run_portzero_best_effort "autostart disable" || true
@@ -240,6 +260,10 @@ else
     done
 
     for candidate in $(portzero_tray_candidates); do
+        remove_file "$candidate"
+    done
+
+    for candidate in $(portzero_app_candidates); do
         remove_file "$candidate"
     done
 fi
