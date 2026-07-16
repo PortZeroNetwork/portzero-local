@@ -1,7 +1,7 @@
 ---
 id: e50de8d5-951b-4a53-8327-13eaae143de3
 slug: task-78
-status: in-progress
+status: done
 title: Onboarding funnel UX — install docs, first-run CLI, release surfaces
 created_at: 2026-07-16T00:00:00Z
 updated_at: 2026-07-16T00:00:00Z
