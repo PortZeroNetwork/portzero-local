@@ -30,7 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [package.metadata.deb]
 name = "portzero"
 maintainer = "Port Zero Network <support@portzero.cloud>"
-copyright = "2024 Loum Technologies"
+copyright = "2024 Loum Technologies, LLC"
 license-file = ["../../../LICENSE", "0"]
 extended-description = """Eliminate port conflicts in your dev environment by letting the OS pick
 random available ports, then forwarding those ports to virtual domains
@@ -59,7 +59,7 @@ name = "portzero"
 license = "GPL-3.0-or-later"
 summary = "Eliminate port conflicts in your dev environment by letting the OS pick random available ports, then forwarding those ports to virtual domains on a virtual NIC. Run multiple branches simultaneously without clashing."
 url = "https://portzero.cloud"
-vendor = "Loum Technologies"
+vendor = "Loum Technologies, LLC"
 release = "1"
 assets = [
     { source = "../../../target/release/portzero", dest = "/usr/local/bin/portzero", mode = "0755" },

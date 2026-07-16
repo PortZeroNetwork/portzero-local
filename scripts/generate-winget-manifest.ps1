@@ -81,7 +81,7 @@ PackageName: PortZero
 PackageUrl: https://portzero.cloud/
 License: GPL-3.0-or-later
 LicenseUrl: https://github.com/$Repo/blob/staging/LICENSE
-Copyright: Copyright (c) Loum Technologies
+Copyright: Copyright (c) Loum Technologies, LLC
 ShortDescription: Eliminate port conflicts in local dev environments
 Description: |
   Port Zero eliminates port conflicts in your dev environment by letting the OS pick
