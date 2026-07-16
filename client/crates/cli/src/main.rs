@@ -242,11 +242,11 @@ async fn main() -> anyhow::Result<()> {
             if foreground {
                 daemon::start_foreground().await?;
             } else {
-                daemon::start(!no_browser)?;
+                daemon::start(!no_browser).await?;
             }
         }
         Command::Stop => daemon::stop()?,
-        Command::Restart => daemon::restart()?,
+        Command::Restart => daemon::restart().await?,
         Command::Status => daemon::status().await?,
         Command::Doctor => doctor::run().await?,
         Command::Url { domain } => export::url(&domain)?,
@@ -266,7 +266,7 @@ async fn main() -> anyhow::Result<()> {
             name,
         } => {
             auth::login(interactive, email, name).await?;
-            daemon::restart()?;
+            daemon::restart().await?;
         }
         Command::Logout => auth::logout()?,
         Command::Whoami => auth::whoami().await?,
@@ -302,11 +302,11 @@ async fn main() -> anyhow::Result<()> {
                 if foreground {
                     daemon::start_foreground().await?;
                 } else {
-                    daemon::start(!no_browser)?;
+                    daemon::start(!no_browser).await?;
                 }
             }
             DaemonCommand::Stop => daemon::stop()?,
-            DaemonCommand::Restart => daemon::restart()?,
+            DaemonCommand::Restart => daemon::restart().await?,
             DaemonCommand::Status => daemon::status().await?,
         },
     }

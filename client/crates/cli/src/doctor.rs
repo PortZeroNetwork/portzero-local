@@ -44,7 +44,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// One check's outcome.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Status {
+pub(crate) enum Status {
     Pass,
     Warn,
     Fail,
@@ -61,7 +61,7 @@ impl Status {
 }
 
 /// A single named diagnostic result.
-struct Check {
+pub(crate) struct Check {
     name: &'static str,
     status: Status,
     detail: String,
@@ -94,6 +94,28 @@ impl Check {
             status: Status::Fail,
             detail: detail.into(),
             fix: Some(fix.into()),
+        }
+    }
+
+    /// Whether this check passed (no warning or failure to surface).
+    pub(crate) fn is_pass(&self) -> bool {
+        self.status == Status::Pass
+    }
+}
+
+/// Print one non-passing check in the doctor's `!`/`✗` style, with its
+/// `fix:` line. Used by `portzero start` and `portzero demo` to surface the
+/// same first-run diagnostics doctor reports, without running the full suite.
+pub(crate) fn print_alert(check: &Check) {
+    println!(
+        "  {}  {}: {}",
+        check.status.glyph(),
+        check.name,
+        check.detail
+    );
+    if check.status != Status::Pass {
+        if let Some(fix) = &check.fix {
+            println!("       fix: {fix}");
         }
     }
 }
@@ -166,7 +188,7 @@ fn check_daemon_running(config: &DaemonConfig, pid: Option<u32>) -> Check {
 /// `overlay_active` in `overlay.json` is written `true` only after the daemon
 /// successfully creates the TUN device (which needs root / CAP_NET_ADMIN), so it
 /// is the authoritative signal for this failure mode.
-fn check_overlay_active(pid: Option<u32>, overlay: &OverlayState) -> Check {
+pub(crate) fn check_overlay_active(pid: Option<u32>, overlay: &OverlayState) -> Check {
     if pid.is_none() {
         return Check::fail(
             "overlay active",
@@ -281,7 +303,7 @@ async fn check_embedded_dns(resolver_addr: SocketAddr) -> Check {
 /// Resolve the dashboard name through the OS resolver (getaddrinfo). This
 /// catches OS-level misrouting the direct embedded-DNS probe cannot: the server
 /// answers, but the OS never sends `portzero.local` queries to it.
-async fn check_os_resolution() -> Check {
+pub(crate) async fn check_os_resolution() -> Check {
     match timeout(RESOLVE_TIMEOUT, lookup_host((DASHBOARD_NAME, 443))).await {
         Ok(Ok(addrs)) => {
             let ips: Vec<Ipv4Addr> = addrs
