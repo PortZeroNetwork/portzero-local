@@ -97,6 +97,7 @@ Tags:
 - tunnel
 Commands:
 - portzero
+- portzero-app
 ManifestType: defaultLocale
 ManifestVersion: 1.9.0
 "@
@@ -115,6 +116,7 @@ InstallModes:
 UpgradeBehavior: install
 Commands:
 - portzero
+- portzero-app
 Installers:
 - Architecture: x64
   InstallerUrl: $installerUrl

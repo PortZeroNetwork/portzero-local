@@ -26,5 +26,6 @@ Tags:
 - tunnel
 Commands:
 - portzero
+- portzero-app
 ManifestType: defaultLocale
 ManifestVersion: 1.9.0
