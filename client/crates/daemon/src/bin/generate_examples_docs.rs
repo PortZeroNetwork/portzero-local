@@ -376,6 +376,11 @@ fn render_docs(examples: &[Example]) -> String {
     let mut lines = vec![
         "# PortZero Examples".to_string(),
         String::new(),
+        "For a zero-dependency first step, run `portzero demo`: it serves a built-in".to_string(),
+        "page through a Local tunnel at `http://hello.portzero.local` with nothing to".to_string(),
+        "clone or install. The examples below show the same `PZ_TUNNEL` mechanism on".to_string(),
+        "real stacks.".to_string(),
+        String::new(),
         "These examples live in the separate `portzero-examples` repository. Clone it next to this repository or anywhere convenient:".to_string(),
         String::new(),
         "```sh".to_string(),
