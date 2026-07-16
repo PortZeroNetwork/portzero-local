@@ -108,3 +108,6 @@ new links to it from user-facing surfaces; point at the app instead.
 - `docs/users/` — user-facing docs on installing and using Port Zero,
   including the [users README](../users/README.md#getting-started), which
   describes the same app from the product-user side.
+- [Examples](../users/examples.md) — the same bundled examples run by hand
+  (clone + `PZ_TUNNEL`), i.e. the CLI equivalent of the app's **Getting
+  started** panel that downloads and runs them with one click.

@@ -7,6 +7,8 @@ git clone https://github.com/PortZeroNetwork/portzero-examples.git
 cd portzero-examples
 ```
 
+Prefer one click? The PortZero app's **Getting started** panel can download these same examples and run any of them for you — no manual clone or `PZ_TUNNEL` wrangling needed. The steps below are the equivalent done by hand.
+
 Each example sets `PZ_TUNNEL` so the local daemon can make the process or Docker Compose project available at a `*.portzero.local` name.
 
 ## TypeScript process
