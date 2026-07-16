@@ -59,16 +59,13 @@ fn client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
 pub fn get_status() -> Value {
     let url = format!("{LOCAL_BASE}/status.json");
     match client(Duration::from_millis(1200)).and_then(|c| {
-        c.get(&url)
-            .send()
-            .map_err(|e| e.to_string())
-            .and_then(|r| {
-                if r.status().is_success() {
-                    r.json::<Value>().map_err(|e| e.to_string())
-                } else {
-                    Err(format!("daemon returned HTTP {}", r.status().as_u16()))
-                }
-            })
+        c.get(&url).send().map_err(|e| e.to_string()).and_then(|r| {
+            if r.status().is_success() {
+                r.json::<Value>().map_err(|e| e.to_string())
+            } else {
+                Err(format!("daemon returned HTTP {}", r.status().as_u16()))
+            }
+        })
     }) {
         Ok(mut v) => {
             let running = v.get("daemon_pid").map(|p| !p.is_null()).unwrap_or(false);
@@ -310,7 +307,10 @@ impl SseParser {
         if !self.has_fields {
             return None;
         }
-        let event = self.cur_event.take().unwrap_or_else(|| "message".to_string());
+        let event = self
+            .cur_event
+            .take()
+            .unwrap_or_else(|| "message".to_string());
         let data = self.cur_data.join("\n");
         self.cur_data.clear();
         self.has_fields = false;
@@ -429,7 +429,10 @@ mod tests {
         assert!(v["problems"].is_array());
         assert_eq!(v["examples"]["downloaded"], json!(false));
         assert!(v["https_policy"]["enable_for_port_80"] == json!(false));
-        assert!(v["status_message"].as_str().unwrap().contains("isn't reachable"));
+        assert!(v["status_message"]
+            .as_str()
+            .unwrap()
+            .contains("isn't reachable"));
     }
 
     #[test]

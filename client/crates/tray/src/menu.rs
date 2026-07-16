@@ -7,7 +7,6 @@
 //! whose clicks arrive as ids over a channel) and the [`Action`] it triggers
 //! (used directly by the ksni backend, whose clicks arrive as closures).
 
-use crate::actions::DASHBOARD_URL;
 use crate::state::{Health, Snapshot};
 
 /// Something the user asked the tray to do by clicking a menu item.
@@ -18,6 +17,9 @@ pub enum Action {
     Restart,
     Refresh,
     Quit,
+    /// Launch the PortZero desktop app (the primary local GUI).
+    OpenApp,
+    /// Open a real service URL (a tunnel link) in the default browser.
     OpenUrl(String),
     /// Set the "enable HTTPS for HTTP tunnels" policy to this value.
     ToggleHttps(bool),
@@ -77,12 +79,9 @@ pub fn build(snapshot: &Snapshot) -> MenuSpec {
     nodes.push(Node::Label(format!("{glyph}  {}", snapshot.summary)));
     nodes.push(Node::Separator);
 
-    // Dashboard.
-    nodes.push(action(
-        ID_DASHBOARD,
-        "Open Dashboard",
-        Action::OpenUrl(DASHBOARD_URL.to_string()),
-    ));
+    // Open the desktop app (the primary local GUI, replacing the old browser
+    // dashboard).
+    nodes.push(action(ID_DASHBOARD, "Open PortZero", Action::OpenApp));
     nodes.push(Node::Separator);
 
     // Daemon lifecycle — contextual to whether it is running.
@@ -145,8 +144,8 @@ pub fn build(snapshot: &Snapshot) -> MenuSpec {
         issues.push(Node::Separator);
         issues.push(action(
             ID_DASHBOARD_DETAILS,
-            "Open dashboard for fixes →",
-            Action::OpenUrl(DASHBOARD_URL.to_string()),
+            "Open PortZero for fixes →",
+            Action::OpenApp,
         ));
         nodes.push(Node::Sub {
             label: format!("Issues ({})", snapshot.problems.len()),

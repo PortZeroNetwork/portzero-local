@@ -15,9 +15,6 @@ use anyhow::{Context, Result};
 use portzero_daemon::discovery_loop::DaemonConfig;
 use portzero_daemon::net::stack::OverlayHttpsPolicy;
 
-/// The dashboard URL the daemon serves at `portzero.local`.
-pub const DASHBOARD_URL: &str = "http://portzero.local";
-
 /// Locate the `portzero` CLI binary.
 ///
 /// Prefers `PORTZERO_BIN`, then a sibling of this tray binary (the layout every
@@ -75,6 +72,21 @@ pub fn stop_daemon() -> Result<()> {
 /// Restart the daemon (`portzero restart`).
 pub fn restart_daemon() -> Result<()> {
     run_portzero("restart")
+}
+
+/// Launch the PortZero desktop app (best-effort, non-blocking).
+///
+/// This replaces the old "open the browser at `http://portzero.local`" action:
+/// the app is now the primary local GUI. Locating and spawning it goes through
+/// the shared launcher in `portzero_domain::app`, so the tray and the CLI open
+/// the exact same binary the same way. Thanks to the app's single-instance
+/// guard, launching while it is already open just focuses its window.
+pub fn open_app() -> Result<()> {
+    portzero_domain::app::launch().context(
+        "failed to launch the PortZero app. Make sure it is installed \
+         (reinstalling PortZero usually fixes this), or set PORTZERO_APP_BIN to \
+         its full path.",
+    )
 }
 
 /// Open a URL in the user's default browser (best-effort, non-blocking).

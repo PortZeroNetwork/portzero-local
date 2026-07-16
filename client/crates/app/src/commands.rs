@@ -84,7 +84,10 @@ pub fn run_example(app: AppHandle, id: String) -> Result<(), String> {
 fn emit_frame(app: &AppHandle, id: &str, ev: core::SseEvent) {
     match ev.event.as_str() {
         "end" => {
-            let _ = app.emit(EVENT_END, serde_json::json!({ "id": id, "message": ev.data }));
+            let _ = app.emit(
+                EVENT_END,
+                serde_json::json!({ "id": id, "message": ev.data }),
+            );
         }
         "error" => {
             let _ = app.emit(
@@ -96,7 +99,11 @@ fn emit_frame(app: &AppHandle, id: &str, ev: core::SseEvent) {
         _ => {
             // Lines starting with '$' are the echoed commands; tag them so the
             // console can style them like the old dashboard did.
-            let kind = if ev.data.starts_with('$') { "cmd" } else { "out" };
+            let kind = if ev.data.starts_with('$') {
+                "cmd"
+            } else {
+                "out"
+            };
             let _ = app.emit(
                 EVENT_LOG,
                 serde_json::json!({ "id": id, "line": ev.data, "kind": kind }),

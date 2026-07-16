@@ -3726,6 +3726,7 @@ dependencies = [
  "ksni",
  "muda 0.15.3",
  "portzero-daemon",
+ "portzero-domain",
  "tempfile",
  "tracing",
  "tracing-subscriber",
