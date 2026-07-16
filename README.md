@@ -73,7 +73,17 @@ The installer and daemon perform local setup automatically where supported.
 
 ## Getting started
 
-After installing, start the daemon:
+After installing, see a working Local tunnel in one command:
+
+```sh
+portzero demo
+```
+
+This starts the daemon if needed, serves a tiny built-in page on port 0, and
+opens `http://hello.portzero.local` in your browser once the tunnel is
+reachable — no examples repo or runtime dependencies. Press Ctrl+C to stop.
+
+Then start the daemon for day-to-day use:
 
 ```sh
 portzero start

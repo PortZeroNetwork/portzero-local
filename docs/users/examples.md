@@ -1,5 +1,10 @@
 # PortZero Examples
 
+For a zero-dependency first step, run `portzero demo`: it serves a built-in
+page through a Local tunnel at `http://hello.portzero.local` with nothing to
+clone or install. The examples below show the same `PZ_TUNNEL` mechanism on
+real stacks.
+
 These examples live in the separate `portzero-examples` repository. Clone it next to this repository or anywhere convenient:
 
 ```sh
