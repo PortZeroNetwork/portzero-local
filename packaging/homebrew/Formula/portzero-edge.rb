@@ -72,6 +72,13 @@ class PortzeroEdge < Formula
         brew uninstall portzero-edge
         brew install portzero
 
+      macOS: unsigned builds and Gatekeeper.
+      These binaries are not yet Apple-signed or notarized. Homebrew-installed
+      binaries are normally not quarantined, so they launch fine. If you ever
+      copy one in from a browser download and macOS blocks it ("cannot be opened
+      because the developer cannot be verified"), clear the flag with
+      `xattr -d com.apple.quarantine <path>`, or right-click it and choose Open.
+
       To complete setup, run:
 
         sudo portzero setup

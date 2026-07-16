@@ -1018,6 +1018,11 @@ jobs:
           brew install portzeronetwork/portzero/portzero-edge
           ```
 
+          > **macOS: unsigned builds and Gatekeeper.** Unstable binaries are not
+          > Apple-signed or notarized. Homebrew installs are normally not quarantined;
+          > a browser-downloaded tarball is — clear it with
+          > `xattr -d com.apple.quarantine <path-to-binary>` or right-click **Open** once.
+
           **Linux**
           ```sh
           curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | PORTZERO_CHANNEL=prerelease sh
@@ -1041,6 +1046,14 @@ jobs:
           brew tap PortZeroNetwork/portzero
           brew install portzero
           ```
+
+          > **macOS: unsigned builds and Gatekeeper.** These binaries are not yet
+          > Apple-signed or notarized. Homebrew-installed binaries are normally not
+          > quarantined, so `brew install` launches fine. If you instead download a
+          > tarball from this page and macOS blocks it ("cannot be opened because the
+          > developer cannot be verified"), clear the flag with
+          > `xattr -d com.apple.quarantine <path-to-binary>`, or right-click it in
+          > Finder and choose **Open** once.
 
           **Linux**
           ```sh

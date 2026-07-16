@@ -38,6 +38,14 @@ brew tap PortZeroNetwork/portzero
 brew install portzero
 ```
 
+> **macOS: unsigned builds and Gatekeeper.** Port Zero binaries are not yet
+> Apple-signed or notarized. Homebrew-installed binaries are normally *not*
+> quarantined, so `brew install` launches fine. A tarball you download from a
+> browser *is* quarantined — if macOS blocks it with "cannot be opened because
+> the developer cannot be verified", clear the flag with
+> `xattr -d com.apple.quarantine <path-to-binary>`, or right-click the binary
+> in Finder and choose **Open** once to approve it.
+
 **Linux**
 ```sh
 curl -fsSL https://portzero.net/install.sh | sh
