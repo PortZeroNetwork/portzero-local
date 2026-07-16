@@ -84,7 +84,7 @@ at `http://portzero.local`. Nothing was removed from the daemon.
 
 What changed is what *links to* it:
 
-- The tray's **Open Dashboard** menu item now launches the PortZero app
+- The tray's **Open PortZero** menu item now launches the PortZero app
   instead of opening a browser tab.
 - `portzero start` now launches the app (unless run with `--no-browser`)
   instead of opening a browser tab.

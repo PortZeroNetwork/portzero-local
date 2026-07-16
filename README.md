@@ -70,7 +70,7 @@ portzero start
 This launches the **PortZero app** — a native desktop app for checking
 daemon and tunnel health, managing HTTPS, and running the bundled examples —
 instead of opening a browser tab. Reopen it anytime from the system tray
-icon's **Open Dashboard** menu item, or run `portzero start --no-browser` to
+icon's **Open PortZero** menu item, or run `portzero start --no-browser` to
 start the daemon without launching the app.
 
 The daemon still serves a browser-based dashboard at `http://portzero.local`

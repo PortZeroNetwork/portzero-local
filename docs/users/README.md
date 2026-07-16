@@ -31,7 +31,7 @@ Cloud tunnels (`*.tunnel.portzero.cloud`) use the same `PZ_TUNNEL` mechanism (lo
 
    This opens the **PortZero app** — a desktop app showing daemon and tunnel
    health, the HTTPS toggle, daemon controls, and the bundled examples. You
-   can reopen it anytime from the system tray icon's **Open Dashboard** item.
+   can reopen it anytime from the system tray icon's **Open PortZero** item.
    Run `portzero start --no-browser` to start the daemon without opening it.
 3. Tag a process or Docker container with `PZ_TUNNEL` as shown above, then
    check it in the app's tunnel list (or run `portzero status`).
