@@ -1,11 +1,18 @@
 # PortZero Examples
 
+For a zero-dependency first step, run `portzero demo`: it serves a built-in
+page through a Local tunnel at `http://hello.portzero.local` with nothing to
+clone or install. The examples below show the same `PZ_TUNNEL` mechanism on
+real stacks.
+
 These examples live in the separate `portzero-examples` repository. Clone it next to this repository or anywhere convenient:
 
 ```sh
 git clone https://github.com/PortZeroNetwork/portzero-examples.git
 cd portzero-examples
 ```
+
+Prefer one click? The PortZero app's **Getting started** panel can download these same examples and run any of them for you — no manual clone or `PZ_TUNNEL` wrangling needed. The steps below are the equivalent done by hand.
 
 Each example sets `PZ_TUNNEL` so the local daemon can make the process or Docker Compose project available at a `*.portzero.local` name.
 

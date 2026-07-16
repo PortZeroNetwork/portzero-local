@@ -9,8 +9,11 @@ mod auth;
 mod autostart;
 mod browser;
 mod daemon;
+mod demo;
+mod demo_server;
 mod doctor;
 mod export;
+mod frontdoor;
 mod inspect;
 mod mcp;
 mod review;
@@ -27,8 +30,10 @@ mod wait;
     about = "Eliminate port conflicts: stable *.portzero.local and cloud tunnel names for your dev services"
 )]
 struct Cli {
+    /// Optional: with no subcommand, `portzero` prints a short state-aware
+    /// summary (daemon, auth, routes) and the most useful next step.
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -49,6 +54,18 @@ enum Command {
     Restart,
     /// Show daemon and tunnel status.
     Status,
+
+    /// See a working Local tunnel in one command: starts the daemon if
+    /// needed, runs a tiny built-in web server on port 0 with PZ_TUNNEL set,
+    /// and opens http://hello.portzero.local when it is reachable.
+    Demo {
+        /// Do not open the demo page in a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// The tiny web server spawned by `portzero demo` (used internally).
+    #[command(name = "demo-server", hide = true)]
+    DemoServer,
 
     /// Diagnose the overlay, DNS, and TLS path in one command.
     ///
@@ -234,7 +251,15 @@ async fn main() -> anyhow::Result<()> {
     // Spawn update check in the background — it never blocks the command.
     let update_handle = tokio::spawn(update::check_for_update());
 
-    match cli.command {
+    // Bare `portzero` is the front door: a short state-aware summary with the
+    // most useful next step, not a usage error.
+    let Some(command) = cli.command else {
+        frontdoor::run();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), update_handle).await;
+        return Ok(());
+    };
+
+    match command {
         Command::Start {
             foreground,
             no_browser,
@@ -242,12 +267,14 @@ async fn main() -> anyhow::Result<()> {
             if foreground {
                 daemon::start_foreground().await?;
             } else {
-                daemon::start(!no_browser)?;
+                daemon::start(!no_browser).await?;
             }
         }
         Command::Stop => daemon::stop()?,
-        Command::Restart => daemon::restart()?,
+        Command::Restart => daemon::restart().await?,
         Command::Status => daemon::status().await?,
+        Command::Demo { no_browser } => demo::run(no_browser).await?,
+        Command::DemoServer => demo_server::serve()?,
         Command::Doctor => doctor::run().await?,
         Command::Url { domain } => export::url(&domain)?,
         Command::Env { github } => export::env(github)?,
@@ -266,7 +293,7 @@ async fn main() -> anyhow::Result<()> {
             name,
         } => {
             auth::login(interactive, email, name).await?;
-            daemon::restart()?;
+            daemon::restart().await?;
         }
         Command::Logout => auth::logout()?,
         Command::Whoami => auth::whoami().await?,
@@ -302,11 +329,11 @@ async fn main() -> anyhow::Result<()> {
                 if foreground {
                     daemon::start_foreground().await?;
                 } else {
-                    daemon::start(!no_browser)?;
+                    daemon::start(!no_browser).await?;
                 }
             }
             DaemonCommand::Stop => daemon::stop()?,
-            DaemonCommand::Restart => daemon::restart()?,
+            DaemonCommand::Restart => daemon::restart().await?,
             DaemonCommand::Status => daemon::status().await?,
         },
     }

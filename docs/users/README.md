@@ -23,7 +23,17 @@ Cloud tunnels (`*.tunnel.portzero.cloud`) use the same `PZ_TUNNEL` mechanism (lo
 ## Getting started
 
 1. Install Port Zero (see the [repo README](../../README.md#install)).
-2. Start the daemon:
+2. See a working Local tunnel in one command:
+
+   ```bash
+   portzero demo
+   ```
+
+   This starts the daemon if needed, runs a tiny built-in web server on
+   port 0 with `PZ_TUNNEL=hello.portzero.local:80`, and opens
+   `http://hello.portzero.local` in your browser once it is reachable. No
+   examples repo, no runtime dependencies. Press Ctrl+C to stop it.
+3. Start the daemon (if the demo didn't already):
 
    ```bash
    portzero start
@@ -33,7 +43,7 @@ Cloud tunnels (`*.tunnel.portzero.cloud`) use the same `PZ_TUNNEL` mechanism (lo
    health, the HTTPS toggle, daemon controls, and the bundled examples. You
    can reopen it anytime from the system tray icon's **Open PortZero** item.
    Run `portzero start --no-browser` to start the daemon without opening it.
-3. Tag a process or Docker container with `PZ_TUNNEL` as shown above, then
+4. Tag a process or Docker container with `PZ_TUNNEL` as shown above, then
    check it in the app's tunnel list (or run `portzero status`).
 
 The daemon still serves a browser dashboard at `http://portzero.local` for

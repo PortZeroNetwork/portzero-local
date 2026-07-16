@@ -15,9 +15,12 @@ use crate::auth::AuthConfig;
 
 /// Start the discovery daemon in the background.
 ///
-/// If the daemon is already running, prints its PID and exits.
-/// Otherwise spawns a new background process.
-pub fn start(open_browser: bool) -> Result<()> {
+/// If the daemon is already running, prints its PID and exits. Otherwise
+/// spawns a new background process and then self-verifies the two conditions
+/// behind the #1 first-run failure (overlay active, `.portzero.local` DNS
+/// resolution) so an unprivileged start warns immediately instead of
+/// reporting a false success.
+pub async fn start(open_browser: bool) -> Result<()> {
     let config = DaemonConfig::load();
 
     // Check if already running.
@@ -27,6 +30,46 @@ pub fn start(open_browser: bool) -> Result<()> {
         return Ok(());
     }
 
+    let spawned = spawn_daemon(&config)?;
+
+    if spawned.confirmed {
+        let auth_status = if AuthConfig::load().is_ok() {
+            "authenticated (tunnel will connect to cloud)"
+        } else {
+            "not authenticated (local-only mode, run `portzero login` for cloud tunnels)"
+        };
+
+        println!("Daemon started (PID {}).", spawned.pid);
+        println!("Auth: {auth_status}");
+        println!("Log:  {}", spawned.log_path.display());
+        open_desktop_app(open_browser);
+        verify_first_run(&config).await;
+    } else {
+        println!(
+            "Daemon process spawned (PID {}) but did not confirm startup.\n\
+             Check the log for errors: {}",
+            spawned.pid,
+            spawned.log_path.display()
+        );
+    }
+
+    Ok(())
+}
+
+/// Outcome of spawning the daemon background process.
+pub(crate) struct SpawnedDaemon {
+    /// PID of the spawned process.
+    pub(crate) pid: u32,
+    /// Where the daemon's stdout/stderr are appended.
+    pub(crate) log_path: std::path::PathBuf,
+    /// Whether the daemon wrote its PID file within the startup window.
+    pub(crate) confirmed: bool,
+}
+
+/// Spawn the daemon as a background process (re-invoking this binary with the
+/// hidden `start --foreground`) and wait briefly for it to confirm startup by
+/// writing its PID file. Shared by `portzero start` and `portzero demo`.
+pub(crate) fn spawn_daemon(config: &DaemonConfig) -> Result<SpawnedDaemon> {
     // Ensure state directory exists.
     std::fs::create_dir_all(&config.state_dir).with_context(|| {
         format!(
@@ -83,32 +126,64 @@ pub fn start(open_browser: bool) -> Result<()> {
     let mut started = false;
     for _ in 0..20 {
         std::thread::sleep(Duration::from_millis(100));
-        if read_daemon_pid(&config).is_some() {
+        if read_daemon_pid(config).is_some() {
             started = true;
             break;
         }
     }
 
-    if started {
-        let auth_status = if AuthConfig::load().is_ok() {
-            "authenticated (tunnel will connect to cloud)"
-        } else {
-            "not authenticated (local-only mode, run `portzero login` for cloud tunnels)"
-        };
+    Ok(SpawnedDaemon {
+        pid: child_pid,
+        log_path,
+        confirmed: started,
+    })
+}
 
-        println!("Daemon started (PID {child_pid}).");
-        println!("Auth: {auth_status}");
-        println!("Log:  {}", log_path.display());
-        open_desktop_app(open_browser);
+/// Post-start self-verification: catch the #1 first-run failure (daemon
+/// reports "running" while the overlay never came up because it started
+/// unprivileged) right at `portzero start` time, instead of letting the user
+/// walk away believing everything works. Reuses the doctor's checks; on the
+/// healthy path this adds well under a second.
+async fn verify_first_run(config: &DaemonConfig) {
+    let overlay = wait_for_overlay(config, Duration::from_secs(2)).await;
+    let overlay_check = crate::doctor::check_overlay_active(read_daemon_pid(config), &overlay);
+
+    if overlay_check.is_pass() {
+        // Only probe DNS when the overlay is up: with the overlay down the
+        // probe cannot pass and would only add its timeout to `start`.
+        let dns_check = crate::doctor::check_os_resolution().await;
+        if !dns_check.is_pass() {
+            println!();
+            crate::doctor::print_alert(&dns_check);
+            println!("       Run `portzero doctor` for a full diagnosis.");
+        }
     } else {
-        println!(
-            "Daemon process spawned (PID {child_pid}) but did not confirm startup.\n\
-             Check the log for errors: {}",
-            log_path.display()
-        );
+        println!();
+        crate::doctor::print_alert(&overlay_check);
+        println!("       Run `portzero doctor` for a full diagnosis.");
     }
 
-    Ok(())
+    if crate::export::discovered_tunnels(config).is_empty() {
+        println!();
+        println!(
+            "No tunnels yet — run `portzero demo` to see a working Local tunnel in one command."
+        );
+    }
+}
+
+/// Poll `overlay.json` briefly, waiting for the freshly started daemon to
+/// bring the overlay up. The TUN device comes up moments after the PID file
+/// is written; give it up to `max_wait` so a healthy start doesn't print a
+/// spurious warning, without noticeably slowing `portzero start` down.
+async fn wait_for_overlay(config: &DaemonConfig, max_wait: Duration) -> OverlayState {
+    let deadline = std::time::Instant::now() + max_wait;
+    loop {
+        let overlay = OverlayState::load(&config.overlay_path()).unwrap_or_default();
+        if overlay.overlay_active || std::time::Instant::now() >= deadline {
+            return overlay;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 /// Open the PortZero desktop app — the primary local GUI, which replaces the
@@ -475,7 +550,7 @@ async fn verify_token() -> TokenStatus {
 }
 
 /// Restart the daemon (stop + start).
-pub fn restart() -> Result<()> {
+pub async fn restart() -> Result<()> {
     let config = DaemonConfig::load();
 
     // Stop if running, ignore error if not.
@@ -485,7 +560,7 @@ pub fn restart() -> Result<()> {
         std::thread::sleep(Duration::from_millis(500));
     }
 
-    start(true)
+    start(true).await
 }
 
 #[cfg(test)]

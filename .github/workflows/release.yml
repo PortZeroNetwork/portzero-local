@@ -257,6 +257,123 @@ jobs:
           $build_cmd build --release --target ${{ matrix.target }} $bin_flags
         shell: bash
 
+      # ---------------------------------------------------------------------
+      # macOS codesigning + notarization — OPTIONAL and strictly secret-gated.
+      #
+      # With the MACOS_SIGNING_* / MACOS_NOTARY_* secrets unset (the default
+      # today) every step below is a no-op and the darwin tarball is the exact
+      # same UNSIGNED artifact this workflow has always produced. Set the
+      # secrets to opt in — nothing about the current CI behavior changes until
+      # you do. GitHub Actions forbids `secrets.*` in a step `if:`, so a shell
+      # gate exposes them via `env:` and records the decision as step outputs.
+      # Runs on GitHub-hosted macos-15 as the runner user (no sudo / no host
+      # mutation). See docs/developers/macos-signing.md.
+      # ---------------------------------------------------------------------
+      - name: Check macOS signing secrets
+        id: macos_signing
+        if: contains(matrix.target, 'apple-darwin')
+        shell: bash
+        env:
+          MACOS_SIGNING_CERT_P12: ${{ secrets.MACOS_SIGNING_CERT_P12 }}
+          MACOS_SIGNING_CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          sign=false
+          notarize=false
+          if [ -n "$MACOS_SIGNING_CERT_P12" ] && [ -n "$MACOS_SIGNING_CERT_PASSWORD" ]; then
+            sign=true
+          fi
+          if [ "$sign" = true ] \
+            && [ -n "$MACOS_NOTARY_APPLE_ID" ] \
+            && [ -n "$MACOS_NOTARY_TEAM_ID" ] \
+            && [ -n "$MACOS_NOTARY_PASSWORD" ]; then
+            notarize=true
+          fi
+          echo "sign=$sign" >> "$GITHUB_OUTPUT"
+          echo "notarize=$notarize" >> "$GITHUB_OUTPUT"
+          echo "macOS codesigning=${sign}, notarization=${notarize}"
+
+      - name: Codesign macOS binaries (optional, secret-gated)
+        if: steps.macos_signing.outputs.sign == 'true'
+        shell: bash
+        env:
+          MACOS_SIGNING_CERT_P12: ${{ secrets.MACOS_SIGNING_CERT_P12 }}
+          MACOS_SIGNING_CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Import the Developer ID Application cert into an ephemeral, throwaway
+          # keychain, sign each binary with the hardened runtime, then delete it.
+          KEYCHAIN="$RUNNER_TEMP/portzero-signing.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/portzero-cert.p12"
+
+          echo "$MACOS_SIGNING_CERT_P12" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -P "$MACOS_SIGNING_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # Make the ephemeral keychain searchable without dropping the defaults.
+          # The existing keychain list is intentionally word-split into args.
+          # shellcheck disable=SC2046
+          security list-keychain -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | sed s/\"//g)
+
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | awk -F'"' 'NR==1{print $2}')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No codesigning identity found in MACOS_SIGNING_CERT_P12." >&2
+            security delete-keychain "$KEYCHAIN"
+            rm -f "$CERT_PATH"
+            exit 1
+          fi
+
+          IFS=',' read -ra BINS <<< "${{ matrix.bins }}"
+          for bin in "${BINS[@]}"; do
+            codesign --force --options runtime --timestamp \
+              --sign "$IDENTITY" \
+              "target/${{ matrix.target }}/release/$bin"
+            codesign --verify --strict --verbose=2 \
+              "target/${{ matrix.target }}/release/$bin"
+          done
+
+          security delete-keychain "$KEYCHAIN"
+          rm -f "$CERT_PATH"
+
+      - name: Notarize macOS binaries (optional, secret-gated)
+        if: steps.macos_signing.outputs.notarize == 'true'
+        shell: bash
+        env:
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # Submit the signed binaries to Apple's notary service. Bare CLI
+          # binaries can't be stapled, so notarization registers their signed
+          # hashes with Apple; Gatekeeper verifies online on first launch.
+          NOTARIZE_DIR="$RUNNER_TEMP/notarize"
+          NOTARIZE_ZIP="$RUNNER_TEMP/portzero-notarize.zip"
+          rm -rf "$NOTARIZE_DIR" "$NOTARIZE_ZIP"
+          mkdir -p "$NOTARIZE_DIR"
+
+          IFS=',' read -ra BINS <<< "${{ matrix.bins }}"
+          for bin in "${BINS[@]}"; do
+            cp "target/${{ matrix.target }}/release/$bin" "$NOTARIZE_DIR/"
+          done
+          /usr/bin/ditto -c -k --keepParent "$NOTARIZE_DIR" "$NOTARIZE_ZIP"
+
+          xcrun notarytool submit "$NOTARIZE_ZIP" \
+            --apple-id "$MACOS_NOTARY_APPLE_ID" \
+            --team-id "$MACOS_NOTARY_TEAM_ID" \
+            --password "$MACOS_NOTARY_PASSWORD" \
+            --wait
+          rm -rf "$NOTARIZE_DIR" "$NOTARIZE_ZIP"
+
       - name: Package (Unix)
         if: matrix.archive_ext == 'tar.gz'
         run: |
@@ -903,6 +1020,11 @@ jobs:
           brew install portzeronetwork/portzero/portzero-edge
           ```
 
+          > **macOS: unsigned builds and Gatekeeper.** Unstable binaries are not
+          > Apple-signed or notarized. Homebrew installs are normally not quarantined;
+          > a browser-downloaded tarball is — clear it with
+          > `xattr -d com.apple.quarantine <path-to-binary>` or right-click **Open** once.
+
           **Linux**
           ```sh
           curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | PORTZERO_CHANNEL=prerelease sh
@@ -924,11 +1046,23 @@ jobs:
           **macOS (Homebrew)**
           ```sh
           brew tap PortZeroNetwork/portzero
-          brew trust portzeronetwork/portzero
           brew install portzero
           ```
 
+          > **macOS: unsigned builds and Gatekeeper.** These binaries are not yet
+          > Apple-signed or notarized. Homebrew-installed binaries are normally not
+          > quarantined, so `brew install` launches fine. If you instead download a
+          > tarball from this page and macOS blocks it ("cannot be opened because the
+          > developer cannot be verified"), clear the flag with
+          > `xattr -d com.apple.quarantine <path-to-binary>`, or right-click it in
+          > Finder and choose **Open** once.
+
           **Linux**
+          ```sh
+          curl -fsSL https://portzero.net/install.sh | sh
+          ```
+
+          Offline, or want to pin a specific release? Run the release-asset installer directly instead:
           ```sh
           curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | sh
           ```
@@ -942,12 +1076,13 @@ jobs:
           curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-uninstall.sh | sh
           ```
 
-          **Windows (winget)**
+          **Windows**
 
-          Download the `.msi` from the assets below and run it manually.
+          Download `portzero-${{ needs.version.outputs.version }}-x86_64.msi` from the assets below and run it. (winget publishing is coming soon.)
 
           The installer and daemon perform local setup automatically where supported.
-          After installing, open http://portzero.local in your browser.
+          After installing, run `portzero start` — it opens the PortZero app. The daemon
+          also serves a browser dashboard at http://portzero.local for debugging.
 
           ---
           EOF
