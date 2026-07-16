@@ -14,6 +14,9 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 portzero-daemon = { path = "../daemon" }
+# Shared launcher for the PortZero desktop app (locate + spawn `portzero-app`),
+# used by the tray's "Open PortZero" actions.
+portzero-domain = { path = "../domain" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

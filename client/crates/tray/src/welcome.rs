@@ -1,5 +1,5 @@
 //! First-run welcome nudge: pop a desktop notification pointing the user at the
-//! local dashboard the first time the tray starts after install.
+//! PortZero desktop app the first time the tray starts after install.
 //!
 //! There is no cross-platform notification crate in our dependency set (and we
 //! deliberately avoid GUI-toolkit deps — see the crate docs), so this shells out
@@ -12,7 +12,7 @@ use std::process::Command;
 use portzero_daemon::discovery_loop::DaemonConfig;
 
 const TITLE: &str = "PortZero is running";
-const BODY: &str = "Open http://portzero.local to get started and run an example.";
+const BODY: &str = "Open the PortZero app to get started and run an example.";
 
 /// Show the welcome notification once. Subsequent calls (later logins) no-op.
 pub fn maybe_notify_first_run(config: &DaemonConfig) {

@@ -32,6 +32,11 @@ use std::path::{Path, PathBuf};
 /// client targets.
 pub mod endpoints;
 
+/// Locate and launch the PortZero desktop app (`portzero-app`) — the shared
+/// launcher the tray and CLI both use so they resolve and open the app the same
+/// way.
+pub mod app;
+
 /// Default base domain for portzero.cloud tunnels. The portzero-cloud edge only
 /// accepts tunnel routes ending in this suffix.
 pub const DEFAULT_BASE_DOMAIN: &str = "tunnel.portzero.cloud";

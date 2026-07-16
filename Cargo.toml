@@ -6,6 +6,7 @@ members = [
     "client/crates/domain",
     "client/crates/cli",
     "client/crates/tray",
+    "client/crates/app",
     "client/crates/xtask",
     "proto",
 ]

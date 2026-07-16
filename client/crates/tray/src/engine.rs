@@ -36,6 +36,7 @@ pub fn apply(config: &DaemonConfig, action: &Action) -> Dispatch {
         Action::Start => log_err("start daemon", actions::start_daemon()),
         Action::Stop => log_err("stop daemon", actions::stop_daemon()),
         Action::Restart => log_err("restart daemon", actions::restart_daemon()),
+        Action::OpenApp => log_err("open app", actions::open_app()),
         Action::OpenUrl(url) => log_err("open url", actions::open_url(url)),
         Action::ToggleHttps(enabled) => log_err(
             "set https policy",

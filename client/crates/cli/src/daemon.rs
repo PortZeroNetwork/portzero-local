@@ -12,9 +12,6 @@ use portzero_daemon::notify::read_issues;
 use portzero_daemon::route_table::{OverlayState, RouteTable};
 
 use crate::auth::AuthConfig;
-use crate::browser::open_browser as launch_browser;
-
-const LOCAL_DASHBOARD_URL: &str = "http://portzero.local";
 
 /// Start the discovery daemon in the background.
 ///
@@ -26,7 +23,7 @@ pub fn start(open_browser: bool) -> Result<()> {
     // Check if already running.
     if let Some(pid) = read_daemon_pid(&config) {
         println!("Daemon is already running (PID {pid}).");
-        open_local_dashboard(open_browser);
+        open_desktop_app(open_browser);
         return Ok(());
     }
 
@@ -102,7 +99,7 @@ pub fn start(open_browser: bool) -> Result<()> {
         println!("Daemon started (PID {child_pid}).");
         println!("Auth: {auth_status}");
         println!("Log:  {}", log_path.display());
-        open_local_dashboard(open_browser);
+        open_desktop_app(open_browser);
     } else {
         println!(
             "Daemon process spawned (PID {child_pid}) but did not confirm startup.\n\
@@ -114,13 +111,26 @@ pub fn start(open_browser: bool) -> Result<()> {
     Ok(())
 }
 
-fn open_local_dashboard(open_browser: bool) {
-    println!("Dashboard: {LOCAL_DASHBOARD_URL}");
-    if open_browser && !launch_browser(LOCAL_DASHBOARD_URL) {
-        println!("Could not open a browser automatically.");
-    }
+/// Open the PortZero desktop app — the primary local GUI, which replaces the
+/// old browser dashboard at `http://portzero.local`. `--no-browser` (i.e.
+/// `open_browser == false`) skips launching it, matching the previous behaviour
+/// for the browser.
+fn open_desktop_app(open_browser: bool) {
     if !open_browser {
-        println!("Browser launch skipped (--no-browser).");
+        println!("PortZero app launch skipped (--no-browser).");
+        println!("Open it any time from your applications menu, or run `portzero-app`.");
+        return;
+    }
+    match portzero_domain::app::launch() {
+        Ok(()) => println!("Opening the PortZero app..."),
+        Err(e) => {
+            println!("Could not open the PortZero app automatically: {e}");
+            println!(
+                "Launch it from your applications menu, or run `portzero-app`. \
+                 If it isn't installed, reinstalling PortZero adds it (or set \
+                 PORTZERO_APP_BIN to its full path)."
+            );
+        }
     }
 }
 
