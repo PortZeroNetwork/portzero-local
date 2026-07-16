@@ -73,7 +73,8 @@ workflow (tests, hooks, `just`).
 Release** → **Stable Release**. Windows code-signing specifics (currently
 scoped to `portzero.exe`) are tracked in [Windows signing](windows-signing.md);
 confirm whether `portzero-app.exe` has been added to that signing/verification
-list before relying on it being signed.
+list before relying on it being signed. macOS codesigning/notarization is
+optional and secret-gated — see [macOS signing](macos-signing.md).
 
 ## The old browser dashboard still exists — intentionally unlinked
 
@@ -102,6 +103,8 @@ new links to it from user-facing surfaces; point at the app instead.
 - [Release conventions](release-conventions.md) /
   [Software delivery lifecycle](sdlc.md) — how Unstable/Stable builds are cut.
 - [Windows signing](windows-signing.md) — code-signing runbook.
+- [macOS signing](macos-signing.md) — optional, secret-gated codesign +
+  notarization.
 - `docs/users/` — user-facing docs on installing and using Port Zero,
   including the [users README](../users/README.md#getting-started), which
   describes the same app from the product-user side.
