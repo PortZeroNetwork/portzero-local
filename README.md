@@ -40,6 +40,11 @@ brew install portzero
 
 **Linux**
 ```sh
+curl -fsSL https://portzero.net/install.sh | sh
+```
+
+Offline, or want to pin a specific release? Run the release-asset installer directly instead:
+```sh
 curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-install.sh | sh
 ```
 
