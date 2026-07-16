@@ -18,7 +18,6 @@ use ksni::blocking::TrayMethods;
 use ksni::menu::{CheckmarkItem, MenuItem, StandardItem, SubMenu};
 use portzero_daemon::discovery_loop::DaemonConfig;
 
-use crate::actions::{self, DASHBOARD_URL};
 use crate::engine::{self, Dispatch, REFRESH_INTERVAL};
 use crate::icon::{self, RgbaImage};
 use crate::menu::{self, Action, Node};
@@ -53,6 +52,12 @@ impl PortzeroTray {
 }
 
 impl ksni::Tray for PortzeroTray {
+    /// Show the menu on left-click instead of firing [`Self::activate`], matching
+    /// the Windows/macOS backend (tray-icon shows its menu on left-click). This
+    /// sets the SNI `ItemIsMenu` property so hosts open the menu directly; a
+    /// browser tab opening on a plain left-click was surprising behaviour.
+    const MENU_ON_ACTIVATE: bool = true;
+
     fn id(&self) -> String {
         "cloud.portzero.tray".into()
     }
@@ -65,13 +70,6 @@ impl ksni::Tray for PortzeroTray {
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         vec![to_ksni_icon(icon::image_for_health(self.snapshot.health))]
-    }
-
-    /// Left-click opens the dashboard; the menu is available on right-click.
-    fn activate(&mut self, _x: i32, _y: i32) {
-        if let Err(e) = actions::open_url(DASHBOARD_URL) {
-            tracing::warn!("failed to open dashboard: {e:#}");
-        }
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
