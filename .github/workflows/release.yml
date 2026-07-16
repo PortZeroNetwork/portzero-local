@@ -318,6 +318,8 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           # Make the ephemeral keychain searchable without dropping the defaults.
+          # The existing keychain list is intentionally word-split into args.
+          # shellcheck disable=SC2046
           security list-keychain -d user -s "$KEYCHAIN" \
             $(security list-keychains -d user | sed s/\"//g)
 
