@@ -9,9 +9,10 @@ class PortzeroEdge < Formula
   version "0.0.0"
   license "GPL-3.0-or-later"
 
-  # Both formulae install the `portzero`/`portzero-tray` binaries, so only one
-  # may be linked at a time. Testers `brew unlink portzero` (or uninstall it)
-  # before installing edge, and vice-versa to return to stable.
+  # Both formulae install the `portzero`/`portzero-tray`/`portzero-app`
+  # binaries, so only one may be linked at a time. Testers `brew unlink
+  # portzero` (or uninstall it) before installing edge, and vice-versa to
+  # return to stable.
   conflicts_with "portzero", because: "both install the portzero binary"
 
   on_macos do

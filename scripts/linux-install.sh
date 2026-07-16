@@ -392,6 +392,35 @@ if [ -f "$src/portzero-tray" ]; then
     fi
 fi
 
+# Desktop app (portzero-app): the primary local GUI that `portzero start` and
+# the tray's "Open PortZero" menu item both launch instead of a browser tab
+# (see docs/developers/desktop-app.md). Shipped only in the app-capable
+# release archives (amd64 Linux, both macOS arches); best-effort everywhere,
+# same as the tray above. A .deb/.rpm install gets the app's applications-menu
+# launcher from the package (packaging/linux/portzero.desktop); a manual
+# install drops the same launcher at user scope so the app still shows up in
+# the menu and `linux-uninstall.sh` (which already cleans up this path) has
+# something to remove.
+if [ -f "$src/portzero-app" ]; then
+    if install -m 0755 "$src/portzero-app" "$install_dir/portzero-app" 2>/dev/null; then
+        info "Installed portzero-app to $install_dir/portzero-app"
+        apps_dir="${HOME}/.local/share/applications"
+        mkdir -p "$apps_dir"
+        {
+            printf '%s\n' '[Desktop Entry]'
+            printf '%s\n' 'Type=Application'
+            printf '%s\n' 'Name=PortZero'
+            printf '%s\n' 'Comment=Manage local Port Zero tunnels and services from a desktop window'
+            printf '%s\n' "Exec=$install_dir/portzero-app"
+            printf '%s\n' 'Icon=portzero'
+            printf '%s\n' 'Terminal=false'
+            printf '%s\n' 'Categories=Network;Utility;'
+        } > "$apps_dir/portzero.desktop"
+    else
+        warn "Could not install portzero-app to $install_dir (continuing without the desktop app)."
+    fi
+fi
+
 portzero_bin_dir="${HOME}/.portzero/bin"
 uninstall_helper="${portzero_bin_dir}/portzero-uninstall"
 uninstall_url="${download_base}/linux-uninstall.sh"
