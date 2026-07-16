@@ -30,6 +30,9 @@ class PortzeroEdge < Formula
     # System-tray companion: a small GUI showing daemon/tunnel health with
     # start/restart/stop controls. Present in the release tarball.
     bin.install "portzero-tray" if File.exist?("portzero-tray")
+    # Desktop app: a Tauri window for managing local tunnels/services.
+    # Present in the release tarball.
+    bin.install "portzero-app" if File.exist?("portzero-app")
   end
 
   def post_install

@@ -13,6 +13,7 @@ InstallModes:
 UpgradeBehavior: install
 Commands:
 - portzero
+- portzero-app
 Installers:
 - Architecture: x64
   InstallerUrl: https://github.com/PortZeroNetwork/portzero-local/releases/download/v0.1.0/portzero-0.1.0-x86_64.msi

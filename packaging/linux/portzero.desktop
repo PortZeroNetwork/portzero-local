@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PortZero
+Comment=Manage local Port Zero tunnels and services from a desktop window
+Exec=/usr/local/bin/portzero-app
+Icon=portzero
+Terminal=false
+Categories=Network;Utility;
