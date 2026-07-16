@@ -24,6 +24,11 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- Same PortZero brand mark used for the app/tray icons, shown in
+         Add/Remove Programs (Programs and Features). -->
+    <Icon Id="PortZeroIcon" SourceFile="packaging\windows\portzero.ico" />
+    <Property Id="ARPPRODUCTICON" Value="PortZeroIcon" />
+
     <Feature Id="DefaultFeature" Title="PortZero" Level="1">
       <ComponentGroupRef Id="PortZeroComponents" />
     </Feature>

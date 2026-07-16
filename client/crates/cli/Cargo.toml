@@ -50,6 +50,7 @@ assets = [
     ["../../../packaging/linux/portzero-daemon.service", "usr/lib/systemd/user/portzero-daemon.service", "644"],
     ["../../../packaging/linux/portzero-tray.desktop", "etc/xdg/autostart/portzero-tray.desktop", "644"],
     ["../../../packaging/linux/portzero.desktop", "usr/share/applications/portzero.desktop", "644"],
+    ["../../../packaging/linux/icons/portzero.png", "usr/share/icons/hicolor/512x512/apps/portzero.png", "644"],
 ]
 maintainer-scripts = "../../../packaging/linux/deb"
 
@@ -67,6 +68,7 @@ assets = [
     { source = "../../../packaging/linux/portzero-daemon.service", dest = "/usr/lib/systemd/user/portzero-daemon.service", mode = "0644" },
     { source = "../../../packaging/linux/portzero-tray.desktop", dest = "/etc/xdg/autostart/portzero-tray.desktop", mode = "0644" },
     { source = "../../../packaging/linux/portzero.desktop", dest = "/usr/share/applications/portzero.desktop", mode = "0644" },
+    { source = "../../../packaging/linux/icons/portzero.png", dest = "/usr/share/icons/hicolor/512x512/apps/portzero.png", mode = "0644" },
 ]
 post_install_script = """
 if command -v setcap >/dev/null 2>&1; then
