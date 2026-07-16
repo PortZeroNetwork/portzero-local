@@ -410,7 +410,7 @@ if [ -f "$src/portzero-app" ]; then
             printf '%s\n' '[Desktop Entry]'
             printf '%s\n' 'Type=Application'
             printf '%s\n' 'Name=PortZero'
-            printf '%s\n' 'Comment=Manage local Port Zero tunnels and services from a desktop window'
+            printf '%s\n' 'Comment=Manage Port Zero tunnels to eliminate port conflicts in your dev environment'
             printf '%s\n' "Exec=$install_dir/portzero-app"
             printf '%s\n' 'Icon=portzero'
             printf '%s\n' 'Terminal=false'

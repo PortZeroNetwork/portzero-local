@@ -37,3 +37,47 @@ fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
 fi
+
+# --- Get the daemon + tray running now, without waiting for the next login ---
+#
+# dpkg runs this script as root during `dpkg -i` / `apt install`, so none of
+# the per-user autostart machinery installed above has fired yet: the
+# portzero-daemon.service systemd --user unit and the
+# /etc/xdg/autostart/portzero-tray.desktop entry only take effect on the
+# *next* login. Left alone, a user who launches the app right after install
+# just gets a connection-refused error and no tray icon.
+#
+# Best-effort: find the user who ran the install and, if they have a live
+# desktop session right now, enable+start the daemon service and launch the
+# tray for that session immediately. The tray itself notices if the daemon
+# isn't up yet and starts it (client/crates/tray/src/engine.rs::maybe_autostart),
+# so this is a two-layer belt-and-suspenders, not a strict dependency chain.
+target_user="${SUDO_USER:-}"
+if [ -z "$target_user" ] || [ "$target_user" = "root" ]; then
+    target_user="$(logname 2>/dev/null || true)"
+fi
+
+if [ -n "$target_user" ] && [ "$target_user" != "root" ] && command -v runuser >/dev/null 2>&1; then
+    target_uid="$(id -u "$target_user" 2>/dev/null || true)"
+    bus_socket="/run/user/${target_uid}/bus"
+
+    # A live session bus socket means this user is actually logged into a
+    # desktop session right now, so it's safe to start their systemd --user
+    # manager and hand it a GUI process.
+    if [ -n "$target_uid" ] && [ -S "$bus_socket" ]; then
+        if command -v systemctl >/dev/null 2>&1; then
+            runuser -u "$target_user" -- env \
+                XDG_RUNTIME_DIR="/run/user/${target_uid}" \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=${bus_socket}" \
+                systemctl --user enable --now portzero-daemon.service >/dev/null 2>&1 || true
+        fi
+
+        # setsid detaches the tray from this postinst script so dpkg does not
+        # wait on a long-running GUI process; ksni (the Linux tray backend) is
+        # pure D-Bus, so no $DISPLAY/Wayland handle is needed here.
+        runuser -u "$target_user" -- env \
+            XDG_RUNTIME_DIR="/run/user/${target_uid}" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=${bus_socket}" \
+            setsid /usr/local/bin/portzero-tray >/dev/null 2>&1 </dev/null &
+    fi
+fi

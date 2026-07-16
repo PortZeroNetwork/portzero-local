@@ -78,6 +78,23 @@ if ! grep -q '# portzero-local' /etc/hosts 2>/dev/null; then
     echo '10.254.0.2 portzero.local # portzero-local' >> /etc/hosts
 fi
 systemctl daemon-reload 2>/dev/null || true
+
+# Get the daemon + tray running now, without waiting for the next login (see
+# packaging/linux/deb/postinst for the full rationale; kept in sync here).
+target_user="${SUDO_USER:-}"
+if [ -z "$target_user" ] || [ "$target_user" = "root" ]; then
+    target_user="$(logname 2>/dev/null || true)"
+fi
+if [ -n "$target_user" ] && [ "$target_user" != "root" ] && command -v runuser >/dev/null 2>&1; then
+    target_uid="$(id -u "$target_user" 2>/dev/null || true)"
+    bus_socket="/run/user/${target_uid}/bus"
+    if [ -n "$target_uid" ] && [ -S "$bus_socket" ]; then
+        if command -v systemctl >/dev/null 2>&1; then
+            runuser -u "$target_user" -- env XDG_RUNTIME_DIR="/run/user/${target_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=${bus_socket}" systemctl --user enable --now portzero-daemon.service >/dev/null 2>&1 || true
+        fi
+        runuser -u "$target_user" -- env XDG_RUNTIME_DIR="/run/user/${target_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=${bus_socket}" setsid /usr/local/bin/portzero-tray >/dev/null 2>&1 </dev/null &
+    fi
+fi
 """
 pre_uninstall_script = """
 systemctl --user disable --now portzero-daemon 2>/dev/null || true
