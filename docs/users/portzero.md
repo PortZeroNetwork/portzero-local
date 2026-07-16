@@ -145,9 +145,9 @@ acceptable, so the two are kept orthogonal instead:
 - `{cloud-username}` may be used in a `.local` tunnel template, but needs an
   authenticated account to resolve. If you use `{cloud-username}` in a
   `.local` template while logged out, the daemon raises a diagnostic with a
-  **"Log in (still free)"** fix button in the [portzero.local dashboard](http://portzero.local#issues) —
-  clicking it starts the same browser login flow as running `portzero login`
-  yourself, without leaving the browser. **Local tunnels are always free**,
+  **"Log in (still free)"** fix button in the PortZero app's Issues list —
+  clicking it starts the same login flow as running `portzero login`
+  yourself. **Local tunnels are always free**,
   regardless of login state; logging in here only resolves the
   `{cloud-username}` value, it does not change billing for this tunnel.
 - `{cloud-username}` is required (implicitly) in cloud tunnel templates,

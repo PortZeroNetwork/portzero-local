@@ -58,7 +58,25 @@ curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/dow
 Download the `.msi` from the assets below and run it manually.
 
 The installer and daemon perform local setup automatically where supported.
-After installing, open http://portzero.local in your browser.
+
+## Getting started
+
+After installing, start the daemon:
+
+```sh
+portzero start
+```
+
+This launches the **PortZero app** — a native desktop app for checking
+daemon and tunnel health, managing HTTPS, and running the bundled examples —
+instead of opening a browser tab. Reopen it anytime from the system tray
+icon's **Open Dashboard** menu item, or run `portzero start --no-browser` to
+start the daemon without launching the app.
+
+The daemon still serves a browser-based dashboard at `http://portzero.local`
+for debugging, but the app is the recommended way to use Port Zero day to
+day. See [docs/developers/desktop-app.md](docs/developers/desktop-app.md) for
+how the app is built, and [docs/users/](docs/users/) for usage docs.
 
 ## Licensing
 
