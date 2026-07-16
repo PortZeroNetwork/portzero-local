@@ -14,6 +14,17 @@ if [ "$(uname -s)" != "Linux" ]; then
     exit 1
 fi
 
+# Undocumented override. When portzero was installed from a .deb/.rpm this
+# script hands removal to the system package manager (see below); --force skips
+# that detection and deletes the files by hand instead. Intended as an escape
+# hatch when the package database is broken — not for everyday use.
+force=0
+for arg in "$@"; do
+    case "$arg" in
+        --force) force=1 ;;
+    esac
+done
+
 info() { printf 'info: %s\n' "$1"; }
 warn() { printf 'warn: %s\n' "$1" >&2; }
 
@@ -124,6 +135,51 @@ remove_hosts_pin() {
     trap - EXIT HUP INT TERM
 }
 
+# Detect whether the portzero binary at $1 is tracked by a system package
+# manager. Prints "deb" or "rpm" and returns 0 when owned; returns 1 otherwise.
+package_manager_owner() {
+    bin="$1"
+    if has_cmd dpkg && dpkg -S "$bin" >/dev/null 2>&1; then
+        printf 'deb\n'
+        return 0
+    fi
+    if has_cmd rpm && rpm -qf "$bin" >/dev/null 2>&1; then
+        printf 'rpm\n'
+        return 0
+    fi
+    return 1
+}
+
+# Remove the portzero package through the system package manager so its on-disk
+# files AND its package-database entry go away together. Deleting package-owned
+# files by hand (the --force flow) leaves the package "installed" but broken,
+# forcing the user to run apt/dnf themselves afterwards.
+remove_via_package_manager() {
+    owner="$1"
+    case "$owner" in
+        deb)
+            if has_cmd apt-get; then
+                info "portzero was installed from a .deb; removing it with apt-get."
+                sudo_if_needed apt-get remove -y portzero && return 0
+            fi
+            info "portzero was installed from a .deb; removing it with dpkg."
+            sudo_if_needed dpkg --remove portzero && return 0
+            ;;
+        rpm)
+            if has_cmd dnf; then
+                info "portzero was installed from an .rpm; removing it with dnf."
+                sudo_if_needed dnf remove -y portzero && return 0
+            elif has_cmd yum; then
+                info "portzero was installed from an .rpm; removing it with yum."
+                sudo_if_needed yum remove -y portzero && return 0
+            fi
+            info "portzero was installed from an .rpm; removing it with rpm."
+            sudo_if_needed rpm -e portzero && return 0
+            ;;
+    esac
+    return 1
+}
+
 info "Stopping the tray companion and removing its autostart entry"
 if has_cmd pkill; then
     pkill -x portzero-tray >/dev/null 2>&1 || true
@@ -157,14 +213,39 @@ fi
 remove_hosts_pin
 remove_file /etc/polkit-1/rules.d/50-portzero-resolved.rules
 
-for candidate in $(portzero_candidates); do
-    remove_file "$candidate"
-done
+# Remove the portzero and tray binaries. When they came from a .deb/.rpm,
+# deleting them by hand would desync the package database and leave the package
+# half-installed (still listed by dpkg/rpm, but non-functional), so the user
+# would still have to run apt/dnf to finish the job. Hand off to the package
+# manager instead — unless --force was given, which restores the old manual
+# file-by-file removal as an escape hatch.
+owner=""
+if [ "$force" -eq 0 ] && owned_bin="$(first_existing_portzero 2>/dev/null)"; then
+    owner="$(package_manager_owner "$owned_bin" 2>/dev/null || true)"
+fi
 
-for candidate in $(portzero_tray_candidates); do
-    remove_file "$candidate"
-done
+if [ -n "$owner" ]; then
+    if remove_via_package_manager "$owner"; then
+        info "Removed the portzero package via the system package manager."
+    else
+        warn "Could not remove the portzero package automatically."
+        case "$owner" in
+            deb) warn "Remove it manually: sudo apt remove portzero" ;;
+            rpm) warn "Remove it manually: sudo dnf remove portzero" ;;
+        esac
+    fi
+else
+    for candidate in $(portzero_candidates); do
+        remove_file "$candidate"
+    done
 
+    for candidate in $(portzero_tray_candidates); do
+        remove_file "$candidate"
+    done
+fi
+
+# The uninstall helper (~/.portzero/bin/portzero-uninstall) is never part of a
+# .deb/.rpm — only the curl installer drops it — so always clean it up.
 for candidate in $(portzero_uninstall_candidates); do
     remove_file "$candidate"
 done
