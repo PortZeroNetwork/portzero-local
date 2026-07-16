@@ -10,7 +10,7 @@ This is expected. The two pages read from different sources and track different 
 
 ## Two separate views
 
-The local dashboard (http://portzero.local) shows the cloud domains the daemon discovered on *this machine* (read from `routes.json`) plus whether this daemon's WebSocket to the cloud edge is currently open (from `cloud_state.json`).
+The PortZero app's local view (backed by the same management data the daemon serves at http://portzero.local) shows the cloud domains the daemon discovered on *this machine* (read from `routes.json`) plus whether this daemon's WebSocket to the cloud edge is currently open (from `cloud_state.json`).
 
 The web dashboard shows every route the cloud has accepted for your account, no matter which machine registered it. It displays two counts:
 
@@ -27,19 +27,20 @@ It also labels individual routes Online, Idle, or Offline using the same freshne
    portzero login
    ```
 
-2. Start the daemon (it opens the local dashboard in your browser):
+2. Start the daemon (it opens the PortZero app):
 
    ```bash
    portzero start
    ```
 
-3. In another terminal, run a service with a cloud domain (use your real username):
+3. In another terminal, run a process or Docker container with a cloud domain (use your real username):
 
    ```bash
    PZ_TUNNEL=debug-$(whoami).tunnel.portzero.cloud python -m http.server 0
    ```
 
-4. Open http://portzero.local (or the exact URL the daemon printed).
+4. Look at the app's "Cloud tunnels" section (or, for debugging, open
+   http://portzero.local directly — the daemon serves the same data there).
 
 5. In a second tab, go to https://app.portzero.cloud and look at the two stat cards and the table on the home page.
 

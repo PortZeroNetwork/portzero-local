@@ -20,6 +20,26 @@ With your program running, open `http://master.mytodoapp.portzero.local:80` in y
 
 Cloud tunnels (`*.tunnel.portzero.cloud`) use the same `PZ_TUNNEL` mechanism (login + subscription).
 
+## Getting started
+
+1. Install Port Zero (see the [repo README](../../README.md#install)).
+2. Start the daemon:
+
+   ```bash
+   portzero start
+   ```
+
+   This opens the **PortZero app** — a desktop app showing daemon and tunnel
+   health, the HTTPS toggle, daemon controls, and the bundled examples. You
+   can reopen it anytime from the system tray icon's **Open Dashboard** item.
+   Run `portzero start --no-browser` to start the daemon without opening it.
+3. Tag a process or Docker container with `PZ_TUNNEL` as shown above, then
+   check it in the app's tunnel list (or run `portzero status`).
+
+The daemon still serves a browser dashboard at `http://portzero.local` for
+debugging, but it's no longer linked from the app, the tray, or the CLI — the
+desktop app is the recommended way to use Port Zero day to day.
+
 ## Index
 
 ### Core concepts
