@@ -22,3 +22,11 @@ esac
 if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
     systemctl daemon-reload 2>/dev/null || true
 fi
+
+# Refresh the desktop application menu cache so the new portzero.desktop
+# launcher (installed to /usr/share/applications/) shows up immediately
+# instead of only after the next login. Best-effort; no-op on minimal/headless
+# installs without update-desktop-database.
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+fi
