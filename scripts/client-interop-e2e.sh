@@ -42,6 +42,11 @@ cleanup() {
       "${BIN_DIR}/portzero" stop >/dev/null 2>&1
   fi
   if [ -n "${HTTP_PID:-}" ]; then
+    # HTTP_PID is the backgrounded subshell's PID, not necessarily python3's:
+    # some shells fork an extra level for the `cd; PZ_TUNNEL=... python3 ...`
+    # sequence instead of exec'ing straight into python3, which would leave
+    # the real server process an orphan after killing only the subshell.
+    pkill -P "${HTTP_PID}" >/dev/null 2>&1
     kill "${HTTP_PID}" >/dev/null 2>&1
   fi
   if [ -f "${DAEMON_LOG}" ]; then
@@ -95,7 +100,20 @@ start_local_service() {
   printf '%s\n' "${EXPECTED_BODY}" > "${HTTP_DIR}/index.html"
   (
     cd "${HTTP_DIR}"
-    PZ_TUNNEL="${TUNNEL_DOMAIN}:80" python3 -u -m http.server 0 --bind 127.0.0.1
+    # http.server's HTTPServer.server_bind() unconditionally calls
+    # socket.getfqdn(host) to populate server_name — before it ever calls
+    # listen() or prints the "Serving HTTP" banner. On GitHub's hosted macOS
+    # runners that reverse-hostname lookup can stall for a long time (the
+    # process stays alive, just stuck before the banner), which starved this
+    # loop even with -u for unbuffered output. Nothing here needs a resolved
+    # hostname — bound to 127.0.0.1 only — so stub it out before the server
+    # ever touches DNS.
+    PZ_TUNNEL="${TUNNEL_DOMAIN}:80" python3 -u -c '
+import socket
+socket.getfqdn = lambda *a, **kw: "localhost"
+from http.server import SimpleHTTPRequestHandler, test
+test(HandlerClass=SimpleHTTPRequestHandler, port=0, bind="127.0.0.1")
+'
   ) > "${WORK_DIR}/http.log" 2>&1 &
   HTTP_PID="$!"
 
