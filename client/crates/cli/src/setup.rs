@@ -60,10 +60,10 @@ pub async fn run() -> Result<()> {
     if failures.is_empty() {
         println!();
         println!("Setup complete.");
-        println!("Run an example from the Getting Started section on the dashboard.");
-        // Pop the dashboard, but only once it actually answers — opening early
-        // would show an error page before DNS/overlay are ready.
-        wait_and_open_dashboard().await;
+        println!("Run an example from the Getting Started section in the PortZero app.");
+        // Launch the desktop app, but only once the daemon actually answers —
+        // opening early would show a daemon-down state before DNS/overlay are ready.
+        wait_and_open_app().await;
         return Ok(());
     }
 
@@ -79,13 +79,12 @@ pub async fn run() -> Result<()> {
     )
 }
 
-/// Poll the dashboard over its real DNS path for up to ~30s, and open it in the
-/// browser the moment it answers. Best-effort: prints a hint and returns rather
-/// than failing setup if the dashboard never becomes reachable (or has no
-/// browser opener). Proxy is bypassed so a corporate `HTTP_PROXY` can't swallow
-/// the local request.
-async fn wait_and_open_dashboard() {
-    const DASHBOARD_URL: &str = "http://portzero.local";
+/// Wait until the daemon answers over its real DNS path (up to ~30s), then
+/// launch the PortZero desktop app. Best-effort: prints a hint and returns
+/// rather than failing setup if the daemon never becomes reachable (or the app
+/// can't be launched). The readiness probe bypasses any proxy so a corporate
+/// `HTTP_PROXY` can't swallow the local request.
+async fn wait_and_open_app() {
     const PROBE_URL: &str = "http://portzero.local/status.json";
 
     let client = match reqwest::Client::builder()
@@ -97,14 +96,18 @@ async fn wait_and_open_dashboard() {
         Err(_) => return,
     };
 
-    print!("Waiting for {DASHBOARD_URL}...");
+    print!("Waiting for the daemon to become ready...");
     let _ = std::io::stdout().flush();
     for _ in 0..30 {
         if let Ok(resp) = client.get(PROBE_URL).send().await {
             if resp.status().is_success() {
                 println!(" ready.");
-                if !crate::browser::open_browser(DASHBOARD_URL) {
-                    println!("Open {DASHBOARD_URL} in your browser to get started.");
+                match portzero_domain::app::launch() {
+                    Ok(()) => println!("Opening the PortZero app..."),
+                    Err(err) => println!(
+                        "Could not open the PortZero app automatically ({err}). \
+                         Launch it from your applications menu, or run `portzero start`."
+                    ),
                 }
                 return;
             }
@@ -112,7 +115,10 @@ async fn wait_and_open_dashboard() {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
     println!();
-    println!("Open {DASHBOARD_URL} once it is reachable (see 'portzero status').");
+    println!(
+        "The daemon is not ready yet. Once `portzero status` shows it running, \
+         open the PortZero app from your applications menu or run `portzero start`."
+    );
 }
 
 /// Install the scoped `*.portzero.local` OS resolver as part of setup so name
