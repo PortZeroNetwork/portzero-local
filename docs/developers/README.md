@@ -5,6 +5,7 @@ Audience: [target-audience.md](target-audience.md).
 ## Documents
 
 - [Development](development.md) — tests, `just`, lefthook, Ticketry
+- [Desktop app](desktop-app.md) — `portzero-app` (Tauri v2), dev workflow, build/embedding
 - [Complexity budgets](complexity-budgets.md)
 - [Software delivery lifecycle](sdlc.md) — staging, stable tags, workflows
 - [Release version numbers](release-version-numbers.md)
