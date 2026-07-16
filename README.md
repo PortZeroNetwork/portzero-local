@@ -98,7 +98,8 @@ start the daemon without launching the app.
 The daemon still serves a browser-based dashboard at `http://portzero.local`
 for debugging, but the app is the recommended way to use Port Zero day to
 day. See [docs/developers/desktop-app.md](docs/developers/desktop-app.md) for
-how the app is built, and [docs/users/](docs/users/) for usage docs.
+how the app is built, and [portzero.net/docs](https://portzero.net/docs) for
+usage docs.
 
 ## Licensing
 

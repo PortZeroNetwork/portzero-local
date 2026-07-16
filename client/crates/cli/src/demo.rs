@@ -130,10 +130,7 @@ fn print_success(url: &str, no_browser: bool) {
     println!();
     println!("  PZ_TUNNEL=web.myapp.portzero.local:80 <your dev command>");
     println!();
-    println!("More examples: docs/users/examples.md");
-    println!(
-        "  (https://github.com/PortZeroNetwork/portzero-local/blob/staging/docs/users/examples.md)"
-    );
+    println!("More examples: https://portzero.net/docs/examples");
     println!();
     println!("The demo keeps running so you can play with the page. Press Ctrl+C to stop.");
 }

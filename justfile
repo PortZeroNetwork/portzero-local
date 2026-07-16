@@ -4,7 +4,7 @@ import? 'vmtest/justfile'
 default:
     @just --list
 
-# Refresh installer/getting-started.json and docs/users/examples.md from ../portzero-examples.
+# Refresh installer/getting-started.json from ../portzero-examples.
 [unix]
 examples-docs:
     CARGO_TARGET_DIR=/tmp/portzero-target cargo run -p portzero-daemon --bin generate-examples-docs

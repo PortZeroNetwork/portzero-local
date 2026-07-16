@@ -1,10 +1,9 @@
 # Documentation
 
-Documentation is split by audience (see each folder’s `target-audience.md`):
+This folder holds internal documentation for contributors working on this
+repository — see [developers/](developers/) and its `target-audience.md`.
 
-| Folder | Audience |
-|--------|----------|
-| [users/](users/) | People using Port Zero Local as a product |
-| [developers/](developers/) | Contributors working on this repository |
+User-facing product documentation (installing and using Port Zero) lives at
+[portzero.net/docs](https://portzero.net/docs), not in this repo.
 
-Start at [users/README.md](users/README.md) or [developers/README.md](developers/README.md).
+Start at [developers/README.md](developers/README.md).

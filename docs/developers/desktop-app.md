@@ -105,9 +105,10 @@ new links to it from user-facing surfaces; point at the app instead.
 - [Windows signing](windows-signing.md) — code-signing runbook.
 - [macOS signing](macos-signing.md) — optional, secret-gated codesign +
   notarization.
-- `docs/users/` — user-facing docs on installing and using Port Zero,
-  including the [users README](../users/README.md#getting-started), which
-  describes the same app from the product-user side.
-- [Examples](../users/examples.md) — the same bundled examples run by hand
-  (clone + `PZ_TUNNEL`), i.e. the CLI equivalent of the app's **Getting
+- [portzero.net/docs](https://portzero.net/docs) — user-facing docs on installing
+  and using Port Zero, including [Getting
+  started](https://portzero.net/docs/getting-started), which describes the same
+  app from the product-user side.
+- [Examples](https://portzero.net/docs/examples) — the same bundled examples run
+  by hand (clone + `PZ_TUNNEL`), i.e. the CLI equivalent of the app's **Getting
   started** panel that downloads and runs them with one click.

@@ -29,9 +29,11 @@ crate — that reintroduces the duplication this module exists to prevent.
 
 ## Documentation layout
 
-- `docs/users/` — product users
-- `docs/developers/` — contributors
-- Each folder has `target-audience.md`.
+- `docs/developers/` — contributors, has `target-audience.md`.
+- User-facing product documentation is **not** in this repo — it lives at
+  [portzero.net/docs](https://portzero.net/docs), sourced from portzero-cloud's
+  `cloud/landing/blog/src/data/docs/`. When a user-facing behavior changes here,
+  update the corresponding page there.
 
 ## CI: self-hosted macOS runner and Parallels VMs
 

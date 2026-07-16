@@ -1,5 +1,9 @@
-//! Regenerates `installer/getting-started.json` and `docs/users/examples.md` from
-//! the adjacent `portzero-examples` checkout. Run via `just examples-docs`.
+//! Regenerates `installer/getting-started.json` from the adjacent
+//! `portzero-examples` checkout. Run via `just examples-docs`.
+//!
+//! The user-facing examples writeup generated from this same data lives at
+//! https://portzero.net/docs/examples (source: portzero-cloud's
+//! `cloud/landing/blog/src/data/docs/examples.md`), not in this repo.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -129,11 +133,6 @@ fn main() -> Result<()> {
     std::fs::write(&manifest_path, format!("{manifest_json}\n"))
         .with_context(|| format!("write {}", manifest_path.display()))?;
     println!("wrote {}", manifest_path.display());
-
-    let docs_path = repo_root.join("docs/users/examples.md");
-    std::fs::write(&docs_path, render_docs(&examples))
-        .with_context(|| format!("write {}", docs_path.display()))?;
-    println!("wrote {}", docs_path.display());
 
     Ok(())
 }
@@ -370,71 +369,4 @@ fn git_commit(root: &Path) -> Option<String> {
     }
     let commit = String::from_utf8(output.stdout).ok()?.trim().to_string();
     (!commit.is_empty()).then_some(commit)
-}
-
-fn render_docs(examples: &[Example]) -> String {
-    let mut lines = vec![
-        "# PortZero Examples".to_string(),
-        String::new(),
-        "For a zero-dependency first step, run `portzero demo`: it serves a built-in".to_string(),
-        "page through a Local tunnel at `http://hello.portzero.local` with nothing to".to_string(),
-        "clone or install. The examples below show the same `PZ_TUNNEL` mechanism on".to_string(),
-        "real stacks.".to_string(),
-        String::new(),
-        "These examples live in the separate `portzero-examples` repository. Clone it next to this repository or anywhere convenient:".to_string(),
-        String::new(),
-        "```sh".to_string(),
-        format!("git clone {REPO_URL}"),
-        "cd portzero-examples".to_string(),
-        "```".to_string(),
-        String::new(),
-        "Prefer one click? The PortZero app's **Getting started** panel can download these same examples and run any of them for you — no manual clone or `PZ_TUNNEL` wrangling needed. The steps below are the equivalent done by hand.".to_string(),
-        String::new(),
-        "Each example sets `PZ_TUNNEL` so the local daemon can make the process or Docker Compose project available at a `*.portzero.local` name.".to_string(),
-        String::new(),
-    ];
-
-    for example in examples {
-        let path = slash_path(&example.path);
-        let windows_path = path.replace('/', "\\");
-        let domain = domain(example);
-        let (cmd_part, win_cmd_part) = launch_parts(&example.source_language, &example.variant);
-        let win_set = format!("$env:PZ_TUNNEL = \"{domain}\"; {win_cmd_part}");
-        lines.extend([
-            format!("## {}", title(example)),
-            String::new(),
-            "macOS or Linux:".to_string(),
-            String::new(),
-            "```sh".to_string(),
-            format!("cd {path}"),
-            format!("PZ_TUNNEL=\"{domain}\" {cmd_part}"),
-            "```".to_string(),
-            String::new(),
-            "Windows PowerShell:".to_string(),
-            String::new(),
-            "```powershell".to_string(),
-            format!("cd {windows_path}"),
-            win_set,
-            "```".to_string(),
-            String::new(),
-        ]);
-
-        if example.variant == "docker" {
-            lines.extend([
-                "This example requires Docker with Docker Compose to be installed and running."
-                    .to_string(),
-                String::new(),
-            ]);
-        }
-
-        lines.extend([
-            format!(
-                "Open `http://{}/` after the example starts.",
-                domain.trim_end_matches(":80")
-            ),
-            String::new(),
-        ]);
-    }
-
-    lines.join("\n")
 }
