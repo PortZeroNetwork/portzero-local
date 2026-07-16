@@ -946,12 +946,13 @@ jobs:
           curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-uninstall.sh | sh
           ```
 
-          **Windows (winget)**
+          **Windows**
 
-          Download the `.msi` from the assets below and run it manually.
+          Download `portzero-${{ needs.version.outputs.version }}-x86_64.msi` from the assets below and run it. (winget publishing is coming soon.)
 
           The installer and daemon perform local setup automatically where supported.
-          After installing, open http://portzero.local in your browser.
+          After installing, run `portzero start` — it opens the PortZero app. The daemon
+          also serves a browser dashboard at http://portzero.local for debugging.
 
           ---
           EOF

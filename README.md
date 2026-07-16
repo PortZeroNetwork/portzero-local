@@ -57,9 +57,9 @@ Or run the release asset directly:
 curl -fsSL https://github.com/PortZeroNetwork/portzero-local/releases/latest/download/linux-uninstall.sh | sh
 ```
 
-**Windows (winget)**
+**Windows**
 
-Download the `.msi` from the assets below and run it manually.
+Download `portzero-<version>-x86_64.msi` from the [latest GitHub release](https://github.com/PortZeroNetwork/portzero-local/releases/latest) and run it. (winget publishing is coming soon.)
 
 The installer and daemon perform local setup automatically where supported.
 
