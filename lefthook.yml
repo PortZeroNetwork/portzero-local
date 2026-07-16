@@ -13,7 +13,7 @@
 #
 # What runs:
 #   pre-commit: fast format check + file-size budget (catches style/size before you even commit)
-#   pre-push:   the important CI-parity checks (fmt + clippy -D warnings + tests)
+#   pre-push:   the important CI-parity checks (app frontend build + fmt + clippy -D warnings + tests)
 #
 # Privileged / root-gated tests are NEVER run automatically here.
 # See `just e2e` (and docs/privileges.md) for the real TUN overlay test.
@@ -36,6 +36,13 @@ pre-push:
   # You can set parallel: true if you want clippy + test to race.
   parallel: false
   commands:
+    app-frontend:
+      run: just app-frontend-check
+      # `just clippy`/`just test` below run with --workspace, which compiles
+      # the portzero-app crate. Tauri's build.rs embeds client/crates/app/ui/dist
+      # into the binary, so it must exist and be current *before* those cargo
+      # commands run — matching the frontend-build-before-cargo-build ordering
+      # in .github/workflows/ci.yml and release.yml.
     fmt:
       run: just fmt-check
     clippy:

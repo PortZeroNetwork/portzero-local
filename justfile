@@ -424,10 +424,89 @@ complexity *ARGS:
     $env:CARGO_TARGET_DIR = Join-Path $env:TEMP "portzero-target"
     cargo run -p portzero-xtask --bin check-file-size-budget -- {{ARGS}}
 
+# -----------------------------------------------------------------------------
+# Desktop app (client/crates/app, Tauri v2, binary `portzero-app`)
+#
+# The React/TypeScript frontend at client/crates/app/ui MUST be built before
+# any cargo command touches the portzero-app crate — Tauri embeds ui/dist
+# into the binary at build time via its build.rs, so a stale or missing
+# ui/dist breaks `cargo build`/`clippy`/`test` for that crate, not just
+# packaging. Linux additionally needs webkit2gtk/GTK/appindicator headers to
+# even compile the crate — see `just app-linux-deps` below.
+# -----------------------------------------------------------------------------
+
+# Print (but do not run) the command to install portzero-app's Linux build
+# dependencies. Not run automatically since it requires sudo — copy/paste it
+# yourself once per machine.
+[unix]
+app-linux-deps:
+    @echo "portzero-app (Tauri v2) needs these Linux packages to build:"
+    @echo ""
+    @echo "  sudo apt-get update"
+    @echo "  sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev"
+    @echo ""
+    @echo "(Debian/Ubuntu package names; see AGENTS.md for the equivalent runtime-only packages.)"
+
+# Build the app frontend (client/crates/app/ui) and typecheck it. Mirrors the
+# frontend steps in .github/workflows/ci.yml so this is CI parity for the app
+# crate, the same way `just verify` is for the rest of the workspace.
+[unix]
+app-frontend-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd client/crates/app/ui
+    npm ci
+    npm run typecheck --if-present
+    npm run build
+
+[windows]
+app-frontend-check:
+    Push-Location client/crates/app/ui
+    npm ci
+    npm run typecheck --if-present
+    npm run build
+    Pop-Location
+
+# Build the frontend, then run portzero-app in dev mode. On Linux, run
+# `just app-linux-deps` first if the build fails on missing webkit/GTK headers.
+[unix]
+app-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (cd client/crates/app/ui && npm ci && npm run build)
+    cargo run -p portzero-app
+
+[windows]
+app-dev:
+    Push-Location client/crates/app/ui
+    npm ci
+    npm run build
+    Pop-Location
+    cargo run -p portzero-app
+
+# Build the frontend, then a release portzero-app binary. Mirrors the release
+# workflow's build step (.github/workflows/release.yml) so this reproduces
+# what CI ships.
+[unix]
+app-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (cd client/crates/app/ui && npm ci && npm run build)
+    cargo build --release -p portzero-app
+
+[windows]
+app-build:
+    Push-Location client/crates/app/ui
+    npm ci
+    npm run build
+    Pop-Location
+    cargo build --release -p portzero-app
+
 # Run the unprivileged local checks from the main CI job.
 # Recommended before pushing. Follow with `just e2e` for current-OS CI parity.
 # This still does not cover the other CI operating systems or release packaging.
 verify:
+    just app-frontend-check
     just fmt-check
     just clippy
     just test
