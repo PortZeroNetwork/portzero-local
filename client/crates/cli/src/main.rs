@@ -4,6 +4,7 @@
 
 use clap::{Parser, Subcommand};
 
+mod agents;
 mod api_client;
 mod auth;
 mod autostart;
@@ -171,6 +172,11 @@ enum Command {
     #[command(subcommand)]
     Skill(SkillCommand),
 
+    /// Configure AI coding agents to use Port Zero (MCP registration + agent
+    /// instructions), so you never have to hand copy-paste JSON again.
+    #[command(subcommand)]
+    Agents(AgentsCommand),
+
     /// Manage the discovery daemon (grouped aliases for the top-level
     /// `start` / `stop` / `restart` / `status` commands).
     #[command(subcommand)]
@@ -211,6 +217,21 @@ enum SkillCommand {
         /// Print the skill to stdout instead of writing a file.
         #[arg(long)]
         print: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentsCommand {
+    /// Detect installed AI coding agents (Claude Code, Codex, pi.dev,
+    /// opencode, Grok Build) and register the Port Zero MCP server + a
+    /// user-level instructions block for each one found. Safe to re-run:
+    /// existing config entries and instructions content outside the
+    /// portzero-managed block are preserved.
+    Setup {
+        /// Print what would change without writing any files or invoking any
+        /// agent's own `mcp add` command.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -320,6 +341,9 @@ async fn main() -> anyhow::Result<()> {
         },
         Command::Skill(cmd) => match cmd {
             SkillCommand::Install { dir, force, print } => skill::install(dir, force, print)?,
+        },
+        Command::Agents(cmd) => match cmd {
+            AgentsCommand::Setup { dry_run } => agents::setup(dry_run)?,
         },
         Command::Daemon(cmd) => match cmd {
             DaemonCommand::Start {

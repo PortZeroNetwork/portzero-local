@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
 
+mod agent_mcp;
 mod checks;
 mod probes;
 
@@ -105,6 +106,7 @@ pub async fn run_diagnostics(state_dir: &std::path::Path) -> DiagnosticsReport {
         run!(checks::check_ca_cert_exists());
         run!(checks::check_local_ca_trust_installation());
         run!(checks::check_snap_brave_tls_trust());
+        run!(agent_mcp::check_ai_agent_mcp_registration());
 
         out.sort_by(|a, b| a.severity.cmp(&b.severity));
         (out, checks_run)
@@ -342,6 +344,7 @@ mod tests {
             "multiple_instances",
             "dns_probe_ok",
             "http_probe_skipped",
+            "ai_agent_mcp_not_registered",
             // The macOS resolver has its own self-heal + notification path, so it
             // must be excluded here to avoid double-notifying.
             "macos_resolver_missing",
