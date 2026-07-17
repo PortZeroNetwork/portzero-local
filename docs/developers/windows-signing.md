@@ -89,7 +89,7 @@ Azure role assignments may take several minutes to propagate.
 ## GitHub Actions values
 
 Prefer GitHub OIDC / Azure federated credentials over long-lived client secrets.
-Store these as GitHub Actions variables:
+Store these as GitHub Actions variables **in the `release-signing` environment**:
 
 ```text
 AZURE_CLIENT_ID
@@ -106,10 +106,35 @@ The endpoint is region-specific, for example:
 https://eus.codesigning.azure.net
 ```
 
-The Azure app registration used by GitHub Actions needs a federated credential
-for this repository and the release branch/ref used to publish releases. The
-release workflow grants `id-token: write`, authenticates with `azure/login`,
-and signs with `azure/artifact-signing-action`.
+### Why a dedicated `release-signing` environment
+
+The signing jobs (`sign-windows-zip`, `sign-windows-msi` in `release.yml`) run
+in a `release-signing` GitHub Environment, **not** `production`. The single
+human approval for a stable release belongs on the gate — **Trigger Stable
+Release** — which stamps the `vX.Y.Z` tag behind the `production` environment's
+required reviewer. If the signing jobs also named `production`, GitHub would
+re-open that approval for each of them, so one release would prompt three times.
+
+`release-signing` therefore has **no** required reviewer, but its **deployment
+branch policy is restricted to `v*.*.*` tags** (a protected-tag rule). Only the
+gated Trigger Stable Release can create those tags, so the signing credentials
+are reachable only from an already-approved release build — the gate's security
+is preserved while the redundant prompts are gone.
+
+### Azure federated credential subject
+
+`azure/login` presents a GitHub OIDC token whose `sub` claim, for an
+environment-scoped job, is:
+
+```text
+repo:PortZeroNetwork/portzero-local:environment:release-signing
+```
+
+The Azure app registration's federated credential **must match this subject**.
+If it was created for `environment:production` (the old setup), update it — a
+mismatch makes `azure/login` fail with `AADSTS700213` / no matching federated
+identity. The release workflow grants `id-token: write`, authenticates with
+`azure/login`, and signs with `azure/artifact-signing-action`.
 
 ## Signing command shape
 

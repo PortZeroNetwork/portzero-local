@@ -534,12 +534,19 @@ jobs:
     name: Sign Windows Zip Binaries
     needs: [version, build]
     # Only a genuine vX.Y.Z tag build goes through Artifact Signing — unstable
-    # builds (staging push / workflow_dispatch) ship unsigned for testing. This
-    # job (unlike the `build` matrix) covers only the Windows leg, so gating it
-    # on the `production` environment doesn't hold up macOS/Linux builds too.
+    # builds (staging push / workflow_dispatch) ship unsigned for testing.
+    #
+    # This references `release-signing`, NOT `production`. The human approval
+    # belongs on the gate (Trigger Stable Release), which stamps the vX.Y.Z tag
+    # behind the `production` environment's required reviewer. Re-gating this
+    # signing job on `production` would re-open that approval for a tag that was
+    # already approved — three prompts per release instead of one. Instead
+    # `release-signing` holds the Artifact Signing vars with NO required
+    # reviewer, but its deployment-branch policy is locked to `v*.*.*` tags, so
+    # only an already-approved tag build can ever reach the signing credentials.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
-    environment: production
+    environment: release-signing
     steps:
       - name: Download Windows zip artifact
         uses: actions/download-artifact@v5
@@ -781,10 +788,15 @@ jobs:
     needs: [version, package-windows]
     # Only a genuine vX.Y.Z tag build goes through Artifact Signing — unstable
     # MSIs ship unsigned for testing. Split out from package-windows so the
-    # `production` environment gate doesn't hold up every unstable MSI build.
+    # signing step doesn't hold up every unstable MSI build.
+    #
+    # Uses `release-signing`, not `production` — same reasoning as
+    # sign-windows-zip above: the release is approved once at the gate (Trigger
+    # Stable Release); the signing credentials live in a reviewer-free
+    # environment that only `v*.*.*` tag builds can reach.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
-    environment: production
+    environment: release-signing
     steps:
       - name: Download MSI artifact
         uses: actions/download-artifact@v5
