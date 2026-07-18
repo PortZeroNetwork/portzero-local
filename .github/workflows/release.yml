@@ -633,6 +633,10 @@ jobs:
     name: Build Linux Packages
     needs: [version, build]
     runs-on: ubuntu-latest
+    # Disabled for launch: focusing on one Linux install path (linux-install.sh)
+    # instead of also shipping .deb/.rpm. cargo-deb/cargo-generate-rpm metadata
+    # stays in client/crates/cli/Cargo.toml so this can be re-enabled later.
+    if: false
     steps:
       - uses: actions/checkout@v5
 
@@ -961,7 +965,7 @@ jobs:
   release:
     name: Create Release
     needs:
-      [version, build, package-linux, package-windows, test-macos-interop, test-windows-interop]
+      [version, build, package-windows, test-macos-interop, test-windows-interop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -981,7 +985,7 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           path: artifacts
-          pattern: portzero-{deb,rpm,msi,winget}
+          pattern: portzero-{msi,winget}
           merge-multiple: true
 
       - uses: dtolnay/rust-toolchain@stable
@@ -1101,8 +1105,6 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/*.zip
-            artifacts/*.deb
-            artifacts/*.rpm
             artifacts/*.msi
             artifacts/version.json
             artifacts/management-v1.yaml
