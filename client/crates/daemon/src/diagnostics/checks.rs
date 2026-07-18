@@ -14,6 +14,21 @@ use crate::tls::{trust, LocalCa};
 
 pub(super) fn check_binary_exists() -> Option<Diagnostic> {
     let exe = std::env::current_exe().ok()?;
+
+    // On Linux, `current_exe()` resolves the `/proc/self/exe` symlink. If the
+    // running process's binary was replaced in place (e.g. a self-update
+    // renaming the new binary over the old path) the kernel appends
+    // " (deleted)" to the target because the *running* process still holds
+    // the old, now-unlinked inode — even though a good file exists at the
+    // real path. Strip that marker and re-check the real path before
+    // reporting a false "binary missing" critical diagnostic.
+    #[cfg(target_os = "linux")]
+    let exe: PathBuf = exe
+        .to_str()
+        .and_then(|s| s.strip_suffix(" (deleted)"))
+        .map(PathBuf::from)
+        .unwrap_or(exe);
+
     if std::fs::metadata(&exe).is_err() {
         tracing::debug!("check_binary_exists: binary not found at {}", exe.display());
         Some(Diagnostic {
