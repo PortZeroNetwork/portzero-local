@@ -64,9 +64,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    window.scrollTo(0, 0);
     refresh();
     timer.current = window.setInterval(refresh, POLL_MS);
-    const unlistenP = listen("app://focus", () => refresh());
+    const unlistenP = listen("app://focus", () => {
+      window.scrollTo(0, 0);
+      refresh();
+    });
     return () => {
       if (timer.current) window.clearInterval(timer.current);
       unlistenP.then((u) => u());
@@ -111,27 +115,26 @@ export default function App() {
           </span>
         </div>
 
-        <section className="section">
-          <div className="section-head">
-            <h2>Daemon</h2>
-            <p className="section-note">
-              The daemon discovers tunnels and serves the local API.
-            </p>
-          </div>
-          {status && (
-            <DaemonControls
-              status={status}
-              onError={setError}
-              onChanged={refresh}
-            />
-          )}
-        </section>
-
         {status && (
           <>
             <NextSteps status={status} onError={setError} onChanged={refresh} />
             <Tunnels status={status} onError={setError} />
             <Settings status={status} onError={setError} onChanged={refresh} />
+
+            <section className="section">
+              <div className="section-head">
+                <h2>Daemon</h2>
+                <p className="section-note">
+                  The daemon discovers tunnels and serves the local API.
+                </p>
+              </div>
+              <DaemonControls
+                status={status}
+                onError={setError}
+                onChanged={refresh}
+              />
+            </section>
+
             <Issues status={status} />
           </>
         )}
