@@ -52,6 +52,14 @@ fi
 # tray for that session immediately. The tray itself notices if the daemon
 # isn't up yet and starts it (client/crates/tray/src/engine.rs::maybe_autostart),
 # so this is a two-layer belt-and-suspenders, not a strict dependency chain.
+#
+# portzero-tray refuses to start a second tray icon if one is already running
+# (client/crates/tray/src/singleton.rs), so this launch can never itself
+# produce a duplicate icon. On an *upgrade*, though, a tray from the old
+# package version may still be running; left alone, the new launch below
+# would just decline in its favor and the user would keep running stale tray
+# code until their next login. So on upgrade, stop the old tray first — the
+# singleton guard means this is purely about freshness, not correctness.
 target_user="${SUDO_USER:-}"
 if [ -z "$target_user" ] || [ "$target_user" = "root" ]; then
     target_user="$(logname 2>/dev/null || true)"
@@ -71,6 +79,12 @@ if [ -n "$target_user" ] && [ "$target_user" != "root" ] && command -v runuser >
                 DBUS_SESSION_BUS_ADDRESS="unix:path=${bus_socket}" \
                 systemctl --user enable --now portzero-daemon.service >/dev/null 2>&1 || true
         fi
+
+        # Stop a tray from a prior package version, scoped to this user, so the
+        # launch below runs the freshly-installed binary instead of losing the
+        # race to an old one that's still holding the singleton lock. No-op on
+        # a first install (nothing to kill).
+        pkill -u "$target_uid" -x portzero-tray 2>/dev/null || true
 
         # setsid detaches the tray from this postinst script so dpkg does not
         # wait on a long-running GUI process; ksni (the Linux tray backend) is

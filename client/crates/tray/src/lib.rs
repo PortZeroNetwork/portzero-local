@@ -23,7 +23,21 @@ pub mod engine;
 pub mod icon;
 pub mod menu;
 pub mod platform;
+mod singleton;
 pub mod state;
 pub mod welcome;
 
-pub use platform::run;
+/// Entry point used by the `portzero-tray` binary.
+///
+/// Refuses to start a second tray if one is already running ([`singleton`]) —
+/// running two would register two tray icons for the same daemon. Otherwise
+/// falls through to the platform-specific event loop.
+pub fn run() -> anyhow::Result<()> {
+    if let Err(existing_pid) = singleton::acquire() {
+        tracing::info!(
+            "portzero-tray (PID {existing_pid}) is already running; not starting a duplicate tray icon"
+        );
+        return Ok(());
+    }
+    platform::run()
+}
