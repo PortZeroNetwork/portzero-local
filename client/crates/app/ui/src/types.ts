@@ -46,8 +46,18 @@ export interface HttpsPolicy {
   passthrough_port_443: boolean;
 }
 
+export type ExamplesDownloadState =
+  | "absent"
+  | "downloading"
+  | "ready"
+  | "error";
+
 export interface ExamplesState {
   downloaded: boolean;
+  /** Coarse state of the automatic background download (no manual button). */
+  download_state?: ExamplesDownloadState;
+  /** User-facing reason when download_state is "error". */
+  download_error?: string | null;
   dir?: string;
   path?: string;
   running: string[];

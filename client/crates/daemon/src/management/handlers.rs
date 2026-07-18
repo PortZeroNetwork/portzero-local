@@ -30,7 +30,8 @@ pub use dashboard::{
 
 mod examples;
 pub use examples::{
-    download_examples, examples_status, run_example, stop_example, RunningExamples,
+    download_examples, examples_status, run_example, spawn_auto_download, stop_example,
+    ExamplesDownload, RunningExamples,
 };
 
 #[derive(Debug, Deserialize, ToSchema)]

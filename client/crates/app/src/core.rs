@@ -93,7 +93,13 @@ pub fn fallback_status(reason: &str) -> Value {
         "cloud_routes": [],
         "management_registrations": [],
         "problems": [],
-        "examples": { "downloaded": false, "dir": "~/portzero-examples", "running": [] },
+        "examples": {
+            "downloaded": false,
+            "download_state": "absent",
+            "download_error": Value::Null,
+            "dir": "~/.portzero/examples",
+            "running": []
+        },
         "https_policy": {
             "enable_for_port_80": false,
             "redirect_port_80": false,

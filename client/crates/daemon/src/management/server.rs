@@ -28,7 +28,7 @@ pub struct PortRegistration {
 /// Shared state: PID -> list of registered ports.
 pub type RegistrationStore = Arc<RwLock<HashMap<u32, Vec<PortRegistration>>>>;
 
-pub use crate::management::handlers::RunningExamples;
+pub use crate::management::handlers::{ExamplesDownload, RunningExamples};
 
 /// Shared application state passed to all handlers.
 #[derive(Clone)]
@@ -41,6 +41,9 @@ pub struct AppState {
     /// Getting-started examples currently running (id → process handle), so the
     /// dashboard can show live state and stop them.
     pub running_examples: RunningExamples,
+    /// State of the automatic getting-started examples download, so the UI can
+    /// show "setting up…" / retry without a manual download button.
+    pub examples_download: ExamplesDownload,
 }
 
 /// The management API server.
@@ -53,6 +56,8 @@ pub struct ManagementServer {
     pub state_dir: std::path::PathBuf,
     /// Registry of running getting-started examples.
     pub running_examples: RunningExamples,
+    /// State of the automatic getting-started examples download.
+    pub examples_download: ExamplesDownload,
 }
 
 impl ManagementServer {
@@ -69,6 +74,7 @@ impl ManagementServer {
             bound_port,
             state_dir,
             running_examples: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            examples_download: Arc::new(tokio::sync::Mutex::new(Default::default())),
         };
         Ok((server, listener))
     }
@@ -79,6 +85,7 @@ impl ManagementServer {
             store: self.store,
             state_dir: self.state_dir,
             running_examples: self.running_examples,
+            examples_download: self.examples_download,
         };
         let router = build_router(app_state);
         tracing::info!("management API listening on 127.0.0.1:{}", self.bound_port);

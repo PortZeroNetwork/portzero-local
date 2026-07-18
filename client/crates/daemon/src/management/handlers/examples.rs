@@ -44,16 +44,93 @@ pub struct RunningExample {
     cancel: Arc<Notify>,
 }
 
-/// Absolute path to the examples checkout (`~/portzero-examples`).
+/// Absolute path to the examples checkout (`~/.portzero/examples`).
+///
+/// Lives under `~/.portzero/` — the directory PortZero already owns (alongside
+/// `auth.json` and `daemon/`) — so the getting-started examples are fetched
+/// automatically without dropping a visible folder in the user's home dir that
+/// they'd have to reason about.
 pub fn examples_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("portzero-examples")
+        .join(".portzero")
+        .join("examples")
 }
 
-/// Display form of the examples directory, kept short (`~/portzero-examples`).
+/// Display form of the examples directory, kept short (`~/.portzero/examples`).
 pub fn examples_dir_display() -> String {
-    "~/portzero-examples".to_string()
+    "~/.portzero/examples".to_string()
+}
+
+/// Coarse state of the automatic examples download, surfaced to the UI so it can
+/// show "setting up…" / retry without the user ever clicking a download button.
+#[derive(Debug, Clone, Default)]
+pub enum DownloadState {
+    /// Not yet started (nothing checked out and no fetch in flight).
+    #[default]
+    Absent,
+    /// A clone/update is currently running.
+    Downloading,
+    /// The examples checkout is present and usable.
+    Ready,
+    /// The last attempt failed; carries a user-facing reason.
+    Error(String),
+}
+
+impl DownloadState {
+    /// Short machine tag for `/status.json` (`absent`/`downloading`/`ready`/`error`).
+    fn tag(&self) -> &'static str {
+        match self {
+            DownloadState::Absent => "absent",
+            DownloadState::Downloading => "downloading",
+            DownloadState::Ready => "ready",
+            DownloadState::Error(_) => "error",
+        }
+    }
+}
+
+/// Shared handle to the automatic-download state, updated by the background
+/// fetch task and read by the status handlers.
+pub type ExamplesDownload = Arc<Mutex<DownloadState>>;
+
+/// Kick off the one-time background fetch of the examples repo, if needed.
+///
+/// Called once at daemon startup. Never blocks the caller: the actual git work
+/// runs on a blocking thread. If the checkout is already present it records
+/// `Ready` immediately; if `git` is missing or the network is down it records a
+/// clear `Error` the UI can show with a retry, rather than failing loudly.
+pub fn spawn_auto_download(download: ExamplesDownload) {
+    tokio::spawn(async move {
+        run_download(&download).await;
+    });
+}
+
+/// Perform (or refresh) the examples checkout, updating `download` as it goes.
+/// Shared by the startup auto-fetch and the manual retry endpoint.
+async fn run_download(download: &ExamplesDownload) {
+    if is_downloaded() {
+        *download.lock().await = DownloadState::Ready;
+        return;
+    }
+    if !command_on_path("git") {
+        *download.lock().await = DownloadState::Error(
+            "Git isn't installed, so the examples can't be fetched automatically. \
+             Install Git and reopen PortZero, or clone \
+             https://github.com/PortZeroNetwork/portzero-examples into \
+             ~/.portzero/examples yourself."
+                .to_string(),
+        );
+        return;
+    }
+    *download.lock().await = DownloadState::Downloading;
+    let dir = examples_dir();
+    let repo = source_repo();
+    let result = tokio::task::spawn_blocking(move || clone_or_update(&dir, &repo)).await;
+    *download.lock().await = match result {
+        Ok(Ok(_)) => DownloadState::Ready,
+        Ok(Err(msg)) => DownloadState::Error(msg),
+        Err(e) => DownloadState::Error(format!("The examples download task failed to run: {e}")),
+    };
 }
 
 /// Whether the examples repo appears to be present (a `.git` dir, i.e. a clone).
@@ -154,8 +231,15 @@ pub async fn status_value(state: &AppState) -> serde_json::Value {
         .keys()
         .cloned()
         .collect();
+    let download = state.examples_download.lock().await.clone();
+    let download_error = match &download {
+        DownloadState::Error(msg) => Some(msg.clone()),
+        _ => None,
+    };
     serde_json::json!({
         "downloaded": is_downloaded(),
+        "download_state": download.tag(),
+        "download_error": download_error,
         "dir": examples_dir_display(),
         "path": examples_dir().to_string_lossy(),
         "running": running,
@@ -163,13 +247,24 @@ pub async fn status_value(state: &AppState) -> serde_json::Value {
 }
 
 /// POST /v1/examples/download — clone (or fast-forward) the examples repo into
-/// `~/portzero-examples`. Runs git on a blocking thread so the async server
+/// `~/.portzero/examples`. Runs git on a blocking thread so the async server
 /// isn't stalled by the network.
-pub async fn download_examples() -> Response {
+///
+/// The examples are normally fetched automatically at daemon startup; this
+/// endpoint is the manual retry path (e.g. after fixing an offline / missing-git
+/// error), and it keeps the shared download state in sync so the UI reflects the
+/// retry the same way it reflects the automatic fetch.
+pub async fn download_examples(State(state): State<AppState>) -> Response {
     let dir = examples_dir();
     let repo = source_repo();
 
+    *state.examples_download.lock().await = DownloadState::Downloading;
     let result = tokio::task::spawn_blocking(move || clone_or_update(&dir, &repo)).await;
+    *state.examples_download.lock().await = match &result {
+        Ok(Ok(_)) => DownloadState::Ready,
+        Ok(Err(msg)) => DownloadState::Error(msg.clone()),
+        Err(e) => DownloadState::Error(format!("The examples download task failed to run: {e}")),
+    };
 
     match result {
         Ok(Ok(msg)) => (
@@ -215,10 +310,10 @@ fn clone_or_update(dir: &Path, repo: &str) -> Result<String, String> {
             .output()
             .map_err(|e| format!("git pull failed to start: {e}"))?;
         if out.status.success() {
-            return Ok("Updated ~/portzero-examples.".to_string());
+            return Ok("Updated ~/.portzero/examples.".to_string());
         }
         // A non-fast-forwardable or offline checkout is still usable.
-        return Ok("~/portzero-examples is already present.".to_string());
+        return Ok("~/.portzero/examples is already present.".to_string());
     }
 
     if let Some(parent) = dir.parent() {
@@ -230,7 +325,7 @@ fn clone_or_update(dir: &Path, repo: &str) -> Result<String, String> {
         .output()
         .map_err(|e| format!("git clone failed to start: {e}"))?;
     if out.status.success() {
-        Ok("Downloaded examples to ~/portzero-examples.".to_string())
+        Ok("Downloaded examples to ~/.portzero/examples.".to_string())
     } else {
         Err(format!(
             "git clone failed: {}",
@@ -582,5 +677,21 @@ mod tests {
     #[test]
     fn source_repo_points_at_examples_repo() {
         assert!(source_repo().contains("portzero-examples"));
+    }
+
+    #[test]
+    fn examples_live_under_the_owned_dot_portzero_dir() {
+        // The checkout lives under ~/.portzero (which PortZero already owns) so it
+        // can be fetched automatically without dropping a visible folder in $HOME.
+        assert!(examples_dir().ends_with(".portzero/examples"));
+        assert_eq!(examples_dir_display(), "~/.portzero/examples");
+    }
+
+    #[test]
+    fn download_state_tags_are_stable() {
+        assert_eq!(DownloadState::Absent.tag(), "absent");
+        assert_eq!(DownloadState::Downloading.tag(), "downloading");
+        assert_eq!(DownloadState::Ready.tag(), "ready");
+        assert_eq!(DownloadState::Error("boom".into()).tag(), "error");
     }
 }

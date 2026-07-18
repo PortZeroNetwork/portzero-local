@@ -280,6 +280,12 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             Ok((mgmt_server, mgmt_listener)) => {
                 let mgmt_port = mgmt_server.bound_port;
                 let mgmt_store = mgmt_server.store.clone();
+                // Fetch the getting-started examples in the background on startup so
+                // the desktop app's first-run steps can offer a one-click example
+                // run without the user ever thinking about downloading them.
+                crate::management::handlers::spawn_auto_download(
+                    mgmt_server.examples_download.clone(),
+                );
                 tokio::spawn(mgmt_server.serve(mgmt_listener));
                 (mgmt_port, mgmt_store)
             }

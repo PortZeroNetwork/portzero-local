@@ -468,3 +468,89 @@ td {
   font-size: 14px;
   margin: 10px 0;
 }
+
+/* Getting-started stepper */
+.stepper {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.step {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 14px;
+  padding: 4px 0 22px;
+  position: relative;
+}
+/* Connector line between step numbers. */
+.step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 34px;
+  bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+.step-num {
+  grid-row: 1 / span 2;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 15px;
+  background: var(--soft);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  z-index: 1;
+}
+.step.done .step-num {
+  background: var(--ok);
+  color: var(--bg);
+  border-color: var(--ok);
+}
+.step-main {
+  min-width: 0;
+}
+.step-title {
+  margin: 4px 0 0;
+  font-size: 16px;
+}
+.step.done .step-title {
+  color: var(--muted);
+}
+.step-lead {
+  color: var(--fg);
+  font-size: 14px;
+  margin: 8px 0 12px;
+}
+.step.celebrate .step-lead {
+  font-size: 15px;
+}
+.more-examples {
+  margin-top: 14px;
+}
+.disclosure {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+.disclosure:hover {
+  text-decoration: underline;
+}
+.example.featured {
+  border-color: var(--accent);
+}
+.onboard-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}

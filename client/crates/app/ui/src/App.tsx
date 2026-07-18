@@ -6,7 +6,7 @@ import DaemonControls from "./components/DaemonControls";
 import Settings from "./components/Settings";
 import Tunnels from "./components/Tunnels";
 import Issues from "./components/Issues";
-import Examples from "./components/Examples";
+import NextSteps from "./components/NextSteps";
 import mark from "./assets/portzero-mark.jpg";
 
 const POLL_MS = 4000;
@@ -129,7 +129,7 @@ export default function App() {
 
         {status && (
           <>
-            <Examples status={status} onError={setError} onChanged={refresh} />
+            <NextSteps status={status} onError={setError} onChanged={refresh} />
             <Tunnels status={status} onError={setError} />
             <Settings status={status} onError={setError} onChanged={refresh} />
             <Issues status={status} />
