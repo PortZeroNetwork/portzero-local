@@ -7,6 +7,8 @@
 //! whose clicks arrive as ids over a channel) and the [`Action`] it triggers
 //! (used directly by the ksni backend, whose clicks arrive as closures).
 
+use portzero_domain::endpoints;
+
 use crate::state::{Health, Snapshot};
 
 /// Something the user asked the tray to do by clicking a menu item.
@@ -19,7 +21,8 @@ pub enum Action {
     Quit,
     /// Launch the PortZero desktop app (the primary local GUI).
     OpenApp,
-    /// Open a real service URL (a tunnel link) in the default browser.
+    /// Open a URL in the default browser — a real service URL (a tunnel link)
+    /// or the Cloud onboarding page.
     OpenUrl(String),
     /// Set the "enable HTTPS for HTTP tunnels" policy to this value.
     ToggleHttps(bool),
@@ -65,6 +68,7 @@ const ID_HTTPS: &str = "config:https";
 const ID_REFRESH: &str = "app:refresh";
 const ID_QUIT: &str = "app:quit";
 const ID_DASHBOARD_DETAILS: &str = "open:dashboard-details";
+const ID_CLOUD_UPSELL: &str = "open:cloud";
 
 /// Build the full tray menu tree from a snapshot.
 pub fn build(snapshot: &Snapshot) -> MenuSpec {
@@ -108,6 +112,23 @@ pub fn build(snapshot: &Snapshot) -> MenuSpec {
                 action: Action::OpenUrl(t.url.clone()),
             });
         }
+    }
+    // When at least one tunnel is local-only, teach the one move that makes it
+    // reachable from a phone / another machine: swap `.local` for `.cloud` in
+    // `PZ_TUNNEL`. This surfaces the paid Cloud crossing at the exact moment the
+    // user is looking at a working local tunnel — no separate `share` command,
+    // because the swap *is* the whole action. The clickable row opens the Cloud
+    // app where they sign in / pick a plan.
+    if snapshot.tunnels.iter().any(|t| !t.cloud) {
+        tunnels.push(Node::Separator);
+        tunnels.push(Node::Label(
+            "On another device? Swap .local → .cloud in PZ_TUNNEL".to_string(),
+        ));
+        tunnels.push(action(
+            ID_CLOUD_UPSELL,
+            "Set up Cloud tunnels →",
+            Action::OpenUrl(endpoints::dashboard_url()),
+        ));
     }
     nodes.push(Node::Sub {
         label: format!("Tunnels ({})", snapshot.tunnels.len()),
@@ -275,5 +296,85 @@ mod tests {
         let t = truncate(&long, 10);
         assert_eq!(t.chars().count(), 10);
         assert!(t.ends_with('…'));
+    }
+
+    use crate::state::Tunnel;
+    use portzero_daemon::net::stack::OverlayHttpsPolicy;
+
+    fn snapshot_with(tunnels: Vec<Tunnel>) -> Snapshot {
+        Snapshot {
+            running: true,
+            health: Health::Ok,
+            tunnels,
+            problems: vec![],
+            https: OverlayHttpsPolicy {
+                enable_for_port_80: false,
+                redirect_port_80: true,
+                passthrough_port_443: true,
+            },
+            summary: "ok".to_string(),
+        }
+    }
+
+    fn local(domain: &str) -> Tunnel {
+        Tunnel {
+            domain: domain.to_string(),
+            url: format!("http://{domain}"),
+            https: false,
+            cloud: false,
+        }
+    }
+
+    fn cloud(domain: &str) -> Tunnel {
+        Tunnel {
+            domain: domain.to_string(),
+            url: format!("https://{domain}"),
+            https: true,
+            cloud: true,
+        }
+    }
+
+    /// Pull the children of the "Tunnels (n)" submenu out of a built spec.
+    fn tunnels_children(spec: &MenuSpec) -> Vec<Node> {
+        for node in &spec.nodes {
+            if let Node::Sub { label, children } = node {
+                if label.starts_with("Tunnels") {
+                    return children.clone();
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    fn has_cloud_upsell(children: &[Node]) -> bool {
+        children
+            .iter()
+            .any(|n| matches!(n, Node::Item { id, .. } if id == ID_CLOUD_UPSELL))
+    }
+
+    #[test]
+    fn a_local_tunnel_surfaces_the_cloud_crossing_and_teaches_the_swap() {
+        let spec = build(&snapshot_with(vec![local("web.myapp.portzero.local")]));
+        let children = tunnels_children(&spec);
+        assert!(has_cloud_upsell(&children), "clickable Cloud row missing");
+        assert!(
+            children.iter().any(|n| matches!(n, Node::Label(t)
+                if t.contains(".local") && t.contains(".cloud") && t.contains("PZ_TUNNEL"))),
+            "the .local → .cloud swap hint is missing"
+        );
+    }
+
+    #[test]
+    fn an_all_cloud_setup_does_not_upsell_cloud() {
+        let spec = build(&snapshot_with(vec![cloud(
+            "api.alice.tunnel.portzero.cloud",
+        )]));
+        assert!(!has_cloud_upsell(&tunnels_children(&spec)));
+    }
+
+    #[test]
+    fn no_tunnels_means_no_cloud_upsell() {
+        let spec = build(&snapshot_with(vec![]));
+        assert!(!has_cloud_upsell(&tunnels_children(&spec)));
     }
 }

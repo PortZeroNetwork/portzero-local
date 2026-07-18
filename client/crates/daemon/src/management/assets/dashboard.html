@@ -153,7 +153,7 @@ td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top;word-b
         <input type="checkbox" id="set-https-80" disabled>
         <span class="setting-body">
           <span class="setting-title">Enable HTTPS (port 443) for backends on port 80</span>
-          <span class="hint">We add the local CA to trust stores on install (best-effort). If HTTPS doesn't fully work in your browser, Cloud tunnels always do.</span>
+          <span class="hint">Local HTTP works out of the box. For HTTPS on <code>*.portzero.local</code> we add a local CA to your trust stores on install (best-effort); if your browser still warns, see the troubleshooting docs. Cloud tunnels get public TLS automatically.</span>
         </span>
       </label>
       <label>
