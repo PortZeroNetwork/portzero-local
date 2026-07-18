@@ -33,34 +33,79 @@ pub(super) fn check_binary_exists() -> Option<Diagnostic> {
     }
 }
 
+/// Whether a process is a genuine `portzero` daemon instance (as opposed to a
+/// one-shot CLI invocation like `portzero status`, or a same-named companion
+/// binary like `portzero-tray` / `portzero-app`).
+///
+/// The CLI and daemon are the same executable (`portzero`), distinguished only
+/// by the hidden `start --foreground` arguments `spawn_daemon` re-execs with
+/// (see `cli/src/daemon.rs`). Matching on the binary name alone previously
+/// counted `portzero-tray` and `portzero-app` — which legitimately run
+/// alongside the daemon on every normal install — as extra "instances", and
+/// even an exact-name match would still count a passing `portzero status`
+/// invocation. Requiring `--foreground` in the arguments avoids both.
+fn is_daemon_process(p: &sysinfo::Process) -> bool {
+    let name = p.name().to_string_lossy();
+    let stem = name.strip_suffix(".exe").unwrap_or(&name);
+    if stem != "portzero" {
+        return false;
+    }
+    p.cmd()
+        .iter()
+        .any(|arg| arg.to_string_lossy() == "--foreground")
+}
+
 pub(super) fn check_multiple_instances() -> Option<Diagnostic> {
     let mut sys = sysinfo::System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
-    let count = sys
+    // (pid, start_time) for every genuine daemon process, oldest first.
+    let mut daemons: Vec<(u32, u64)> = sys
         .processes()
-        .values()
-        .filter(|p| {
-            let name = p.name().to_string_lossy();
-            name.contains("portzero") || name.contains("portzero-daemon")
-        })
-        .count();
+        .iter()
+        .filter(|(_, p)| is_daemon_process(p))
+        .map(|(pid, p)| (pid.as_u32(), p.start_time()))
+        .collect();
+    daemons.sort_by_key(|&(_, start_time)| start_time);
 
-    if count > 1 {
-        tracing::debug!("check_multiple_instances: {} instances found", count);
+    if daemons.len() > 1 {
+        tracing::debug!("check_multiple_instances: {} daemons found", daemons.len());
+        let newest_pid = daemons.last().expect("len > 1").0;
+        let older_pids: Vec<u32> = daemons[..daemons.len() - 1]
+            .iter()
+            .map(|&(p, _)| p)
+            .collect();
+        let older_pids_display = older_pids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let older_pids_cmd = older_pids
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
         Some(Diagnostic {
             id: "multiple_instances".into(),
             severity: Severity::Warning,
             category: "binary".into(),
-            title: "Multiple portzero instances detected".to_string(),
+            title: "Multiple portzero daemons detected".to_string(),
             detail: format!(
-                "{} processes named 'portzero' are running. This can cause route conflicts.",
-                count
+                "{} `portzero start --foreground` daemon processes are running (pids {}, {}). \
+                 This can cause route conflicts.",
+                daemons.len(),
+                older_pids_display,
+                newest_pid
             ),
             fix: Some(Fix {
                 kind: FixKind::Manual,
-                description: "Kill all but the newest instance.".to_string(),
-                command: Some("pkill -o portzero  # kill all but the newest".to_string()),
+                description: format!(
+                    "Stop the older daemon instance(s) (pid {older_pids_display}), keeping the \
+                     newest (pid {newest_pid}). This targets only the identified daemon \
+                     processes — it will not touch portzero-tray, portzero-app, or other \
+                     `portzero` CLI commands."
+                ),
+                command: Some(format!("kill {older_pids_cmd}")),
             }),
         })
     } else {

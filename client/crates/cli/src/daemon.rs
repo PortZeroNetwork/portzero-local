@@ -311,18 +311,27 @@ pub async fn status() -> Result<()> {
 
 /// Surface any current visibility issues (e.g. duplicate `.portzero.local` names
 /// claimed by multiple worktrees) recorded by the running daemon.
+///
+/// `LegacyListener` issues are excluded — they are log-only (see
+/// `discovery_loop::overlay::publish_issues` and `notify::collect_problems`),
+/// not user-facing problems, so `portzero status` must not print them either.
 fn print_issues(config: &DaemonConfig) {
     let state = read_issues(&config.issues_path());
-    if state.is_empty() {
+    let issues: Vec<_> = state
+        .issues
+        .iter()
+        .filter(|issue| !matches!(issue, portzero_daemon::notify::Issue::LegacyListener { .. }))
+        .collect();
+    if issues.is_empty() {
         return;
     }
 
     println!();
     println!(
         "Issues: {} problem(s) detected — see fixes below:",
-        state.issues.len()
+        issues.len()
     );
-    for issue in &state.issues {
+    for issue in &issues {
         println!("  ! {}", issue.summary());
         println!("    fix: {}", issue.fix_hint());
     }

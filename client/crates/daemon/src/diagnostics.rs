@@ -114,35 +114,47 @@ pub async fn run_diagnostics(state_dir: &std::path::Path) -> DiagnosticsReport {
     .await
     .unwrap_or_else(|_| (Vec::new(), 0));
 
+    // Loaded early (rather than only for the tunnel-probe count below) so the
+    // HTTP probe can gate on it: right after the daemon starts, DNS answers
+    // portzero.local immediately (the embedded DNS server always knows the
+    // fixed dashboard VIP), but routing to that VIP requires the overlay/TUN
+    // device to actually be up, which lags DNS by a moment. Probing HTTP
+    // before the overlay is active is a guaranteed, meaningless failure.
+    let overlay_for_count =
+        crate::route_table::OverlayState::load(&state_dir.join("overlay.json")).unwrap_or_default();
+    let routes_for_count =
+        crate::route_table::RouteTable::load(&state_dir.join("routes.json")).unwrap_or_default();
+
     let dns_probe = probes::probe_portzero_local_dns().await;
     checks_run += 1;
     let dns_probe_ok = dns_probe.id == "dns_probe_ok";
     issues.push(dns_probe);
 
     checks_run += 1;
-    if dns_probe_ok {
+    if dns_probe_ok && overlay_for_count.overlay_active {
         issues.push(probes::probe_portzero_local_http().await);
     } else {
+        let reason = if !dns_probe_ok {
+            "portzero.local did not resolve to the expected address"
+        } else {
+            "the local overlay network is not active yet"
+        };
         issues.push(Diagnostic {
             id: "http_probe_skipped".into(),
             severity: Severity::Info,
             category: "network".into(),
-            title: "HTTP dashboard probe skipped because DNS resolution failed".to_string(),
-            detail: "The active HTTP dashboard probe did not run because portzero.local did not resolve to the expected dashboard address.".to_string(),
+            title: "HTTP probe of the local daemon API skipped".to_string(),
+            detail: format!(
+                "The active HTTP probe of {PORTZERO_LOCAL_HTTP_URL} did not run because {reason}."
+            ),
             fix: None,
         });
     }
 
     // Determine how many per-tunnel probes will actually run so `checks_run`
-    // reflects reality, then run them. This reloads the same state files
-    // `probe_tunnel_dns` loads internally; both reads are small local JSON
-    // files, so the duplication is cheap and keeps `probe_tunnel_dns`'s
-    // signature simple (matches the existing pattern of `check_state_files_valid`
+    // reflects reality, then run them. Reuses the overlay/route state already
+    // loaded above (matches the existing pattern of `check_state_files_valid`
     // also reading routes.json/overlay.json independently).
-    let overlay_for_count =
-        crate::route_table::OverlayState::load(&state_dir.join("overlay.json")).unwrap_or_default();
-    let routes_for_count =
-        crate::route_table::RouteTable::load(&state_dir.join("routes.json")).unwrap_or_default();
     let (overlay_domains, cloud_domains) =
         probes::collect_tunnel_probe_domains(&overlay_for_count, &routes_for_count);
     checks_run += overlay_domains.len() + cloud_domains.len();

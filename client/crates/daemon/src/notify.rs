@@ -270,6 +270,12 @@ pub fn collect_problems(
     let mut problems: Vec<Problem> = issues
         .issues
         .iter()
+        // LegacyListener is advisory, not actionable: it fires for any process
+        // (including unrelated system services like sshd) serving a common dev
+        // port directly, which is extremely common and not something most
+        // users can or need to fix. It is logged (see `publish_issues`) but
+        // never surfaced as a user-facing problem/diagnostic.
+        .filter(|issue| !matches!(issue, Issue::LegacyListener { .. }))
         .map(|issue| Problem {
             // issues.json problems carry no severity of their own; treat them
             // as errors so they rank above informational diagnostics.
@@ -756,12 +762,21 @@ mod tests {
     fn test_collect_problems_combines_and_ranks_by_severity() {
         use crate::diagnostics::{Diagnostic, DiagnosticsReport, Fix, FixKind, Severity};
 
+        // A LegacyListener issue plus a DuplicateName issue — only the latter
+        // is a user-facing problem (LegacyListener is log-only, see
+        // `publish_issues`).
         let issues = IssuesState {
-            issues: vec![Issue::LegacyListener {
-                port: 5432,
-                pid: 4321,
-                context: "(~/work/api)".to_string(),
-            }],
+            issues: vec![
+                Issue::LegacyListener {
+                    port: 5432,
+                    pid: 4321,
+                    context: "(~/work/api)".to_string(),
+                },
+                Issue::DuplicateName {
+                    name: "db".to_string(),
+                    claimants: vec!["pid 1 (~/a)".to_string(), "pid 2 (~/b)".to_string()],
+                },
+            ],
         };
         let report = DiagnosticsReport {
             generated_at: "2026-07-11T00:00:00Z".to_string(),
@@ -792,20 +807,19 @@ mod tests {
 
         let problems = collect_problems(&issues, Some(&report));
 
-        // Info-level diagnostics are filtered out; the legacy-listener issue
-        // and the critical diagnostic both survive.
+        // Info-level diagnostics and the LegacyListener issue are filtered
+        // out; the duplicate-name issue and the critical diagnostic survive.
         assert_eq!(problems.len(), 2);
         // Sorted severity-first: Critical before the (assumed) Error-ranked issue.
         assert_eq!(problems[0].severity, Severity::Critical);
         assert_eq!(problems[0].title, "Binary missing");
         assert_eq!(problems[0].fix_command.as_deref(), Some("portzero install"));
 
-        let legacy = problems
-            .iter()
-            .find(|p| p.title.contains("5432"))
-            .expect("legacy listener problem present");
-        assert_eq!(legacy.pid, Some(4321));
-        assert_eq!(legacy.severity, Severity::Error);
+        assert!(
+            !problems.iter().any(|p| p.title.contains("5432")),
+            "LegacyListener must not be surfaced as a user-facing problem"
+        );
+        assert!(problems.iter().any(|p| p.title.contains("db")));
 
         assert!(
             !problems

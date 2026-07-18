@@ -83,6 +83,12 @@ pub(super) async fn probe_portzero_local_dns() -> Diagnostic {
     }
 }
 
+/// Probes the local daemon's management HTTP API at `portzero.local`. This is
+/// no longer just "the old browser dashboard" — the PortZero desktop app
+/// (`portzero-app`) reads all of its data through this same endpoint (see
+/// `client/crates/app/src/core.rs::LOCAL_BASE`), so a failure here means the
+/// desktop app is (or will be) unable to show tunnel/daemon status, not just
+/// that a browser tab would fail to load.
 pub(super) async fn probe_portzero_local_http() -> Diagnostic {
     let client = match reqwest::Client::builder()
         .no_proxy()
@@ -95,8 +101,8 @@ pub(super) async fn probe_portzero_local_http() -> Diagnostic {
                 id: "http_probe_unavailable".into(),
                 severity: Severity::Warning,
                 category: "network".into(),
-                title: "Could not initialize HTTP dashboard probe".to_string(),
-                detail: format!("Failed to build the HTTP dashboard probe client: {err}"),
+                title: "Could not initialize the local daemon API probe".to_string(),
+                detail: format!("Failed to build the HTTP probe client: {err}"),
                 fix: None,
             }
         }
@@ -107,7 +113,7 @@ pub(super) async fn probe_portzero_local_http() -> Diagnostic {
             id: "http_probe_ok".into(),
             severity: Severity::Info,
             category: "network".into(),
-            title: "HTTP dashboard works for portzero.local".to_string(),
+            title: "Local daemon API reachable at portzero.local".to_string(),
             detail: format!(
                 "Active HTTP probe fetched {} successfully.",
                 PORTZERO_LOCAL_HTTP_URL
@@ -118,7 +124,7 @@ pub(super) async fn probe_portzero_local_http() -> Diagnostic {
             id: "http_probe_bad_status".into(),
             severity: Severity::Warning,
             category: "network".into(),
-            title: "HTTP probe reached portzero.local but got an unexpected response".to_string(),
+            title: "Local daemon API reachable but returned an unexpected response".to_string(),
             detail: format!(
                 "Active HTTP probe fetched {} but received HTTP {}.",
                 PORTZERO_LOCAL_HTTP_URL,
@@ -130,18 +136,20 @@ pub(super) async fn probe_portzero_local_http() -> Diagnostic {
             id: "http_probe_failed".into(),
             severity: Severity::Warning,
             category: "network".into(),
-            title: "HTTP probe could not reach portzero.local".to_string(),
+            title: "Could not reach the local daemon API at portzero.local".to_string(),
             detail: format!(
-                "Active HTTP probe to {} failed: {}",
+                "Active HTTP probe to {} failed: {}. This endpoint is what the PortZero \
+                 desktop app itself reads for tunnel/daemon status, so this is not limited to \
+                 the legacy browser dashboard.",
                 PORTZERO_LOCAL_HTTP_URL,
                 summarize_reqwest_error(&err)
             ),
             fix: Some(Fix {
                 kind: FixKind::Manual,
-                description:
-                    "Check that the overlay network and local dashboard are reachable over HTTP."
-                        .to_string(),
-                command: None,
+                description: "Check that the overlay network is active and the daemon is \
+                    reachable over HTTP. Run `portzero doctor` for a full diagnosis."
+                    .to_string(),
+                command: Some("portzero doctor".to_string()),
             }),
         },
     }

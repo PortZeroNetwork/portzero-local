@@ -1,7 +1,7 @@
 ---
 id: a7a05fac-4706-41d3-9680-c53af65fd97e
 slug: task-35
-status: todo
+status: done
 title: Legacy-port monitor floods warnings for system services on macOS (e.g. sshd:22)
 milestones:
 - milestone-2
@@ -53,7 +53,29 @@ remains here afterward (the heuristic may still want a system-service denylist).
 
 Done when:
 
-- [ ] System services (sshd:22, etc.) no longer generate legacy warnings
-- [ ] A real user dev server bypassing the tunnel is still flagged
-- [ ] `status` + daemon log are quiet on a normal macOS box
-- [ ] Cross-platform (Linux behaviour still sensible)
+- [x] System services (sshd:22, etc.) no longer generate legacy warnings
+- [x] A real user dev server bypassing the tunnel is still flagged
+- [x] `status` + daemon log are quiet on a normal macOS box
+- [x] Cross-platform (Linux behaviour still sensible)
+
+## Resolution
+
+Superseded by a broader decision (a user reported 12 duplicate `LegacyListener`
+entries in one `portzero status`/desktop-app view) rather than the scoped
+denylist this ticket originally proposed: `LegacyListener` is no longer
+surfaced as a user-facing diagnostic/problem at all. It is still detected
+(`legacy_monitor::scan_legacy_listeners`) and still deduped per-scan on
+`(port, pid)`, but `notify::collect_problems` now filters it out of the
+`Problem` list the tray/desktop-app/`/status.json` render from, and
+`discovery_loop::overlay::publish_issues` only ever logs it at `info` level
+(never `warn`, never a desktop notification). `portzero status`'s
+`print_issues` was updated to match.
+
+This sidesteps the system-service-denylist approach entirely — sshd:22 and a
+real bypassed dev server are now treated the same way (logged, not flagged),
+which is coarser than the original "keep the genuinely useful case" goal but
+correctly addresses the actual UX complaint (duplicate ERROR-level entries in
+the desktop app) without maintaining a denylist. If a future need re-emerges
+for surfacing *some* legacy listeners as actionable (e.g. only those on a
+port a managed service also uses), reopen with the denylist/scoping approach
+this ticket describes.

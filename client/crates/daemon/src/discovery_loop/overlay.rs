@@ -204,6 +204,14 @@ fn build_managed_context(
 /// `portzero status` can surface them, and — only when the set changes
 /// since the last scan — log actionable guidance and fire a single native
 /// notification. The change-gating prevents flooding the log/desktop every scan.
+///
+/// `Issue::LegacyListener` is handled separately from every other issue kind:
+/// it is extremely common (any process on a common dev port that hasn't set
+/// `PZ_TUNNEL`, including unrelated system services) and not something most
+/// users can act on, so it is only ever logged at `info` level — never
+/// surfaced as a `portzero status`/tray/desktop-app problem and never fires a
+/// desktop notification. See `notify::collect_problems`, which filters it out
+/// of the user-facing problem list.
 pub(super) fn publish_issues(
     issues: Vec<notify::Issue>,
     config: &DaemonConfig,
@@ -220,18 +228,34 @@ pub(super) fn publish_issues(
         return;
     }
 
-    if issues.is_empty() {
-        tracing::info!("All previously reported tunnel issues are now resolved");
+    let (legacy, notifiable): (Vec<_>, Vec<_>) = issues
+        .iter()
+        .cloned()
+        .partition(|issue| matches!(issue, notify::Issue::LegacyListener { .. }));
+
+    for issue in &legacy {
+        tracing::info!("{} — {}", issue.summary(), issue.fix_hint());
+    }
+
+    let had_notifiable = notified_issues
+        .issues
+        .iter()
+        .any(|issue| !matches!(issue, notify::Issue::LegacyListener { .. }));
+
+    if notifiable.is_empty() {
+        if had_notifiable {
+            tracing::info!("All previously reported tunnel issues are now resolved");
+        }
     } else {
-        for issue in &issues {
+        for issue in &notifiable {
             tracing::warn!("{} — {}", issue.summary(), issue.fix_hint());
         }
-        // One consolidated notification covering all current issues.
-        let first = &issues[0];
-        let title = if issues.len() == 1 {
+        // One consolidated notification covering all current notifiable issues.
+        let first = &notifiable[0];
+        let title = if notifiable.len() == 1 {
             "portzero: issue detected".to_string()
         } else {
-            format!("portzero: {} issues", issues.len())
+            format!("portzero: {} issues", notifiable.len())
         };
         let body = format!("{}\n{}", first.summary(), first.fix_hint());
         notify::send_notification(&title, &body);
