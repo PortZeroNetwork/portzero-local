@@ -537,12 +537,27 @@ UNIT
 
     info "Starting portzero..."
     if start_portzero "$bin_path"; then
-        # Only pop the browser once the dashboard actually answers over its real
-        # DNS path — opening early would just show a "can't resolve host" page.
-        if wait_for_dashboard; then
-            open_dashboard || true
+        # Give the overlay a moment to come up so the GUI opens already
+        # populated. Both the app and the browser dashboard render a
+        # daemon-down state gracefully, so this wait is best-effort.
+        if ! wait_for_dashboard; then
+            info "portzero is still starting (see 'portzero status')."
+        fi
+
+        # Open the PortZero desktop app — the primary local GUI — instead of a
+        # browser tab (see docs/developers/desktop-app.md). The app is shipped
+        # only in the app-capable archives (amd64 Linux); on platforms without
+        # it, fall back to opening the browser dashboard as before.
+        app_bin="$install_dir/portzero-app"
+        if [ -x "$app_bin" ]; then
+            if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+                ( "$app_bin" >/dev/null 2>&1 & )
+                info "Opened the PortZero app"
+            else
+                info "No desktop session detected; open the PortZero app from your applications menu after you log in."
+            fi
         else
-            info "Open http://portzero.local once it is reachable (see 'portzero status')."
+            open_dashboard || true
         fi
     else
         warn "Could not start portzero automatically. Run later: portzero start"
@@ -588,5 +603,9 @@ info "Cloud features governed by https://portzero.net/terms"
 
 echo ""
 echo "Uninstall: ${BOLD}${uninstall_helper}${RESET}"
-echo "Get started: open ${BOLD}http://portzero.local${RESET} and run an example from Getting Started"
+if [ -x "$install_dir/portzero-app" ]; then
+    echo "Get started: open the ${BOLD}PortZero${RESET} app (from your applications menu, or run ${BOLD}portzero-app${RESET}) and run an example from Getting Started"
+else
+    echo "Get started: open ${BOLD}http://portzero.local${RESET} and run an example from Getting Started"
+fi
 echo "Next: ${BOLD}portzero login${RESET}  when you want cloud tunnels"
