@@ -103,6 +103,13 @@ impl DaemonConfig {
         self.state_dir.join("overlay.json")
     }
 
+    /// Path to the auto-open tracker state file (which web tunnels we have
+    /// already popped a browser tab for), so a daemon restart does not
+    /// reopen tabs for tunnels that were already running.
+    pub fn auto_open_path(&self) -> PathBuf {
+        self.state_dir.join("auto_open.json")
+    }
+
     /// Path to the observed runtime-truth file (observed edges + exercised
     /// routes), read by `portzero inspect` and the MCP server.
     pub fn observations_path(&self) -> PathBuf {

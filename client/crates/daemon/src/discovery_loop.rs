@@ -357,8 +357,10 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
     // up yet at this point.
     let mut overlay_fast_refresh: Option<tokio::task::JoinHandle<()>> = None;
     // Tracks which HTTP/HTTPS local tunnels we've already popped in the browser
-    // so a steady-state scan doesn't reopen them (see `auto_open`).
-    let mut auto_open = crate::auto_open::AutoOpenTracker::new();
+    // so a steady-state scan doesn't reopen them (see `auto_open`). Loaded from
+    // disk so tunnels already running before this daemon (re)started are not
+    // mistaken for freshly-appeared ones and reopened.
+    let mut auto_open = crate::auto_open::AutoOpenTracker::load(&config.auto_open_path());
 
     loop {
         // The per-iteration work (scan + cloud sync + sleep) lives in this async
@@ -419,6 +421,9 @@ pub async fn run_discovery_loop(config: &DaemonConfig) -> Result<()> {
             // Pop a browser tab for any newly-appeared HTTP/HTTPS tunnel (e.g. a
             // just-started example) when the setting is on.
             auto_open.reconcile(config.auto_open_http_tunnels, &overlay_services);
+            if let Err(err) = auto_open.save(&config.auto_open_path()) {
+                tracing::debug!(%err, "failed to persist auto-open state");
+            }
             let docker_conflicts = conflicts.snapshot().await;
             // Full-system legacy sweep only on the ~30s diagnostics cadence
             // (see gather_and_publish_issues); cached issues republish between
