@@ -334,12 +334,15 @@ fn test_optional_context_without_project_dir_stays_unknown() {
 
 #[test]
 fn test_validate_tunnel_domain_valid() {
-    assert!(validate_tunnel_domain("myapp.alice.tunnel.portzero.cloud").is_ok());
-    assert!(validate_tunnel_domain("api-myapp-main.alice.tunnel.portzero.cloud").is_ok());
-    assert!(validate_tunnel_domain("a.b.tunnel.portzero.cloud").is_ok());
-    assert!(validate_tunnel_domain("api.alice.tunnel.portzero.cloud").is_ok());
-    assert!(validate_tunnel_domain("my-api.alice.tunnel.portzero.cloud").is_ok());
-    assert!(validate_tunnel_domain("svc.team-name.alice.tunnel.portzero.cloud").is_ok());
+    // Single-label `<name>--<cloud-username>` (or team slug), covered by the one
+    // `*.tunnel.portzero.cloud` wildcard cert.
+    assert!(validate_tunnel_domain("myapp--alice.tunnel.portzero.cloud").is_ok());
+    assert!(validate_tunnel_domain("api-myapp-main--alice.tunnel.portzero.cloud").is_ok());
+    assert!(validate_tunnel_domain("a--b.tunnel.portzero.cloud").is_ok());
+    assert!(validate_tunnel_domain("my-api--alice.tunnel.portzero.cloud").is_ok());
+    // Team slug as the namespace, hierarchical name via `--`.
+    assert!(validate_tunnel_domain("svc--team-name.tunnel.portzero.cloud").is_ok());
+    assert!(validate_tunnel_domain("ci-42--web--acme.tunnel.portzero.cloud").is_ok());
 }
 
 #[test]
@@ -353,9 +356,10 @@ fn test_validate_tunnel_domain_reserved_bare() {
 
 #[test]
 fn test_validate_tunnel_domain_missing_username_scope() {
+    // A single label with no `--` carries no namespace scope.
     let err = validate_tunnel_domain("myapp.tunnel.portzero.cloud").unwrap_err();
     assert!(
-        err.contains("*.<cloud-username>.tunnel.portzero.cloud"),
+        err.contains("<name>--<cloud-username>.tunnel.portzero.cloud"),
         "got: {err}"
     );
     assert!(err.contains("portzero whoami"), "got: {err}");
@@ -377,26 +381,29 @@ fn test_validate_tunnel_domain_missing_tunnel_prefix() {
 }
 
 #[test]
-fn test_validate_tunnel_domain_multi_label_valid() {
-    assert!(validate_tunnel_domain("api.myapp.alice.tunnel.portzero.cloud").is_ok());
-}
-
-#[test]
-fn test_validate_tunnel_domain_multi_label_invalid_segment() {
-    assert!(validate_tunnel_domain("api._bad.alice.tunnel.portzero.cloud").is_err());
+fn test_validate_tunnel_domain_multi_label_rejected() {
+    // Dotted multi-label names have no wildcard-cert coverage on the shared apex
+    // and must be rejected, with the flattened single-label form suggested.
+    let err = validate_tunnel_domain("api.myapp.alice.tunnel.portzero.cloud").unwrap_err();
+    assert!(
+        err.contains("api--myapp--alice.tunnel.portzero.cloud"),
+        "should suggest the flattened single-label host, got: {err}"
+    );
+    // The retired dotted namespaced form the client used to mint.
+    assert!(validate_tunnel_domain("csharp-docker.nate.tunnel.portzero.cloud").is_err());
     assert!(validate_tunnel_domain("api..alice.tunnel.portzero.cloud").is_err());
 }
 
 #[test]
 fn test_validate_tunnel_domain_hyphen_edges() {
-    assert!(validate_tunnel_domain("-bad.alice.tunnel.portzero.cloud").is_err());
-    assert!(validate_tunnel_domain("bad-.alice.tunnel.portzero.cloud").is_err());
+    assert!(validate_tunnel_domain("-bad--alice.tunnel.portzero.cloud").is_err());
+    assert!(validate_tunnel_domain("bad---alice.tunnel.portzero.cloud").is_err());
 }
 
 #[test]
 fn test_validate_tunnel_domain_invalid_chars() {
-    assert!(validate_tunnel_domain("my_app.alice.tunnel.portzero.cloud").is_err());
-    assert!(validate_tunnel_domain("my app.alice.tunnel.portzero.cloud").is_err());
+    assert!(validate_tunnel_domain("my_app--alice.tunnel.portzero.cloud").is_err());
+    assert!(validate_tunnel_domain("my app--alice.tunnel.portzero.cloud").is_err());
 }
 
 #[test]
@@ -575,7 +582,7 @@ fn test_default_template_uses_default_base_domain() {
     std::env::remove_var("PZ_TUNNEL_BASE_DOMAIN");
     assert_eq!(
         default_template(),
-        "{service}-{project}-{branch}.{cloud-username}.tunnel.portzero.cloud"
+        "{service}-{project}-{branch}--{cloud-username}.tunnel.portzero.cloud"
     );
 }
 
@@ -587,7 +594,7 @@ fn test_default_template_honors_base_domain_override() {
     std::env::remove_var("PZ_TUNNEL_BASE_DOMAIN");
     assert_eq!(
         result,
-        "{service}-{project}-{branch}.{cloud-username}.tunnel.example.dev"
+        "{service}-{project}-{branch}--{cloud-username}.tunnel.example.dev"
     );
 }
 
@@ -595,8 +602,8 @@ fn test_default_template_honors_base_domain_override() {
 fn test_validate_tunnel_domain_honors_base_domain_override() {
     let _guard = env_lock();
     std::env::set_var("PZ_TUNNEL_BASE_DOMAIN", "tunnel.example.dev");
-    let result = validate_tunnel_domain("myapp.alice.tunnel.example.dev");
-    let rejected = validate_tunnel_domain("myapp.alice.tunnel.portzero.cloud");
+    let result = validate_tunnel_domain("myapp--alice.tunnel.example.dev");
+    let rejected = validate_tunnel_domain("myapp--alice.tunnel.portzero.cloud");
     std::env::remove_var("PZ_TUNNEL_BASE_DOMAIN");
     assert!(result.is_ok(), "got: {result:?}");
     assert!(

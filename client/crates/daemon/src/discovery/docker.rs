@@ -220,7 +220,7 @@ fn container_service_from_inspect_line(
             domain,
             error = %e,
             "PZ_TUNNEL value on container is not a valid full tunnel domain (and not .local). \
-             Use a full name like web-mybranch.alice.tunnel.portzero.cloud"
+             Use a full name like web-mybranch--alice.tunnel.portzero.cloud"
         );
         issues.push(crate::notify::Issue::InvalidCloudTunnelScope {
             domain,

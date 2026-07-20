@@ -583,12 +583,12 @@ mod tests {
         // regardless of the local backend port the process listens on.
         let policy = OverlayHttpsPolicy::default();
         assert_eq!(
-            tunnel_link_url("api.alice.tunnel.portzero.cloud", 8080, &policy).as_deref(),
-            Some("https://api.alice.tunnel.portzero.cloud")
+            tunnel_link_url("api--alice.tunnel.portzero.cloud", 8080, &policy).as_deref(),
+            Some("https://api--alice.tunnel.portzero.cloud")
         );
         assert_eq!(
-            tunnel_link_url("web.bob.tunnel.portzero.cloud", 3000, &policy).as_deref(),
-            Some("https://web.bob.tunnel.portzero.cloud")
+            tunnel_link_url("web--bob.tunnel.portzero.cloud", 3000, &policy).as_deref(),
+            Some("https://web--bob.tunnel.portzero.cloud")
         );
     }
 

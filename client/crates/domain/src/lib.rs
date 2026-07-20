@@ -10,9 +10,9 @@
 //!   changes based on whether you are logged in to Port Zero Cloud. Using it
 //!   in a `.local` tunnel template lets you scope a tunnel name per-machine
 //!   without that name shifting the moment you run `portzero login`.
-//! - `{cloud-username}` — the Port Zero Cloud account username. Only
-//!   available when logged in. Cloud tunnel routes live under
-//!   `*.<cloud-username>.tunnel.portzero.cloud`.
+//! - `{cloud-username}` — the Port Zero Cloud account username (or a team slug).
+//!   Only available when logged in. Cloud tunnel routes are a single label on
+//!   the shared apex: `<name>--<cloud-username>.tunnel.portzero.cloud`.
 //!
 //! `{local-username}` must never be used in a cloud tunnel template — cloud
 //! tunnels are already scoped by `{cloud-username}`, and allowing the OS
@@ -20,10 +20,14 @@
 //! `.cloud` tunnel names. `{cloud-username}` may be used in a `.local`
 //! template, but requires being logged in to resolve.
 //!
-//! The prefix before `.<cloud-username>.tunnel.portzero.cloud` may contain
-//! dots to encode namespaces (e.g. `api.team.alice.tunnel.portzero.cloud`);
-//! each dot-separated segment must be a valid DNS label (ASCII alphanumeric +
-//! hyphens, no leading/trailing hyphens, ≤ 63 chars).
+//! A cloud tunnel host is ONE DNS label: the name and the `{cloud-username}`
+//! namespace are joined with `--` (e.g. `api--team--alice` for a team, or
+//! `api--alice` for a personal tunnel), never a real dot. A wildcard cert covers
+//! exactly one label, so keeping the whole host to a single label lets the one
+//! `*.tunnel.portzero.cloud` cert serve every tunnel; a dotted two-label name has
+//! no cert and fails TLS. Each `--`-separated segment must be a valid DNS
+//! sub-label (ASCII alphanumeric + hyphens, no leading/trailing hyphen, ≤ 63
+//! chars for the whole label).
 
 use std::path::{Path, PathBuf};
 
@@ -43,11 +47,15 @@ pub const DEFAULT_BASE_DOMAIN: &str = "tunnel.portzero.cloud";
 
 /// Default domain template used when none is specified.
 ///
-/// Produces a cloud-username-scoped hostname under
-/// `*.<cloud-username>.tunnel.portzero.cloud`. The base domain can be
-/// overridden via `PZ_TUNNEL_BASE_DOMAIN` for local development.
+/// Produces a cloud-username-scoped hostname that is a SINGLE DNS label on the
+/// shared apex: `<name>--<cloud-username>.tunnel.portzero.cloud`. The name and
+/// the namespace are joined with `--`, never a dot, so one wildcard cert
+/// (`*.tunnel.portzero.cloud`) covers every tunnel regardless of how many users
+/// or teams exist — a dotted two-label host has no wildcard-cert coverage and
+/// fails TLS. The base domain can be overridden via `PZ_TUNNEL_BASE_DOMAIN` for
+/// local development.
 pub const DEFAULT_TEMPLATE: &str =
-    "{service}-{project}-{branch}.{cloud-username}.tunnel.portzero.cloud";
+    "{service}-{project}-{branch}--{cloud-username}.tunnel.portzero.cloud";
 
 /// Build the default domain template using the configured base domain.
 ///
@@ -56,7 +64,7 @@ pub const DEFAULT_TEMPLATE: &str =
 pub fn default_template() -> String {
     let base =
         std::env::var("PZ_TUNNEL_BASE_DOMAIN").unwrap_or_else(|_| DEFAULT_BASE_DOMAIN.to_string());
-    format!("{{service}}-{{project}}-{{branch}}.{{cloud-username}}.{base}")
+    format!("{{service}}-{{project}}-{{branch}}--{{cloud-username}}.{base}")
 }
 
 /// Context for resolving PZ_TUNNEL templates.
@@ -71,9 +79,9 @@ pub struct DomainContext {
     /// Short account identifier (first 8 chars of account UUID).
     /// Falls back to the OS username when not logged in.
     pub uid: Option<String>,
-    /// Cloud account username (e.g. "alice"). Used for `{cloud-username}` in
-    /// namespace-aware tunnel domains like
-    /// `{service}.{cloud-username}.tunnel.portzero.cloud`.
+    /// Cloud account username (e.g. "alice") or team slug. Used for
+    /// `{cloud-username}` in namespace-aware tunnel domains like
+    /// `{service}--{cloud-username}.tunnel.portzero.cloud`.
     ///
     /// `None` when not logged in. Unlike the old unified `{username}`
     /// placeholder, this deliberately has no fallback — resolving
@@ -361,16 +369,22 @@ pub fn split_tunnel_port(value: &str) -> (&str, Option<u16>) {
 
 /// Validate that `domain` is a legal cloud tunnel subdomain.
 ///
+/// Cloud tunnels on the shared apex are a SINGLE DNS label of the form
+/// `<name>--<cloud-username>.tunnel.portzero.cloud` (the namespace may be a
+/// username or a team slug). A wildcard cert covers exactly one label, so the
+/// single `*.tunnel.portzero.cloud` cert covers every such host — this is why
+/// the boundary between name and namespace is `--`, never a dot.
+///
 /// Rules:
 /// - Must end with `.tunnel.portzero.cloud` (or the configured base domain).
-/// - Must include a cloud username scope, so at least two labels must appear
-///   before the base domain (e.g. `api.alice.tunnel.portzero.cloud`).
-/// - The prefix before `.<cloud-username>.tunnel.portzero.cloud` may contain dots to
-///   encode namespaces (e.g. `api.team.alice.tunnel.portzero.cloud`).
-/// - Each dot-separated segment must be a valid DNS label: non-empty, ≤ 63
-///   characters, ASCII alphanumeric or hyphens, no leading/trailing hyphens.
-/// - Bare base domains like `tunnel.portzero.cloud` or `alice.tunnel.portzero.cloud`
-///   are rejected.
+/// - Exactly ONE label may appear before the base domain: a dotted multi-label
+///   name (`api.alice.tunnel…`) has no wildcard-cert coverage and is rejected
+///   with the flattened form to use instead.
+/// - That label must be a valid DNS label and carry the cloud-username scope as
+///   its trailing `--` segment (`myservice--alice`); its `--` segments must each
+///   be clean sub-labels.
+/// - Bare base domains like `tunnel.portzero.cloud`, and unscoped single labels
+///   like `alice.tunnel.portzero.cloud` (no `--`), are rejected.
 ///
 /// The expected base domain (e.g. `tunnel.portzero.cloud`) is derived from
 /// `PZ_TUNNEL_BASE_DOMAIN`.
@@ -385,32 +399,42 @@ pub fn validate_tunnel_domain(domain: &str) -> Result<(), String> {
         ));
     }
 
-    let scoped = domain.strip_suffix(&suffix).ok_or_else(|| {
+    let label = domain.strip_suffix(&suffix).ok_or_else(|| {
         format!(
             "'{domain}' is not a valid cloud tunnel domain: it must end with '.{base}' and be \
-             scoped to your cloud username, e.g. 'myservice.<cloud-username>.{base}'. \
+             scoped to your cloud username, e.g. 'myservice--<cloud-username>.{base}'. \
              Run `portzero whoami` to find your cloud username."
         )
     })?;
 
-    if scoped.is_empty() {
+    if label.is_empty() {
         return Err(format!(
             "'{base}' is a reserved hostname — cloud tunnels must be subdomains of it"
         ));
     }
 
-    let mut segments: Vec<&str> = scoped.split('.').collect();
-    if segments.len() < 2 {
+    // A wildcard cert covers exactly one label; a dotted name cannot be served.
+    if label.contains('.') {
+        let flattened = label.replace('.', "--");
         return Err(format!(
-            "'{domain}' is missing the cloud username scope — cloud tunnel domains must be under \
-             '*.<cloud-username>.{base}' (e.g. '{scoped}.<cloud-username>.{base}'). \
-             Run `portzero whoami` to find your cloud username, or `portzero login` if you are \
-             not logged in yet."
+            "'{domain}' has a dotted multi-label name ('{label}'), which no wildcard \
+             certificate covers and cannot serve HTTPS. Cloud tunnels are a single label with \
+             '--' for hierarchy — use '{flattened}.{base}' instead."
         ));
     }
 
-    for segment in segments.drain(..) {
-        validate_dns_label(segment)?;
+    validate_dns_label(label)?;
+    validate_no_internal_double_hyphen(label)?;
+
+    // The label must carry the cloud-username (or team-slug) scope as its
+    // trailing `--` segment. No `--` means the scope is missing.
+    if label.rsplit_once("--").is_none() {
+        return Err(format!(
+            "'{domain}' is missing the cloud username scope — cloud tunnel names must be \
+             '<name>--<cloud-username>.{base}' (e.g. '{label}--<cloud-username>.{base}'). \
+             Run `portzero whoami` to find your cloud username, or `portzero login` if you are \
+             not logged in yet."
+        ));
     }
 
     Ok(())

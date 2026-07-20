@@ -133,7 +133,7 @@ pub(super) fn scan_processes(
                     domain,
                     error = %e,
                     "PZ_TUNNEL value is not a valid full tunnel domain (and not .local). \
-                     Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
+                     Provide the full name including suffix, e.g. my-api--alice.tunnel.portzero.cloud"
                 );
                 issues.push(crate::notify::Issue::InvalidCloudTunnelScope {
                     domain,
@@ -312,7 +312,7 @@ pub(super) fn scan_processes_windows(
                 domain,
                 error = %e,
                 "PZ_TUNNEL value is not a valid full tunnel domain (and not .local). \
-                 Provide the full name including suffix, e.g. my-api.alice.tunnel.portzero.cloud"
+                 Provide the full name including suffix, e.g. my-api--alice.tunnel.portzero.cloud"
             );
             issues.push(crate::notify::Issue::InvalidCloudTunnelScope {
                 domain,
