@@ -26,6 +26,7 @@ export interface CloudRoute {
   status?: string;
   port?: number;
   pid?: number;
+  link_url?: string | null;
   substitutions?: Record<string, string>;
   alerts?: RouteAlert[];
 }
