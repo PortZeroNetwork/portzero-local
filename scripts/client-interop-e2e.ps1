@@ -36,7 +36,11 @@ $ApiUrl = "https://app.$Domain/api"
 $EdgeUrl = "wss://edge.$Domain/tunnel"
 $AuthUrl = "$ApiUrl/auth/verify"
 $SeedUrl = "$ApiUrl/auth/test-seed-login"
-$TunnelDomain = "$Username.tunnel.$Domain"
+# A cloud tunnel host is ONE DNS label — `<name>--<cloud-username>` joined with
+# `--`, never a dot — so the single `*.<domain>` staging wildcard cert covers it
+# (a dotted multi-label host has no cert and fails TLS). Scope is the seeded
+# cloud username above.
+$TunnelDomain = "web--$Username.$Domain"
 $ExpectedBody = "portzero-client-e2e-ok"
 $PortzeroExe = "C:\Program Files\Port Zero\portzero.exe"
 $AuthDir = Join-Path $env:USERPROFILE ".portzero"
