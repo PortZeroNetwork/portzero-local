@@ -22,11 +22,11 @@ API_URL="https://app.${DOMAIN}/api"
 EDGE_URL="wss://edge.${DOMAIN}/tunnel"
 AUTH_URL="${API_URL}/auth/verify"
 SEED_URL="${API_URL}/auth/test-seed-login"
-# A cloud tunnel host is ONE DNS label — `<name>--<cloud-username>` joined with
-# `--`, never a dot — so the single `*.<domain>` staging wildcard cert covers it
-# (a dotted multi-label host has no cert and fails TLS). Scope is the seeded
-# cloud username above.
-TUNNEL_DOMAIN="web--${USERNAME}.${DOMAIN}"
+# Cloud tunnels live on the shared `.tunnel.<domain>` apex, and the host before
+# it is ONE DNS label — `<name>--<cloud-username>` joined with `--`, never a dot
+# — so the single `*.tunnel.<domain>` staging wildcard cert covers it (a dotted
+# multi-label host has no cert and fails TLS). Scope is the seeded cloud username.
+TUNNEL_DOMAIN="web--${USERNAME}.tunnel.${DOMAIN}"
 EXPECTED_BODY="portzero-client-e2e-ok"
 
 WORK_DIR="$(mktemp -d)"
@@ -41,7 +41,7 @@ cleanup() {
     HOME="${HOME_DIR}" \
       PZ_TUNNEL_API_URL="${API_URL}" \
       PZ_TUNNEL_EDGE_URL="${EDGE_URL}" \
-      PZ_TUNNEL_BASE_DOMAIN="${DOMAIN}" \
+      PZ_TUNNEL_BASE_DOMAIN="tunnel.${DOMAIN}" \
       "${BIN_DIR}/portzero" stop >/dev/null 2>&1
   fi
   if [ -n "${HTTP_PID:-}" ]; then
@@ -136,7 +136,7 @@ start_portzero() {
   HOME="${HOME_DIR}" \
     PZ_TUNNEL_API_URL="${API_URL}" \
     PZ_TUNNEL_EDGE_URL="${EDGE_URL}" \
-    PZ_TUNNEL_BASE_DOMAIN="${DOMAIN}" \
+    PZ_TUNNEL_BASE_DOMAIN="tunnel.${DOMAIN}" \
     "${BIN_DIR}/portzero" start --no-browser
 }
 

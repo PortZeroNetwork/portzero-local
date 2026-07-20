@@ -36,11 +36,11 @@ $ApiUrl = "https://app.$Domain/api"
 $EdgeUrl = "wss://edge.$Domain/tunnel"
 $AuthUrl = "$ApiUrl/auth/verify"
 $SeedUrl = "$ApiUrl/auth/test-seed-login"
-# A cloud tunnel host is ONE DNS label — `<name>--<cloud-username>` joined with
-# `--`, never a dot — so the single `*.<domain>` staging wildcard cert covers it
-# (a dotted multi-label host has no cert and fails TLS). Scope is the seeded
-# cloud username above.
-$TunnelDomain = "web--$Username.$Domain"
+# Cloud tunnels live on the shared `.tunnel.<domain>` apex, and the host before
+# it is ONE DNS label — `<name>--<cloud-username>` joined with `--`, never a dot
+# — so the single `*.tunnel.<domain>` staging wildcard cert covers it (a dotted
+# multi-label host has no cert and fails TLS). Scope is the seeded cloud username.
+$TunnelDomain = "web--$Username.tunnel.$Domain"
 $ExpectedBody = "portzero-client-e2e-ok"
 $PortzeroExe = "C:\Program Files\Port Zero\portzero.exe"
 $AuthDir = Join-Path $env:USERPROFILE ".portzero"
@@ -152,7 +152,7 @@ function Start-Portzero {
 
     $env:PZ_TUNNEL_API_URL = $ApiUrl
     $env:PZ_TUNNEL_EDGE_URL = $EdgeUrl
-    $env:PZ_TUNNEL_BASE_DOMAIN = $Domain
+    $env:PZ_TUNNEL_BASE_DOMAIN = "tunnel.$Domain"
     & $PortzeroExe start --no-browser
 
     # $LASTEXITCODE after `portzero start` has proven unreliable on GitHub's
@@ -235,7 +235,7 @@ try {
 finally {
     $env:PZ_TUNNEL_API_URL = $ApiUrl
     $env:PZ_TUNNEL_EDGE_URL = $EdgeUrl
-    $env:PZ_TUNNEL_BASE_DOMAIN = $Domain
+    $env:PZ_TUNNEL_BASE_DOMAIN = "tunnel.$Domain"
     if (Test-Path $PortzeroExe) {
         try { & $PortzeroExe stop 2>$null | Out-Null } catch {}
     }
