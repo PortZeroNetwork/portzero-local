@@ -12,9 +12,8 @@ BINARY_PATH="${PORTZERO_PREBUILT_BINARY_PATH:?Set PORTZERO_PREBUILT_BINARY_PATH 
 EMAIL="${STAGING_CLIENT_E2E_EMAIL:-staging-client-e2e-macos@example.com}"
 # Unique per platform/repo so concurrent E2E runs against shared staging
 # (this job, the sibling Windows job below, and portzero-cloud's own E2E
-# job) don't register the same tunnel domain. Kept as a single label:
-# Caddy's TLS cert for tunnel domains is a single-level wildcard
-# (*.tunnel.<domain>) and does not cover multi-label subdomains.
+# job) don't register the same tunnel domain. The seed-login below also
+# registers this as the account's cloud username, which scopes the tunnel host.
 USERNAME="${STAGING_CLIENT_E2E_USERNAME:-tunnel-e2e-macos}"
 ACCOUNT_ID="${STAGING_CLIENT_E2E_ACCOUNT_ID:-staging-client-e2e-macos-account}"
 VERIFY_CODE="${STAGING_CLIENT_E2E_CODE:-424242}"
@@ -23,7 +22,11 @@ API_URL="https://app.${DOMAIN}/api"
 EDGE_URL="wss://edge.${DOMAIN}/tunnel"
 AUTH_URL="${API_URL}/auth/verify"
 SEED_URL="${API_URL}/auth/test-seed-login"
-TUNNEL_DOMAIN="${USERNAME}.tunnel.${DOMAIN}"
+# A cloud tunnel host is ONE DNS label — `<name>--<cloud-username>` joined with
+# `--`, never a dot — so the single `*.<domain>` staging wildcard cert covers it
+# (a dotted multi-label host has no cert and fails TLS). Scope is the seeded
+# cloud username above.
+TUNNEL_DOMAIN="web--${USERNAME}.${DOMAIN}"
 EXPECTED_BODY="portzero-client-e2e-ok"
 
 WORK_DIR="$(mktemp -d)"
