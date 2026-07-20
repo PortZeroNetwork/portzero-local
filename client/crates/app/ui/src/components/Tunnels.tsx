@@ -1,3 +1,4 @@
+import type { MouseEvent } from "react";
 import { openExternal } from "../api";
 import type { Status, LocalService, CloudRoute } from "../types";
 
@@ -11,7 +12,35 @@ function open(url: string | null | undefined, onError: (m: string) => void) {
   openExternal(url).catch((e) => onError(String(e)));
 }
 
-/** Local + Cloud tunnels, each openable in the default browser. */
+/**
+ * A tunnel's domain. When the tunnel is an HTTP/HTTPS endpoint the daemon
+ * resolved a `link_url` for, render it as a link that opens in the default
+ * browser (the webview must not navigate itself). Otherwise it is plain text.
+ */
+function DomainCell({
+  domain,
+  linkUrl,
+  onError,
+}: {
+  domain: string;
+  linkUrl?: string | null;
+  onError: (m: string) => void;
+}) {
+  if (!linkUrl) {
+    return <strong>{domain}</strong>;
+  }
+  const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    open(linkUrl, onError);
+  };
+  return (
+    <a href={linkUrl} onClick={onClick}>
+      <strong>{domain}</strong>
+    </a>
+  );
+}
+
+/** Local + Cloud tunnels; HTTP/HTTPS ones are clickable, opening in the browser. */
 export default function Tunnels({ status, onError }: Props) {
   const local: LocalService[] = status.local_services ?? [];
   const cloud: CloudRoute[] = status.cloud_routes ?? [];
@@ -38,28 +67,21 @@ export default function Tunnels({ status, onError }: Props) {
               <th>real addr</th>
               <th>port</th>
               <th>pid</th>
-              <th />
             </tr>
           </thead>
           <tbody>
             {local.map((s, i) => (
               <tr key={i}>
                 <td>
-                  <strong>{s.domain}</strong>
+                  <DomainCell
+                    domain={s.domain}
+                    linkUrl={s.link_url}
+                    onError={onError}
+                  />
                 </td>
                 <td>{s.real_addr ?? "-"}</td>
                 <td>{s.service_port ?? "-"}</td>
                 <td>{s.pid ?? "-"}</td>
-                <td>
-                  {s.link_url && (
-                    <button
-                      className="button ghost"
-                      onClick={() => open(s.link_url, onError)}
-                    >
-                      Open
-                    </button>
-                  )}
-                </td>
               </tr>
             ))}
           </tbody>
@@ -91,7 +113,11 @@ export default function Tunnels({ status, onError }: Props) {
             {cloud.map((r, i) => (
               <tr key={i}>
                 <td>
-                  <strong>{r.domain}</strong>
+                  <DomainCell
+                    domain={r.domain}
+                    linkUrl={r.link_url}
+                    onError={onError}
+                  />
                 </td>
                 <td>{r.status ?? "published"}</td>
                 <td>{r.port ?? "-"}</td>

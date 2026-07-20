@@ -486,10 +486,11 @@ pub async fn daemon_status(State(state): State<AppState>) -> Json<DaemonStatusRe
 #[cfg(test)]
 mod tests {
     use super::dashboard::{
-        add_duplicate_route_alerts, has_dns_token, local_service_link_url, read_issues,
-        substitution_alerts,
+        add_duplicate_route_alerts, has_dns_token, read_issues, substitution_alerts,
+        tunnel_link_url,
     };
     use super::{canonical_registration_domain, validate_registration_count};
+    use crate::net::stack::OverlayHttpsPolicy;
     use std::collections::BTreeMap;
 
     #[test]
@@ -539,25 +540,56 @@ mod tests {
     }
 
     #[test]
-    fn local_service_link_url_uses_scheme_for_web_port() {
+    fn tunnel_link_url_uses_scheme_for_local_web_port() {
+        let policy = OverlayHttpsPolicy::default();
         assert_eq!(
-            local_service_link_url("web.portzero.local", 80).as_deref(),
+            tunnel_link_url("web.portzero.local", 80, &policy).as_deref(),
             Some("http://web.portzero.local")
         );
         assert_eq!(
-            local_service_link_url("staging.portzero.net.portzero.local", 443).as_deref(),
+            tunnel_link_url("staging.portzero.net.portzero.local", 443, &policy).as_deref(),
             Some("https://staging.portzero.net.portzero.local")
         );
         assert_eq!(
-            local_service_link_url("api.portzero.local", 443).as_deref(),
+            tunnel_link_url("api.portzero.local", 443, &policy).as_deref(),
             Some("https://api.portzero.local")
         );
     }
 
     #[test]
-    fn local_service_link_url_skips_non_web_ports() {
-        assert_eq!(local_service_link_url("db.portzero.local", 5432), None);
-        assert_eq!(local_service_link_url("admin.portzero.local", 8080), None);
+    fn tunnel_link_url_skips_non_web_local_ports() {
+        let policy = OverlayHttpsPolicy::default();
+        assert_eq!(tunnel_link_url("db.portzero.local", 5432, &policy), None);
+        assert_eq!(tunnel_link_url("admin.portzero.local", 8080, &policy), None);
+    }
+
+    #[test]
+    fn tunnel_link_url_port_80_is_https_when_local_https_enabled() {
+        // With HTTPS-for-port-80 on, a port-80 tunnel is served over HTTPS (and
+        // plain HTTP is redirected there), so the clickable link is https://.
+        let policy = OverlayHttpsPolicy {
+            enable_for_port_80: true,
+            ..OverlayHttpsPolicy::default()
+        };
+        assert_eq!(
+            tunnel_link_url("web.portzero.local", 80, &policy).as_deref(),
+            Some("https://web.portzero.local")
+        );
+    }
+
+    #[test]
+    fn tunnel_link_url_cloud_is_always_https_regardless_of_backend_port() {
+        // Cloud tunnels are served over HTTPS by the edge, which terminates TLS
+        // regardless of the local backend port the process listens on.
+        let policy = OverlayHttpsPolicy::default();
+        assert_eq!(
+            tunnel_link_url("api.alice.tunnel.portzero.cloud", 8080, &policy).as_deref(),
+            Some("https://api.alice.tunnel.portzero.cloud")
+        );
+        assert_eq!(
+            tunnel_link_url("web.bob.tunnel.portzero.cloud", 3000, &policy).as_deref(),
+            Some("https://web.bob.tunnel.portzero.cloud")
+        );
     }
 
     #[test]

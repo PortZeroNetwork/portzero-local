@@ -183,10 +183,31 @@ fn display_substitutions(
     serde_json::json!(values)
 }
 
-pub(super) fn local_service_link_url(domain: &str, service_port: u16) -> Option<String> {
+/// Resolve the browser-openable URL for a discovered tunnel, or `None` when it
+/// is not an HTTP/HTTPS endpoint a browser can open. Drives the clickable
+/// domain links in both the built-in dashboard and the desktop app.
+///
+/// - **Cloud tunnels** (any domain that is not a `.portzero.local` overlay
+///   name) are served over HTTPS at their public domain by the edge, which
+///   terminates TLS regardless of the local backend port — so they are always
+///   reachable, and clickable, at `https://{domain}`.
+/// - **Local overlay tunnels** are reached by name on the virtual IP: port 443
+///   is HTTPS and port 80 is HTTP. When the HTTPS-for-port-80 policy is on, a
+///   port-80 tunnel is also served over HTTPS on 443 (with plain HTTP redirected
+///   there), so its canonical link is `https://` even though it asked to be
+///   exposed on 80. Any other port is not a web port and yields `None`.
+pub(super) fn tunnel_link_url(
+    domain: &str,
+    service_port: u16,
+    https_policy: &crate::net::stack::OverlayHttpsPolicy,
+) -> Option<String> {
+    if !crate::discovery::is_local_overlay_domain(domain) {
+        return Some(format!("https://{domain}"));
+    }
     match service_port {
-        80 => Some(format!("http://{domain}")),
         443 => Some(format!("https://{domain}")),
+        80 if https_policy.enable_for_port_80 => Some(format!("https://{domain}")),
+        80 => Some(format!("http://{domain}")),
         _ => None,
     }
 }
@@ -406,6 +427,8 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
     let registrations_guard = state.store.read().await;
     let management_registrations = management_registrations_json(&registrations_guard);
 
+    let https_policy = crate::discovery_loop::DaemonConfig::load().overlay_https;
+
     let mut local_services: Vec<serde_json::Value> = overlay
         .routes
         .iter()
@@ -423,7 +446,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
                 "real_addr": r.real_addr,
                 "service_port": r.service_port,
                 "health_path": r.health_path,
-                "link_url": local_service_link_url(&r.domain, r.service_port),
+                "link_url": tunnel_link_url(&r.domain, r.service_port, &https_policy),
                 "pid": r.pid,
             })
         })
@@ -452,6 +475,7 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
                 "alerts": substitution_alerts(domain_template, &r.substitutions),
                 "port": r.port,
                 "health_path": r.health_path,
+                "link_url": tunnel_link_url(&r.domain, r.port, &https_policy),
                 "pid": r.pid,
                 "status": status,
             })
@@ -471,8 +495,6 @@ pub async fn status_json(State(state): State<AppState>) -> Json<serde_json::Valu
             .map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null))
             .collect();
     let diagnostics_checks_run = diagnostics.as_ref().map(|r| r.checks_run);
-
-    let https_policy = crate::discovery_loop::DaemonConfig::load().overlay_https;
 
     Json(serde_json::json!({
         "daemon_pid": daemon_pid,
