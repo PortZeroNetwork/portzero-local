@@ -966,6 +966,15 @@ jobs:
     name: Create Release
     needs:
       [version, build, package-windows, test-macos-interop, test-windows-interop]
+    # The Windows signing jobs (sign-windows-zip / sign-windows-msi) only run on
+    # genuine vX.Y.Z tag builds and are skipped on unstable (staging push)
+    # builds. That skip propagates through package-windows / test-windows-interop
+    # — which already tolerate it via this same guard — down to here, so without
+    # it this job inherits the implicit success() and is skipped too, meaning
+    # unstable builds compile and pass interop tests but never publish a
+    # prerelease. Tolerate the skipped upstreams like our dependencies do; still
+    # bail on a real failure or cancellation.
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
