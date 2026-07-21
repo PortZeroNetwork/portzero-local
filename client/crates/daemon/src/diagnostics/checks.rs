@@ -5,6 +5,10 @@
 //! The TLS / local-CA trust checks live in `checks_tls_trust.rs`.
 
 use std::path::Path;
+// Still needed on Linux by check_binary_exists' " (deleted)" strip below, even
+// though the TLS-trust split took the other users out of this file.
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
